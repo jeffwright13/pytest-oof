@@ -1,4 +1,4 @@
-# pytest-oof: Pytest Outcome and Output-Fields
+# pytest-oof: Pytest Outcomes and Output-Fields
 
 ## A Pytest plugin providing structured access to a test run's results:
   - Test outcomes (Failures, Passes, Errors, Skipped, Xfails, Xpasses, Reruns)
