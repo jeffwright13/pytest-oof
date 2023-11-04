@@ -27,11 +27,13 @@ This generates two files in the `/oof` directory:
 - oof/results.pickle: a pickled collection of dataclasses representing all results in an easy-to-consume format
 - oof/termina_output.ansi: a copy of the entire terminal output from your test session, encoded in ANSI escape codes
 
-Now run the included console script `oofda`. This script invokes the example code in __main__.py, shows how to consume the oof files, and presents basic results on the console.
-
-Go ahead - compare the results with the last line of output from `pytest --oof` .
+Now run the included console script `oofda`:
 
 `$ oofda`
+
+This script invokes the example code in __main__.py, shows how to consume the oof files, and presents basic results on the console.
+
+Go ahead - compare the results with the last line of output from `pytest --oof` .
 
 
 ## Example output
