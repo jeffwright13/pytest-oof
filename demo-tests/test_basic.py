@@ -142,3 +142,8 @@ def test_basic_rerun_pass():
 @pytest.mark.flaky(reruns=2)
 def test_basic_rerun_fail():
     assert False
+
+
+@pytest.mark.skip("Skip this test with marker.")
+def test_basic_skip_marker():
+    assert True

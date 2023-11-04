@@ -14,7 +14,7 @@ def read(fname):
 
 setup(
     name="pytest-oof",
-    version="0.0.1",
+    version="0.1.0",
     author="Jeff Wright",
     author_email="jeff.washcloth@gmail.com",
     license="MIT",
@@ -34,7 +34,7 @@ setup(
     include_package_data=True,
     classifiers=[
         "Framework :: Pytest",
-        "Development Status :: 2 - Pre-Alpha",
+        "Development Status :: 3 - Alpha",
         "Intended Audience :: Developers",
         "Topic :: Software Development :: Testing",
         "Programming Language :: Python :: 3.8",
@@ -48,7 +48,7 @@ setup(
     entry_points={
         "pytest11": ["pytest_oof = pytest_oof.plugin"],
         "console_scripts": [
-            "oof = pytest_oof.__main__:main",
+            "oofda = pytest_oof.__main__:main",
         ],
     },
 )
