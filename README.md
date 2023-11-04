@@ -27,6 +27,11 @@
 - short_test_summary
 - lastline
 
+## Target audience:
+- Pytest plugin developers and others who neeed access to pytest's results after a test run has completed
+- Taylor Swift fans
+- Anyone who wants to see a summary of their test run without having to parse pytest's console output
+
 ## Installation
 
 - Clone the repo
@@ -38,9 +43,20 @@
   - pytest-rerunfailures (if you want to run the demo tests)
   - faker (if you want to run the demo tests)
 - Install the plugin: `pip install .`
+- Run the demo console script: `oofda` (specify `--help` for options)
+- In your own code, import and use as you wish
 
 
 ## Usage
+
+### As a pytest plugin
+
+```
+
+```
+
+
+### Demo script
 
 First, run your pytest campaign with the `--oof` option:
 
@@ -48,7 +64,7 @@ First, run your pytest campaign with the `--oof` option:
 
 This generates two files in the `/oof` directory:
 - oof/results.pickle: a pickled collection of dataclasses representing all results in an easy-to-consume format
-- oof/termina_output.ansi: a copy of the entire terminal output from your test session, encoded in ANSI escape codes
+- oof/terminal_output.ansi: a copy of the entire terminal output from your test session, encoded in ANSI escape codes
 
 Now run the included console script `oofda`:
 
@@ -59,7 +75,7 @@ This script invokes the example code in `__main__.py`, shows how to consume the 
 Go ahead - compare the results with the last line of output from `pytest --oof` .
 
 
-## Example output
+#### Example output
 
 Here's a quick test that has all of the outcomes and scenarios you might encounter during a typical run.
 
@@ -181,8 +197,8 @@ Number or reruns: 4
 
 ## Disclaimer
 
-`pytest-oof` uses the console output in order to generate its results.  This means that it is dependent on the output format of pytest, and that if pytest changes its output format, `pytest-oof` may break.  I will do my best to keep up with changes to pytest, but I make no guarantees. So far the same algorithm has held up for 2+ years, but who knows that the pytest devs will do next?
+`pytest-oof` uses pytest's console output in order to generate its results.  This means that if pytest changes its output format, `pytest-oof` may break.  I will do my best to keep up with changes to pytest, but I make no guarantees. So far the same algorithm has held up for 2+ years, but who knows that the pytest devs will do next?
 
-I developed the algorithm used in this plugin because I couldn't find another way to correctly determine the outcome types for the more esoteric outcomes like XPass, XFail, or Rerun. I know there is a way to determine some of this from analyzing succesive TestReport objects, but that still didn't do Reruns correctly, nor Warnings (which are technically not an outcome, but a field in the console object). Tihs plugin gives you all that, plus a string of the individual fields/sections of the console output (like "warnings_summary," "errors," "failures," etc).
+I developed the algorithm used in this plugin because I couldn't find another way to correctly determine the outcome types for the more esoteric outcomes like XPass, XFail, or Rerun. I know there is a way to determine some of this from analyzing succesive TestReport objects, but that still didn't do Reruns correctly, nor Warnings (which are technically not an outcome, but a field in the console output). Tihs plugin gives you all that, plus a string of the individual fields/sections of the console output (like "warnings_summary," "errors," "failures," etc).
 
 If you have any issues, please open an issue on the repo.  I'll do my best to address it.

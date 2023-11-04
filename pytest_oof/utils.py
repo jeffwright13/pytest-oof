@@ -3,7 +3,7 @@ import pickle
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 OOF_FILES_DIR = Path.cwd().resolve() / "oof"
 # OOF_FILES_DIR = Path(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
@@ -23,7 +23,7 @@ class TestResult:
     capstdout: str = ""
     longreprtext: str = ""
 
-    def to_dict(self):
+    def to_dict(self) -> Dict[str, Any]:
         return {
             "fqtn": self.fqtn,
             "outcome": self.outcome,
@@ -40,52 +40,52 @@ class TestResult:
 class TestResults:
     test_results: List[TestResult] = field(default_factory=list)
 
-    def all_tests(self):
+    def all_tests(self) -> List[TestResult]:
         return list(self.test_results)
 
-    def all_failures(self):
+    def all_failures(self) -> List[TestResult]:
         return [
             test_result
             for test_result in self.test_results
             if test_result.outcome == "FAILED"
         ]
 
-    def all_passes(self):
+    def all_passes(self) -> List[TestResult]:
         return [
             test_result
             for test_result in self.test_results
             if test_result.outcome == "PASSED"
         ]
 
-    def all_skips(self):
+    def all_skips(self) -> List[TestResult]:
         return [
             test_result
             for test_result in self.test_results
             if test_result.outcome == "SKIPPED"
         ]
 
-    def all_xfails(self):
+    def all_xfails(self) -> List[TestResult]:
         return [
             test_result
             for test_result in self.test_results
             if test_result.outcome == "XFAIL"
         ]
 
-    def all_xpasses(self):
+    def all_xpasses(self) -> List[TestResult]:
         return [
             test_result
             for test_result in self.test_results
             if test_result.outcome == "XPASS"
         ]
 
-    def all_errors(self):
+    def all_errors(self) -> List[TestResult]:
         return [
             test_result
             for test_result in self.test_results
             if test_result.outcome == "ERROR"
         ]
 
-    def all_reruns(self):
+    def all_reruns(self) -> List[TestResult]:
         return [
             test_result
             for test_result in self.test_results
@@ -143,7 +143,7 @@ class Results:
     @classmethod
     def from_files(
         cls, results_file_path: Path, output_file_path: Optional[Path] = None
-    ):
+    ) -> "Results":
         terminal_output = ""
         if output_file_path:
             with open(output_file_path, "r") as f:

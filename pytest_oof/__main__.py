@@ -16,7 +16,7 @@ from pytest_oof.utils import (
 )
 
 
-def get_warning_fqtns(test_results: List[TestResult], output_fields: OutputFields):
+def get_warning_fqtns(test_results: List[TestResult], output_fields: OutputFields) -> List[str]:
     fqtns = [result.fqtn for result in test_results]
     warning_field = strip_ansi(output_fields.warnings_summary.content)
     warning_field_lines = [
@@ -73,7 +73,7 @@ def parse_args_and_get_files() -> Tuple[Path, Path]:
             terminal_output_file = TERMINAL_OUTPUT_FILE
 
     return results_file, terminal_output_file
-def main():
+def main() -> None:
     # Get the files from command line arguments or defaults
     results_file, terminal_output_file = parse_args_and_get_files()
 

@@ -294,15 +294,6 @@ def pytest_unconfigure(config: Config) -> None:
         return
 
     config._oof_rerun_test_groups = populate_rerun_groups(config)
-    # config._oof_session_end_time = (
-    #     datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S.%f")
-    # )
-    # config._oof_session_end_time = (
-    #     datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S.%f")
-    # )
-    # config._oof_session_duration = datetime.strptime(
-    #     config._oof_session_end_time, "%Y-%m-%d %H:%M:%S.%f"
-    # ) - datetime.strptime(config._oof_session_start_time, "%Y-%m-%d %H:%M:%S.%f")
     config._oof_session_end_time = datetime.now(timezone.utc)
     config._oof_session_duration = (
         config._oof_session_end_time - config._oof_session_start_time
