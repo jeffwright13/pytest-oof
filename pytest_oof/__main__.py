@@ -1,5 +1,9 @@
+import argparse
+
 from datetime import datetime, timedelta
-from typing import List
+from pathlib import Path
+from rich import print
+from typing import Dict, List, Tuple
 
 from strip_ansi import strip_ansi
 
@@ -13,9 +17,7 @@ from pytest_oof.utils import (
 
 
 def get_warning_fqtns(test_results: List[TestResult], output_fields: OutputFields):
-    fqtns = []
-    for result in test_results:
-        fqtns.append(result.fqtn)
+    fqtns = [result.fqtn for result in test_results]
     warning_field = strip_ansi(output_fields.warnings_summary.content)
     warning_field_lines = [
         line
@@ -25,13 +27,66 @@ def get_warning_fqtns(test_results: List[TestResult], output_fields: OutputField
     return [line.split()[0] for line in warning_field_lines]
 
 
-def main():
-    # Usage example:
-    results = Results.from_files(RESULTS_FILE, TERMINAL_OUTPUT_FILE)
+def search_for_oof_files() -> Dict[str, Path]:
+    """Search for the results files in the current working directory."""
+    files = {}
+    for path in Path.cwd().iterdir():
+        if path.is_file():
+            if path.name == RESULTS_FILE.name:
+                files["results"] = path
+            elif path.name == TERMINAL_OUTPUT_FILE.name:
+                files["terminal_out"] = path
+    return files
 
-    # Access the data using dot notation:
+
+def parse_args_and_get_files() -> Tuple[Path, Path]:
+    parser = argparse.ArgumentParser(description="Process some files.")
+    parser.add_argument('-r', '--results-file', type=str, help='Path to the results file (results.pickle)')
+    parser.add_argument('-t', '--terminal-output-file', type=str, help='Path to the terminal output file (terminal_output.ansi)')
+
+    args = parser.parse_args()
+
+    if args.results_file:
+        results_file = Path(args.results_file)
+        print(f"Results file gotten from command line arguments: {results_file}")
+    else:
+        files = search_for_oof_files()
+        # results_file = files.get("results", RESULTS_FILE)
+        results_file = files.get("results")
+        if results_file:
+            print(f"Results file gotten from search: {results_file}")
+        else:
+            print(f"Results file gotten from default: {RESULTS_FILE}")
+            results_file = RESULTS_FILE
+
+    if args.terminal_output_file:
+        terminal_output_file = Path(args.terminal_output_file)
+        print(f"Terminal output file gotten from command line arguments: {terminal_output_file}")
+    else:
+        files = search_for_oof_files()
+        # terminal_output_file = files.get("terminal_out", TERMINAL_OUTPUT_FILE)
+        terminal_output_file = files.get("terminal_out")
+        if terminal_output_file:
+            print(f"Terminal output file gotten from search: {terminal_output_file}")
+        else:
+            print(f"Terminal output file gotten from default: {TERMINAL_OUTPUT_FILE}")
+            terminal_output_file = TERMINAL_OUTPUT_FILE
+
+    return results_file, terminal_output_file
+def main():
+    # Get the files from command line arguments or defaults
+    results_file, terminal_output_file = parse_args_and_get_files()
+
+    # Usage example:
+    try:
+        results = Results.from_files(results_file, terminal_output_file)
+    except (FileNotFoundError, UnboundLocalError) as e:
+        msg = f"{str(e)}.\nNo results files found. Try specifying the files with the -r and -t flags, or running this script from the default install directory."
+        raise type(e)(msg).with_traceback(e.__traceback__)
+
+    # Access the test run data using dot notation or built-in methods (bragable):
     print(
-        f"Session start time: {datetime.strftime(results.session_start_time, '%Y-%m-%d %H:%M:%S.%f')}"
+        f"\nSession start time: {datetime.strftime(results.session_start_time, '%Y-%m-%d %H:%M:%S.%f')}"
     )
     print(
         f"Session end time: {datetime.strftime(results.session_end_time, '%Y-%m-%d %H:%M:%S.%f')}"
@@ -40,7 +95,7 @@ def main():
         f"Session duration: {timedelta(seconds=results.session_duration.total_seconds())}"
     )
 
-    print(f"Number of tests: {len(results.test_results.all_tests())}")
+    print(f"\nNumber of tests: {len(results.test_results.all_tests())}")
     print(f"Number of passes: {len(results.test_results.all_passes())}")
     print(f"Number of failures: {len(results.test_results.all_failures())}")
     print(f"Number of errors: {len(results.test_results.all_errors())}")

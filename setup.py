@@ -14,7 +14,7 @@ def read(fname):
 
 setup(
     name="pytest-oof",
-    version="0.1.0",
+    version="0.2.0",
     author="Jeff Wright",
     author_email="jeff.washcloth@gmail.com",
     license="MIT",
@@ -26,6 +26,7 @@ setup(
     py_modules=["pytest_oof"],
     python_requires=">=3.8",
     install_requires=[
+        "rich>=10.12.0",
         "single-source>=0.3.0",
         "strip-ansi>=0.1.1",
     ],

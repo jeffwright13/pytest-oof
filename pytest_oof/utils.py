@@ -1,3 +1,4 @@
+import os
 import pickle
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -5,6 +6,7 @@ from pathlib import Path
 from typing import List, Optional
 
 OOF_FILES_DIR = Path.cwd().resolve() / "oof"
+# OOF_FILES_DIR = Path(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
 OOF_FILES_DIR.mkdir(exist_ok=True)
 TERMINAL_OUTPUT_FILE = OOF_FILES_DIR / "terminal_output.ansi"
 RESULTS_FILE = OOF_FILES_DIR / "results.pickle"
