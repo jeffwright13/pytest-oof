@@ -31,7 +31,7 @@ Now run the included console script `oofda`:
 
 `$ oofda`
 
-This script invokes the example code in __main__.py, shows how to consume the oof files, and presents basic results on the console.
+This script invokes the example code in `__main__.py`, shows how to consume the oof files, and presents basic results on the console.
 
 Go ahead - compare the results with the last line of output from `pytest --oof` .
 
