@@ -1,8 +1,8 @@
-from dataclasses import dataclass, field
-from typing import List, Optional
 import pickle
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
+from typing import List, Optional
 
 OOF_FILES_DIR = Path.cwd().resolve() / "oof"
 OOF_FILES_DIR.mkdir(exist_ok=True)
@@ -46,9 +46,11 @@ class TestResult:
             "longreprtext": self.longreprtext,
         }
 
+
 @dataclass
 class TestResults:
     test_results: List[TestResult] = field(default_factory=list)
+
     def all_tests(self):
         return list(self.test_results)
 
@@ -100,6 +102,8 @@ class TestResults:
             for test_result in self.test_results
             if test_result.outcome == "RERUN"
         ]
+
+
 @dataclass
 class RerunTestGroup:
     # A 'rerun test group' consists of a single test that has been run multiple times with the
@@ -114,11 +118,13 @@ class RerunTestGroup:
     forerunners: List[TestResult] = field(default_factory=list)
     full_test_list: List[TestResult] = field(default_factory=list)
 
+
 @dataclass
 class OutputField:
     """An 'output field' (aka a 'section') is a block of text that is displayed in the terminal
     outputduring a pytest run. It provides additional information about the test run: warnings
     errors, etc."""
+
     name: str = ""
     content: str = ""
 
@@ -146,7 +152,9 @@ class Results:
     output_fields: OutputFields
 
     @classmethod
-    def from_files(cls, results_file_path: Path, output_file_path: Optional[Path] = None):
+    def from_files(
+        cls, results_file_path: Path, output_file_path: Optional[Path] = None
+    ):
         terminal_output = ""
         if output_file_path:
             with open(output_file_path, "r") as f:

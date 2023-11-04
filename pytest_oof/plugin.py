@@ -1,22 +1,28 @@
-from dataclasses import asdict
-from _pytest._io.terminalwriter import TerminalWriter
 import itertools
-import pickle, joblib
-from typing import List
-from pathlib import Path
-from strip_ansi import strip_ansi
-import pytest
-from _pytest.config import Config, create_terminal_writer
-from _pytest.config.argparsing import Parser
+import pickle
 import re
-from _pytest.reports import TestReport
+import tempfile
+from datetime import datetime, timezone
 from io import StringIO
 from types import SimpleNamespace
-from datetime import datetime, timezone
-import tempfile
+from typing import List
 
+import pytest
+from _pytest._io.terminalwriter import TerminalWriter
+from _pytest.config import Config, create_terminal_writer
+from _pytest.config.argparsing import Parser
+from _pytest.reports import TestReport
+from strip_ansi import strip_ansi
 
-from pytest_oof.utils import TestResult, RerunTestGroup, OutputField, OutputFields, TestResult, TestResults, TERMINAL_OUTPUT_FILE, RESULTS_FILE
+from pytest_oof.utils import (
+    RESULTS_FILE,
+    TERMINAL_OUTPUT_FILE,
+    OutputField,
+    OutputFields,
+    RerunTestGroup,
+    TestResult,
+    TestResults,
+)
 
 # regex matching patterns for pytest console output fields/sections
 test_session_starts_field_matcher = re.compile(r"^==.*\stest session starts\s==+")
@@ -45,9 +51,7 @@ def pytest_addoption(parser: Parser) -> None:
         action="store_true",
         dest="_oof",
         default=None,
-        help=(
-            "Enable the pytest-oof plugin."
-        ),
+        help=("Enable the pytest-oof plugin."),
     )
     parser.addini(
         "oof",
@@ -55,6 +59,7 @@ def pytest_addoption(parser: Parser) -> None:
         help="Enable the pytest-oof plugin",
         default=False,
     )
+
 
 def add_ansi_to_report(config: Config, report: TestReport) -> None:
     """
@@ -96,9 +101,7 @@ def pytest_cmdline_main(config: Config) -> None:
     # config._oof_session_start_time = (
     #     datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S.%f")
     # )
-    config._oof_session_start_time = (
-        datetime.now(timezone.utc)
-    )
+    config._oof_session_start_time = datetime.now(timezone.utc)
     if not hasattr(config, "_oof_sessionstart"):
         config._oof_sessionstart = True
     if not hasattr(config, "_oof_sessionstart_test_outcome_next"):
@@ -129,6 +132,8 @@ def pytest_cmdline_main(config: Config) -> None:
             short_test_summary=OutputField(name="short_test_summary", content=""),
             lastline=OutputField(name="lastline", content=""),
         )
+
+
 def pytest_report_teststatus(report: TestReport, config: Config) -> None:
     if not hasattr(config.option, "_oof"):
         return
@@ -156,6 +161,7 @@ def pytest_report_teststatus(report: TestReport, config: Config) -> None:
             if oof_test_result.fqtn == report.nodeid:
                 oof_test_result.longreprtext = report.ansi.val
     config._oof_reports.append(report)
+
 
 @pytest.hookimpl(trylast=True)
 def pytest_configure(config: Config) -> None:
@@ -214,9 +220,7 @@ def pytest_configure(config: Config) -> None:
                         1
                     ].rstrip()
                     config._oof_sessionstart_current_fqtn = fqtn
-                    config._oof_test_results.test_results.append(
-                        TestResult(fqtn=fqtn)
-                    )
+                    config._oof_test_results.test_results.append(TestResult(fqtn=fqtn))
                     config._oof_sessionstart_test_outcome_next = True
 
             # If this is an actual test outcome line in the `=== short test summary info ===' field,
@@ -249,9 +253,7 @@ def pytest_configure(config: Config) -> None:
             s_orig = s
             kwargs.pop("flush") if "flush" in kwargs else None
             s_orig = TerminalWriter().markup(s, **kwargs)
-            exec(
-                f"config._oof_fields.{config._oof_current_field}.content += s_orig"
-            )
+            exec(f"config._oof_fields.{config._oof_current_field}.content += s_orig")
             if isinstance(s_orig, str):
                 unmarked_up = s_orig.encode("utf-8")
             config._oof_terminal_out.write(unmarked_up)
@@ -302,7 +304,9 @@ def pytest_unconfigure(config: Config) -> None:
     #     config._oof_session_end_time, "%Y-%m-%d %H:%M:%S.%f"
     # ) - datetime.strptime(config._oof_session_start_time, "%Y-%m-%d %H:%M:%S.%f")
     config._oof_session_end_time = datetime.now(timezone.utc)
-    config._oof_session_duration = config._oof_session_end_time - config._oof_session_start_time
+    config._oof_session_duration = (
+        config._oof_session_end_time - config._oof_session_start_time
+    )
 
     # Populate test result objects with total durations, from each test's TestReport object.
     for oof_test_result, test_report in itertools.product(

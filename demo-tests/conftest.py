@@ -1,6 +1,6 @@
-import pytest
 import random
 
+import pytest
 
 data = [
     "Lorem ipsum dolor sit amet, consectetur adipiscing elit.",
