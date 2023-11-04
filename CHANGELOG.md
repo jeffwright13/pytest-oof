@@ -8,7 +8,7 @@ and this project tries to adhere to [Semantic Versioning](https://semver.org/spe
 ## UNRELEASED
 - N/A
 
-## [0.1.1] 2023-11-03
+## [0.2.0] 2023-11-03
 - Improved console script (allows specifying file lcoations; imrpvoed search mechanism for files))
 
 ## [0.1.1] 2023-11-03
