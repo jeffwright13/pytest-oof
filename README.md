@@ -49,10 +49,22 @@
 
 ## Usage
 
+
+### As an importable module
+
+```
+from pytest_oof.utils import Results
+
+results = Results.from_files(
+    results_file_path="oof/results.pickle",
+    output_file_path="oof/terminal_output.ansi",
+)
+```
+
 ### As a pytest plugin
 
 ```
-
+TBD
 ```
 
 
@@ -195,10 +207,14 @@ Number of warnings: 2
 Number or reruns: 4
 ```
 
-## Disclaimer
+## Limitations and Disclaimer
 
 `pytest-oof` uses pytest's console output in order to generate its results.  This means that if pytest changes its output format, `pytest-oof` may break.  I will do my best to keep up with changes to pytest, but I make no guarantees. So far the same algorithm has held up for 2+ years, but who knows that the pytest devs will do next?
 
-I developed the algorithm used in this plugin because I couldn't find another way to correctly determine the outcome types for the more esoteric outcomes like XPass, XFail, or Rerun. I know there is a way to determine some of this from analyzing succesive TestReport objects, but that still didn't do Reruns correctly, nor Warnings (which are technically not an outcome, but a field in the console output). Tihs plugin gives you all that, plus a string of the individual fields/sections of the console output (like "warnings_summary," "errors," "failures," etc).
+Because it is parsing the console output, it also means that you won't have access to the results until after the test run has completed. Once the test run is over, you are left with two files, as discussed above. If you want to consume the results in real-time, you'll need to use pytest's hooks and/or other plugins (see below for a suggestion).
 
-If you have any issues, please open an issue on the repo.  I'll do my best to address it.
+I developed the algorithm used in this plugin while writing [pytest-tui](https://github.com/jeffwright13/pytest-tui), because I couldn't find another way to correctly determine the outcome types for the more esoteric outcomes like XPass, XFail, or Rerun. I know there is a way to determine some of this from analyzing succesive TestReport objects, but that still didn't do Reruns correctly, nor Warnings (which are technically not an outcome, but a field in the console output). This plugin gives you all that, plus a string of the individual fields/sections of the console output (like "warnings_summary," "errors," "failures," etc).
+
+I do have code that outputs JSON-formatted results in real-time (part of [pytest-tally](https://github.com/jeffwright13/pytest-tally)), but it's not productized. I may do so and include it here in the future, however. This method gets close to being complete, but does not include fields/sections, nor does it correectly handle all ways of skipping tests.
+
+If you have any problems, please open an issue on the repo.  I'll do my best to address it.
