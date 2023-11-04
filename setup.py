@@ -26,7 +26,6 @@ setup(
     py_modules=["pytest_oof"],
     python_requires=">=3.8",
     install_requires=[
-        "ansi2html>=1.8.0",
         "single-source>=0.3.0",
         "strip-ansi>=0.1.1",
     ],

@@ -4,6 +4,18 @@
   - Test outcomes (Failures, Passes, Errors, Skipped, Xfails, Xpasses, Reruns)
   - Test output fields ("live_log_sessionstart", "test_session_starts", "errors", "failures", "passes", "warnings_summary", "rerun_test_summary", "short_test_summary", "lastline")
 
+## Installation
+
+- Clone the repo
+- Make a venv; required dependencies are:
+  - pytest
+  - strip-ansi
+  - single-source
+  - pytest-rerunfailures (if you want to run the demo tests)
+  - faker (if you want to run the demo tests)
+- Install the plugin: `pip install .`
+
+
 ## Usage
 
 
@@ -125,7 +137,7 @@ $
 And here's the result of the included sample script that consumes pytest-oof's output files:
 
 ```
-$  oofda
+$ oofda
 
 Session start time: 2023-11-04 06:27:34.495529
 Session end time: 2023-11-04 06:27:34.741546

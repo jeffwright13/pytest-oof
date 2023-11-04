@@ -21,19 +21,6 @@ class TestResult:
     capstdout: str = ""
     longreprtext: str = ""
 
-    # @staticmethod
-    # def categories():
-    #     return [
-    #         "fqtn",
-    #         "outcome",
-    #         "start_time",
-    #         "duration",
-    #         "caplog",
-    #         "capstderr",
-    #         "capstdout",
-    #         "longreprtext",
-    #     ]
-
     def to_dict(self):
         return {
             "fqtn": self.fqtn,
