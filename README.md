@@ -32,6 +32,7 @@
 - Clone the repo
 - Make a venv; required dependencies are:
   - pytest
+  - rich
   - strip-ansi
   - single-source
   - pytest-rerunfailures (if you want to run the demo tests)
