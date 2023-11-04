@@ -1,8 +1,31 @@
 # pytest-oof: Pytest Outcomes and Output-Fields
 
-## A Pytest plugin providing structured access to your pytest results:
-  - Test outcomes (Failures, Passes, Errors, Skipped, Xfails, Xpasses, Reruns)
-  - Test output fields ("live_log_sessionstart", "test_session_starts", "errors", "failures", "passes", "warnings_summary", "rerun_test_summary", "short_test_summary", "lastline")
+## A Pytest plugin providing structured access to your pytest results
+
+### Test outcomes:
+- Passes
+- Failures
+- Errors
+- Skips
+- Xfails
+- XPasses
+- Warnings
+- Reruns
+
+### Grouped reruns:
+- Rerun tests listed individually
+- Reruns listed by "rerun group" (i.e. all reruns of a given test, with final outcome assigned to group)
+
+### Test output fields (aka "sections"):
+- live_log_sessionstart
+- test_session_starts
+- errors
+- failures
+- passes
+- warnings_summary
+- rerun_test_summary
+- short_test_summary
+- lastline
 
 ## Installation
 
@@ -17,7 +40,6 @@
 
 
 ## Usage
-
 
 First, run your pytest campaign with the `--oof` option:
 
@@ -155,3 +177,11 @@ Number of xpasses: 1
 Number of warnings: 2
 Number or reruns: 4
 ```
+
+## Disclaimer
+
+`pytest-oof` uses the console output in order to generate its results.  This means that it is dependent on the output format of pytest, and that if pytest changes its output format, `pytest-oof` may break.  I will do my best to keep up with changes to pytest, but I make no guarantees. So far the same algorithm has held up for 2+ years, but who knows that the pytest devs will do next?
+
+I developed the algorithm used in this plugin because I couldn't find another way to correctly determine the outcome types for the more esoteric outcomes like XPass, XFail, or Rerun. I know there is a way to determine some of this from analyzing succesive TestReport objects, but that still didn't do Reruns correctly, nor Warnings (which are technically not an outcome, but a field in the console object). Tihs plugin gives you all that, plus a string of the individual fields/sections of the console output (like "warnings_summary," "errors," "failures," etc).
+
+If you have any issues, please open an issue on the repo.  I'll do my best to address it.
