@@ -112,9 +112,16 @@ def api_v1():
     warnings.warn(UserWarning("api v1, should use functions from v2"))
     return 1
 
+def api_v2():
+    warnings.warn(UserWarning("api v2, should use functions from v3"))
+    return 2
 
-def test_basic_warning():
+def test_basic_warning_1():
     assert api_v1() == 1
+
+def test_basic_warning_2():
+    assert api_v2() == 2
+
 
 i = 0
 @pytest.mark.flaky(reruns=2)

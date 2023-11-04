@@ -1,8 +1,7 @@
 from dataclasses import dataclass, field
 from typing import List, Optional
-import pickle, joblib
+import pickle
 from datetime import datetime, timedelta
-import time
 from pathlib import Path
 
 OOF_FILES_DIR = Path.cwd().resolve() / "oof"
@@ -22,18 +21,18 @@ class TestResult:
     capstdout: str = ""
     longreprtext: str = ""
 
-    @staticmethod
-    def categories():
-        return [
-            "fqtn",
-            "outcome",
-            "start_time",
-            "duration",
-            "caplog",
-            "capstderr",
-            "capstdout",
-            "longreprtext",
-        ]
+    # @staticmethod
+    # def categories():
+    #     return [
+    #         "fqtn",
+    #         "outcome",
+    #         "start_time",
+    #         "duration",
+    #         "caplog",
+    #         "capstderr",
+    #         "capstdout",
+    #         "longreprtext",
+    #     ]
 
     def to_dict(self):
         return {
@@ -50,11 +49,6 @@ class TestResult:
 @dataclass
 class TestResults:
     test_results: List[TestResult] = field(default_factory=list)
-    # test_results: List[TestResult]
-
-    def categories():
-        return TestResult.categories()
-
     def all_tests(self):
         return list(self.test_results)
 
@@ -146,7 +140,6 @@ class OutputFields:
 class Results:
     session_start_time: datetime
     session_end_time: datetime
-    # session_duration: float
     session_duration: timedelta
     test_results: List[TestResult]
     rerun_test_groups: List[RerunTestGroup]
