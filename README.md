@@ -21,15 +21,17 @@
 
 First, run your pytest campaign with the `--oof` option:
 
-`pytest --oof`
+`$ pytest --oof`
 
 This generates two files in the `/oof` directory:
 - oof/results.pickle: a pickled collection of dataclasses representing all results in an easy-to-consume format
 - oof/termina_output.ansi: a copy of the entire terminal output from your test session, encoded in ANSI escape codes
 
-Now run the included console script `oofda`. This script invokes the example code in __main__.py, shows how to consume the oof files, and presents basic results on the console. Go ahead - compare the results with the output from `pytest --oof`!
+Now run the included console script `oofda`. This script invokes the example code in __main__.py, shows how to consume the oof files, and presents basic results on the console.
 
-`oofda`
+Go ahead - compare the results with the last line of output from `pytest --oof` .
+
+`$ oofda`
 
 
 ## Example output
@@ -131,7 +133,6 @@ ERROR demo-tests/test_basic.py::test_basic_pass_3_error_in_fixture - Exception: 
 FAILED demo-tests/test_basic.py::test_basic_fail_1 - assert 1 == 2
 FAILED demo-tests/test_basic.py::test_basic_rerun_fail - assert False
 ============ 2 failed, 5 passed, 1 skipped, 1 xfailed, 1 xpassed, 2 warnings, 1 error, 4 rerun in 0.23s =============
-$
 ```
 
 And here's the result of the included sample script that consumes pytest-oof's output files:
