@@ -1,6 +1,6 @@
-# pytest-oof: Pytest Outcomes and Output-Fields
+# pytest-oof: pytest Outcomes and Output-Fields
 
-## A Pytest plugin providing structured access to your pytest results
+## A pytest plugin providing structured access to your pytest results
 
 ### Test outcomes:
 - Passes
