@@ -1,6 +1,7 @@
+from dataclasses import asdict
 from _pytest._io.terminalwriter import TerminalWriter
 import itertools
-import pickle
+import pickle, joblib
 from typing import List
 from pathlib import Path
 from strip_ansi import strip_ansi
@@ -14,20 +15,8 @@ from types import SimpleNamespace
 from datetime import datetime, timezone
 import tempfile
 
-OOF_FILES_DIR = Path.cwd().resolve() / "oof_files"
-OOF_FILES_DIR.mkdir(exist_ok=True)
-TERMINAL_OUTPUT_FILE = OOF_FILES_DIR / "terminal_output.ansi"
-RESULTS_FILE = OOF_FILES_DIR / "results.pickle"
 
-from pytest_oof.pytest_oof import (
-    TestRResult,
-
-    OofRerunTestGroup,
-    OutputField,
-    OutputFields,
-    OofTestResult,
-    OofTestResults,
-)
+from pytest_oof.utils import TestResult, RerunTestGroup, OutputField, OutputFields, TestResult, TestResults, TERMINAL_OUTPUT_FILE, RESULTS_FILE
 
 # regex matching patterns for pytest console output fields/sections
 test_session_starts_field_matcher = re.compile(r"^==.*\stest session starts\s==+")
@@ -104,8 +93,11 @@ def pytest_cmdline_main(config: Config) -> None:
 
     # Using global Config object to store OOF-specific attributes.
     # TODO: port to Stash.
+    # config._oof_session_start_time = (
+    #     datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S.%f")
+    # )
     config._oof_session_start_time = (
-        datetime.now(timezone.utc).replace(microsecond=0).strftime("%Y-%m-%d %H:%M:%S")
+        datetime.now(timezone.utc)
     )
     if not hasattr(config, "_oof_sessionstart"):
         config._oof_sessionstart = True
@@ -122,7 +114,7 @@ def pytest_cmdline_main(config: Config) -> None:
     if not hasattr(config, "_oof_reports"):
         config._oof_reports = []
     if not hasattr(config, "_oof_test_results"):
-        config._oof_test_results = OofTestResults()
+        config._oof_test_results = TestResults()
     if not hasattr(config, "_oof_terminal_out"):
         config._oof_terminal_out = tempfile.TemporaryFile("wb+")
     if not hasattr(config, "_oof_fields"):
@@ -209,7 +201,7 @@ def pytest_configure(config: Config) -> None:
                 s += "\n"
 
             # If this is an actual test outcome line in the initial `=== test session starts ==='
-            # field, populate the OofTestResult's fully qualified test name field.
+            # field, populate the TestResult's fully qualified test name field.
             if config._oof_current_field == "test_session_starts":
                 if config._oof_sessionstart_test_outcome_next:
                     outcome = s.strip()
@@ -223,12 +215,12 @@ def pytest_configure(config: Config) -> None:
                     ].rstrip()
                     config._oof_sessionstart_current_fqtn = fqtn
                     config._oof_test_results.test_results.append(
-                        OofTestResult(fqtn=fqtn)
+                        TestResult(fqtn=fqtn)
                     )
                     config._oof_sessionstart_test_outcome_next = True
 
             # If this is an actual test outcome line in the `=== short test summary info ===' field,
-            # populate the OofTestResult's outcome field.
+            # populate the TestResult's outcome field.
             if config._oof_current_field == "short_test_summary" and re.search(
                 short_test_summary_test_matcher, strip_ansi(s)
             ):
@@ -268,13 +260,13 @@ def pytest_configure(config: Config) -> None:
         tr._tw.write = tee_write
 
 
-def populate_rerun_groups(config: Config) -> List[OofRerunTestGroup]:
-    """Build a list of OofRerunTestGroup objects from the test results."""
+def populate_rerun_groups(config: Config) -> List[RerunTestGroup]:
+    """Build a list of RerunTestGroup objects from the test results."""
     rerun_test_groups = []
     for test_result in config._oof_test_results.test_results:
         if test_result.outcome == "RERUN":
             if test_result.fqtn not in [group.fqtn for group in rerun_test_groups]:
-                oof_test_run_group = OofRerunTestGroup(
+                oof_test_run_group = RerunTestGroup(
                     fqtn=test_result.fqtn, forerunners=[test_result]
                 )
                 rerun_test_groups.append(oof_test_run_group)
@@ -300,12 +292,17 @@ def pytest_unconfigure(config: Config) -> None:
         return
 
     config._oof_rerun_test_groups = populate_rerun_groups(config)
-    config._oof_session_end_time = (
-        datetime.now(timezone.utc).replace(microsecond=0).strftime("%Y-%m-%d %H:%M:%S")
-    )
-    config._oof_session_duration = datetime.strptime(
-        config._oof_session_end_time, "%Y-%m-%d %H:%M:%S"
-    ) - datetime.strptime(config._oof_session_start_time, "%Y-%m-%d %H:%M:%S")
+    # config._oof_session_end_time = (
+    #     datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S.%f")
+    # )
+    # config._oof_session_end_time = (
+    #     datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S.%f")
+    # )
+    # config._oof_session_duration = datetime.strptime(
+    #     config._oof_session_end_time, "%Y-%m-%d %H:%M:%S.%f"
+    # ) - datetime.strptime(config._oof_session_start_time, "%Y-%m-%d %H:%M:%S.%f")
+    config._oof_session_end_time = datetime.now(timezone.utc)
+    config._oof_session_duration = config._oof_session_end_time - config._oof_session_start_time
 
     # Populate test result objects with total durations, from each test's TestReport object.
     for oof_test_result, test_report in itertools.product(
@@ -337,17 +334,16 @@ def pytest_unconfigure(config: Config) -> None:
     with open(TERMINAL_OUTPUT_FILE, "wb") as file:
         file.write(terminal_out)
 
+    # Write the test results to pickle file so we can access them as Python objects later.
     with open(RESULTS_FILE, "wb") as file:
         pickle.dump(
             {
-                "session_start_time": config._oof_session_start_time,
-                "session_end_time": config._oof_session_end_time,
-                "session_duration": config._oof_session_duration,
+                "oof_session_start_time": config._oof_session_start_time,
+                "oof_session_end_time": config._oof_session_end_time,
+                "oof_session_duration": config._oof_session_duration,
                 "oof_test_results": config._oof_test_results,
                 "oof_rerun_test_groups": config._oof_rerun_test_groups,
                 "oof_fields": config._oof_fields,
-                "oof_htmlfile": config.option._oof_htmlfile,
-                "oof_regexfile": config.option._oof_regexfile,
             },
             file,
         )

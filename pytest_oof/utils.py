@@ -1,10 +1,16 @@
 from dataclasses import dataclass, field
 from typing import List, Optional
-import pickle
-from datetime import datetime
+import pickle, joblib
+from datetime import datetime, timedelta
+import time
 from pathlib import Path
 
-# Define your data classes here, previously named with "Tui" prefix
+OOF_FILES_DIR = Path.cwd().resolve() / "oof"
+OOF_FILES_DIR.mkdir(exist_ok=True)
+TERMINAL_OUTPUT_FILE = OOF_FILES_DIR / "terminal_output.ansi"
+RESULTS_FILE = OOF_FILES_DIR / "results.pickle"
+
+
 @dataclass
 class TestResult:
     fqtn: str = ""
@@ -41,8 +47,10 @@ class TestResult:
             "longreprtext": self.longreprtext,
         }
 
+@dataclass
 class TestResults:
     test_results: List[TestResult] = field(default_factory=list)
+    # test_results: List[TestResult]
 
     def categories():
         return TestResult.categories()
@@ -64,7 +72,7 @@ class TestResults:
             if test_result.outcome == "PASSED"
         ]
 
-    def all_skipped(self):
+    def all_skips(self):
         return [
             test_result
             for test_result in self.test_results
@@ -102,10 +110,10 @@ class TestResults:
 class RerunTestGroup:
     # A 'rerun test group' consists of a single test that has been run multiple times with the
     # 'pytest-rerunfailures' plugin.
-    # 'fqtn': fully-qualified test name (same for all tests in a TuiRerunTestGroup);
+    # 'fqtn': fully-qualified test name (same for all tests in a RerunTestGroup);
     # 'final_outcome': final outcome of the test;
-    # 'final_test' TuiTestResult object for the final test (with outcome != RERUN);
-    # 'forerunners':list of TuiTestResult objects for all test that preceded final outcome.
+    # 'final_test' TestResult object for the final test (with outcome != RERUN);
+    # 'forerunners':list of TestResult objects for all test that preceded final outcome.
     fqtn: str = ""
     final_outcome: str = ""
     final_test: TestResult = None
@@ -138,35 +146,28 @@ class OutputFields:
 class Results:
     session_start_time: datetime
     session_end_time: datetime
-    session_duration: float
+    # session_duration: float
+    session_duration: timedelta
     test_results: List[TestResult]
     rerun_test_groups: List[RerunTestGroup]
-    outputfields: OutputFields
+    output_fields: OutputFields
 
     @classmethod
     def from_files(cls, results_file_path: Path, output_file_path: Optional[Path] = None):
-        with open(results_file_path, "rb") as file:
-            test_info = pickle.load(file)
-
         terminal_output = ""
         if output_file_path:
-            with open(output_file_path, "r") as file:
-                terminal_output = file.read()
+            with open(output_file_path, "r") as f:
+                terminal_output = f.read()
+
+        with open(results_file_path, "rb") as f:
+            test_info = pickle.load(f)
 
         # Construct the instance using the data loaded from files
         return cls(
-            session_start_time=test_info["session_start_time"],
-            session_end_time=test_info["session_end_time"],
-            session_duration=test_info["session_duration"],
-            test_results=test_info["test_results"],
-            rerun_test_groups=test_info["rerun_test_groups"],
-            sections=test_info["sections"],
-            # ... more initialization as needed
+            session_start_time=test_info["oof_session_start_time"],
+            session_end_time=test_info["oof_session_end_time"],
+            session_duration=test_info["oof_session_duration"],
+            test_results=test_info["oof_test_results"],
+            rerun_test_groups=test_info["oof_rerun_test_groups"],
+            output_fields=test_info["oof_fields"],
         )
-
-def main():
-    # Usage example:
-    results = Results.from_files(Path('results.pickle'), Path('terminal_out.ansi'))
-
-    # Access the data using dot notation:
-    print(results.session_start_time)

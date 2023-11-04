@@ -1,11 +1,10 @@
 import logging
-import random
 import warnings
 
 import pytest
 
 logger = logging.getLogger()
-logger.setLevel(logging.DEBUG)
+logger.setLevel(logging.INFO)
 
 
 def test_basic_pass_1(fake_data):
