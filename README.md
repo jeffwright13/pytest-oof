@@ -30,7 +30,7 @@
 ## Target audience:
 - Pytest plugin developers and others who neeed access to pytest's results after a test run has completed
 - Taylor Swift fans
-- Anyone who wants to see a summary of their test run without having to parse pytest's console output
+- Anyone who wants to see a summary of their test run -as reported by pytest on the console- without having to parse pytest's console output
 
 ## Installation
 
@@ -43,29 +43,13 @@
   - pytest-rerunfailures (if you want to run the demo tests)
   - faker (if you want to run the demo tests)
 - Install the plugin: `pip install .`
-- Run the demo console script: `oofda` (specify `--help` for options)
-- In your own code, import and use as you wish
+- Use as below:
+    - Run the demo console script: `oofda` (specify `--help` for options)
+    - In your own code, `from pytest-oof.utils import Results` and use as you wish
+    - In your `conftest.py`, use the custom hook as you wish
 
 
 ## Usage
-
-
-### As an importable module
-
-```
-from pytest_oof.utils import Results
-
-results = Results.from_files(
-    results_file_path="oof/results.pickle",
-    output_file_path="oof/terminal_output.ansi",
-)
-```
-
-### As a pytest plugin with custom hooks
-
-```
-
-```
 
 
 ### Demo script
@@ -86,6 +70,34 @@ This script invokes the example code in `__main__.py`, shows how to consume the 
 
 Go ahead - compare the results with the last line of output from `pytest --oof` .
 
+### As an importable module
+
+Run your pytest campaign with the `--oof` option:
+
+`$ pytest --oof`
+
+Now use as you wish:
+
+```
+from pytest_oof.utils import Results
+
+results = Results.from_files(
+    results_file_path="oof/results.pickle",
+    output_file_path="oof/terminal_output.ansi",
+)
+```
+
+### As a pytest plugin with custom hooks
+
+The 'results' parameter will be filled by pytest when the hook is called.
+You can then access the test session data within this block, and do whatever you want with it.
+
+`plugin.py` or `conftest.py`:
+```
+@pytest.hookimpl
+def pytest_oof_results(results):
+    print(f"Received results: {results}")
+```
 
 #### Example output
 
@@ -373,12 +385,12 @@ Output field content:
 
 ## Limitations and Disclaimer
 
-`pytest-oof` uses pytest's console output in order to generate its results.  This means that if pytest changes its output format, `pytest-oof` may break.  I will do my best to keep up with changes to pytest, but I make no guarantees. So far the same algorithm has held up for 2+ years, but who knows that the pytest devs will do next?
+`pytest-oof` uses pytest's console output in order to generate its results.  This means that if pytest changes its output format, `pytest-oof` may break.  I will do my best to keep up with changes to pytest, but I make no guarantees. So far the same algorithm has held up for 2+ years, but who knows what the pytest devs will do next?
 
-Because it is parsing the console output, it also means that you won't have access to the results until after the test run has completed. Once the test run is over, you are left with two files, as discussed above. If you want to consume the results in real-time, you'll need to use pytest's hooks and/or other plugins (see below for a suggestion).
+Because it is parsing the console output, it also means that you won't have access to the results until after the test run has completed (specifically, in `pytest_unconfigure`). Once the test run is over, you are left with two files, as discussed above. If you want to consume the results in real-time, you'll need to use pytest's hooks and/or other plugins (see below for a suggestion).
 
-I developed the algorithm used in this plugin while writing [pytest-tui](https://github.com/jeffwright13/pytest-tui), because I couldn't find another way to correctly determine the outcome types for the more esoteric outcomes like XPass, XFail, or Rerun. I know there is a way to determine some of this from analyzing succesive TestReport objects, but that still didn't do Reruns correctly, nor Warnings (which are technically not an outcome, but a field in the console output). This plugin gives you all that, plus a string of the individual fields/sections of the console output (like "warnings_summary," "errors," "failures," etc).
+I developed the algorithm used in this plugin while writing [pytest-tui](https://github.com/jeffwright13/pytest-tui), because I couldn't find another way to correctly determine the outcome types for the more esoteric outcomes like XPass, XFail, or Rerun. I knew there is a way to determine some of this from analyzing succesive TestReport objects, but that still didn't do Reruns correctly, nor Warnings (which are technically not an outcome, but a field in the console output). This plugin gives you all that, plus a string of the individual fields/sections of the console output (like "warnings_summary," "errors," "failures," etc).
 
 I do have code that outputs JSON-formatted results in real-time (part of [pytest-tally](https://github.com/jeffwright13/pytest-tally)), but it's not productized. I may do so and include it here in the future, however. This method gets close to being complete, but does not include fields/sections, nor does it correectly handle all ways of skipping tests.
 
-If you have any problems, please open an issue on the repo.  I'll do my best to address it.
+If you have any problems or questions, please open an issue on the repo.  I'll do my best to address it.
