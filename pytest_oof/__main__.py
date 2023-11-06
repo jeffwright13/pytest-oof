@@ -1,22 +1,19 @@
 import argparse
-
 from datetime import datetime, timedelta
 from pathlib import Path
-from rich import print
 from typing import Dict, List, Tuple
 
+from rich import print
 from strip_ansi import strip_ansi
 
-from pytest_oof.utils import (
-    RESULTS_FILE,
-    TERMINAL_OUTPUT_FILE,
-    OutputFields,
-    Results,
-    TestResult,
-)
+from pytest_oof.utils import RESULTS_FILE, TERMINAL_OUTPUT_FILE, OutputFields
+from pytest_oof.utils import ResultsFromFiles as Results
+from pytest_oof.utils import TestResult
 
 
-def get_warning_fqtns(test_results: List[TestResult], output_fields: OutputFields) -> List[str]:
+def get_warning_fqtns(
+    test_results: List[TestResult], output_fields: OutputFields
+) -> List[str]:
     fqtns = [result.fqtn for result in test_results]
     warning_field = strip_ansi(output_fields.warnings_summary.content)
     warning_field_lines = [
@@ -41,8 +38,18 @@ def search_for_oof_files() -> Dict[str, Path]:
 
 def parse_args_and_get_files() -> Tuple[Path, Path]:
     parser = argparse.ArgumentParser(description="Process some files.")
-    parser.add_argument('-r', '--results-file', type=str, help='Path to the results file (results.pickle)')
-    parser.add_argument('-t', '--terminal-output-file', type=str, help='Path to the terminal output file (terminal_output.ansi)')
+    parser.add_argument(
+        "-r",
+        "--results-file",
+        type=str,
+        help="Path to the results file (results.pickle)",
+    )
+    parser.add_argument(
+        "-t",
+        "--terminal-output-file",
+        type=str,
+        help="Path to the terminal output file (terminal_output.ansi)",
+    )
 
     args = parser.parse_args()
 
@@ -61,7 +68,9 @@ def parse_args_and_get_files() -> Tuple[Path, Path]:
 
     if args.terminal_output_file:
         terminal_output_file = Path(args.terminal_output_file)
-        print(f"Terminal output file gotten from command line arguments: {terminal_output_file}")
+        print(
+            f"Terminal output file gotten from command line arguments: {terminal_output_file}"
+        )
     else:
         files = search_for_oof_files()
         # terminal_output_file = files.get("terminal_out", TERMINAL_OUTPUT_FILE)
@@ -73,6 +82,8 @@ def parse_args_and_get_files() -> Tuple[Path, Path]:
             terminal_output_file = TERMINAL_OUTPUT_FILE
 
     return results_file, terminal_output_file
+
+
 def main() -> None:
     # Get the files from command line arguments or defaults
     results_file, terminal_output_file = parse_args_and_get_files()
@@ -106,6 +117,29 @@ def main() -> None:
         f"Number of warnings: {len(get_warning_fqtns(results.test_results.test_results, results.output_fields))}"
     )
     print(f"Number or reruns: {len(results.test_results.all_reruns())}")
+
+    print(f"\nOutput field name: {results.output_fields.live_log_sessionstart.name}")
+    print(
+        f"Output field content: \n{results.output_fields.live_log_sessionstart.content}"
+    )
+    print(f"\nOutput field name: {results.output_fields.test_session_starts.name}")
+    print(
+        f"Output field content: \n{results.output_fields.test_session_starts.content}"
+    )
+    print(f"\nOutput field name: {results.output_fields.errors.name}")
+    print(f"Output field content: \n{results.output_fields.errors.content}")
+    print(f"\nOutput field name: {results.output_fields.failures.name}")
+    print(f"Output field content: \n{results.output_fields.failures.content}")
+    print(f"\nOutput field name: {results.output_fields.passes.name}")
+    print(f"Output field content: \n{results.output_fields.passes.content}")
+    print(f"\nOutput field name: {results.output_fields.warnings_summary.name}")
+    print(f"Output field content: \n{results.output_fields.warnings_summary.content}")
+    print(f"\nOutput field name: {results.output_fields.rerun_test_summary.name}")
+    print(f"Output field content: \n{results.output_fields.rerun_test_summary.content}")
+    print(f"\nOutput field name: {results.output_fields.short_test_summary.name}")
+    print(f"Output field content: \n{results.output_fields.short_test_summary.content}")
+    print(f"\nOutput field name: {results.output_fields.lastline.name}")
+    print(f"Output field content: \n{results.output_fields.lastline.content}")
 
 
 if __name__ == "__main__":

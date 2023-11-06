@@ -1,9 +1,8 @@
-import os
 import pickle
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 OOF_FILES_DIR = Path.cwd().resolve() / "oof"
 # OOF_FILES_DIR = Path(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
@@ -140,9 +139,14 @@ class Results:
     rerun_test_groups: List[RerunTestGroup]
     output_fields: OutputFields
 
+
+@dataclass
+class ResultsFromFiles(Results):
     @classmethod
     def from_files(
-        cls, results_file_path: Path, output_file_path: Optional[Path] = None
+        cls,
+        results_file_path: Path = RESULTS_FILE,
+        output_file_path: Path = TERMINAL_OUTPUT_FILE,
     ) -> "Results":
         terminal_output = ""
         if output_file_path:

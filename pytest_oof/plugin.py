@@ -2,6 +2,7 @@ import itertools
 import pickle
 import re
 import tempfile
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from io import StringIO
 from types import SimpleNamespace
@@ -9,17 +10,19 @@ from typing import List
 
 import pytest
 from _pytest._io.terminalwriter import TerminalWriter
-from _pytest.config import Config, create_terminal_writer
+from _pytest.config import Config, PytestPluginManager, create_terminal_writer
 from _pytest.config.argparsing import Parser
 from _pytest.reports import TestReport
 from strip_ansi import strip_ansi
 
+from pytest_oof import hooks
 from pytest_oof.utils import (
     RESULTS_FILE,
     TERMINAL_OUTPUT_FILE,
     OutputField,
     OutputFields,
     RerunTestGroup,
+    Results,
     TestResult,
     TestResults,
 )
@@ -44,6 +47,20 @@ standard_test_matcher = re.compile(
 )
 
 
+@dataclass
+class ResultsFromConfig(Results):
+    @classmethod
+    def from_config(cls, config: Config):
+        return cls(
+            session_start_time=config._oof_session_start_time,
+            session_end_time=config._oof_session_end_time,
+            session_duration=config._oof_session_duration,
+            test_results=config._oof_test_results,
+            rerun_test_groups=config._oof_rerun_test_groups,
+            output_fields=config._oof_fields,
+        )
+
+
 def pytest_addoption(parser: Parser) -> None:
     group = parser.getgroup("oof")
     group.addoption(
@@ -59,6 +76,12 @@ def pytest_addoption(parser: Parser) -> None:
         help="Enable the pytest-oof plugin",
         default=False,
     )
+
+
+def pytest_addhooks(pluginmanager: PytestPluginManager) -> None:
+    """Add hooks used by pytest-oof."""
+    print("Inside hooks.py/pytest_addhooks")
+    pluginmanager.add_hookspecs(hooks.HookSpecs)
 
 
 def add_ansi_to_report(config: Config, report: TestReport) -> None:
@@ -342,3 +365,6 @@ def pytest_unconfigure(config: Config) -> None:
             },
             file,
         )
+
+    results = ResultsFromConfig.from_config(config)
+    config.hook.pytest_oof_results(results=results, _pytest=True)
