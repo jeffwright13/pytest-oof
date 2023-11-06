@@ -61,10 +61,10 @@ results = Results.from_files(
 )
 ```
 
-### As a pytest plugin
+### As a pytest plugin with custom hooks
 
 ```
-TBD
+
 ```
 
 
@@ -92,35 +92,36 @@ Go ahead - compare the results with the last line of output from `pytest --oof` 
 Here's a quick test that has all of the outcomes and scenarios you might encounter during a typical run.
 
 ```
-$  pytest --oof
-================================================ test session starts ================================================
+$ pytest --oof
+
+=========================================== test session starts ===========================================
 platform darwin -- Python 3.11.4, pytest-7.4.3, pluggy-1.3.0 -- /Users/jwr003/coding/pytest-oof/venv/bin/python
 cachedir: .pytest_cache
 rootdir: /Users/jwr003/coding/pytest-oof
-plugins: anyio-4.0.0, rerunfailures-12.0, oof-0.1.0
+plugins: oof-0.2.0, anyio-4.0.0, rerunfailures-12.0, tally-1.3.1
 collecting ...
 collected 11 items
 
-demo-tests/test_basic.py::test_basic_pass_1 PASSED                                                            [  9%]
-demo-tests/test_basic.py::test_basic_pass_3_error_in_fixture ERROR                                            [ 18%]
-demo-tests/test_basic.py::test_basic_fail_1 FAILED                                                            [ 27%]
-demo-tests/test_basic.py::test_basic_skip PASSED                                                              [ 36%]
-demo-tests/test_basic.py::test_basic_xfail XFAIL                                                              [ 45%]
-demo-tests/test_basic.py::test_basic_xpass XPASS                                                              [ 54%]
-demo-tests/test_basic.py::test_basic_warning_1 PASSED                                                         [ 63%]
-demo-tests/test_basic.py::test_basic_warning_2 PASSED                                                         [ 72%]
-demo-tests/test_basic.py::test_basic_rerun_pass RERUN                                                         [ 81%]
-demo-tests/test_basic.py::test_basic_rerun_pass RERUN                                                         [ 81%]
-demo-tests/test_basic.py::test_basic_rerun_pass PASSED                                                        [ 81%]
-demo-tests/test_basic.py::test_basic_rerun_fail RERUN                                                         [ 90%]
-demo-tests/test_basic.py::test_basic_rerun_fail RERUN                                                         [ 90%]
-demo-tests/test_basic.py::test_basic_rerun_fail FAILED                                                        [ 90%]
-demo-tests/test_basic.py::test_basic_skip_marker SKIPPED (Skip this test with marker.)                        [100%]
+demo-tests/test_basic.py::test_basic_pass_1 PASSED                                                  [  9%]
+demo-tests/test_basic.py::test_basic_pass_3_error_in_fixture ERROR                                  [ 18%]
+demo-tests/test_basic.py::test_basic_fail_1 FAILED                                                  [ 27%]
+demo-tests/test_basic.py::test_basic_skip PASSED                                                    [ 36%]
+demo-tests/test_basic.py::test_basic_xfail XFAIL                                                    [ 45%]
+demo-tests/test_basic.py::test_basic_xpass XPASS                                                    [ 54%]
+demo-tests/test_basic.py::test_basic_warning_1 PASSED                                               [ 63%]
+demo-tests/test_basic.py::test_basic_warning_2 PASSED                                               [ 72%]
+demo-tests/test_basic.py::test_basic_rerun_pass RERUN                                               [ 81%]
+demo-tests/test_basic.py::test_basic_rerun_pass RERUN                                               [ 81%]
+demo-tests/test_basic.py::test_basic_rerun_pass PASSED                                              [ 81%]
+demo-tests/test_basic.py::test_basic_rerun_fail RERUN                                               [ 90%]
+demo-tests/test_basic.py::test_basic_rerun_fail RERUN                                               [ 90%]
+demo-tests/test_basic.py::test_basic_rerun_fail FAILED                                              [ 90%]
+demo-tests/test_basic.py::test_basic_skip_marker SKIPPED (Skip this test with marker.)              [100%]
 
-====================================================== ERRORS =======================================================
-_______________________________ ERROR at setup of test_basic_pass_3_error_in_fixture ________________________________
+================================================= ERRORS ==================================================
+__________________________ ERROR at setup of test_basic_pass_3_error_in_fixture ___________________________
 
-fake_data = 'Praesent commodo commodo est, at maximus metus bibendum vitae. Sed ut perspiciatis unde omnis iste natus error sit voluptatem accusantium doloremque laudantium. Lorem ipsum dolor sit amet, consectetur adipiscing elit.'
+fake_data = 'Quis autem vel eum iure reprehenderit qui in ea voluptate velit esse quam nihil molestiae consequatur, vel illum qui ...odo id ut enim. Morbi ornare, nisi vel consectetur bibendum, nibh elit mollis quam, ac vestibulum velit est at turpis.'
 
     @pytest.fixture
     def error_fixt(fake_data):
@@ -128,10 +129,10 @@ fake_data = 'Praesent commodo commodo est, at maximus metus bibendum vitae. Sed 
 E       Exception: Error in fixture
 
 demo-tests/test_basic.py:27: Exception
-===================================================== FAILURES ======================================================
-_________________________________________________ test_basic_fail_1 _________________________________________________
+================================================ FAILURES =================================================
+____________________________________________ test_basic_fail_1 ____________________________________________
 
-fake_data = 'Temporibus autem quibusdam et aut officiis debitis aut rerum necessitatibus saepe eveniet ut et voluptates repudianda...risus suscipit. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur.'
+fake_data = 'Ut enim ad minima veniam, quis nostrum exercitationem ullam corporis suscipit laboriosam, nisi ut aliquid ex ea commo... metus feugiat, gravida mi ac, sagittis nisl. Mauris varius sapien sed turpis congue, ac ullamcorper tortor tincidunt.'
 
     def test_basic_fail_1(fake_data):
         logger.debug(fake_data)
@@ -149,7 +150,7 @@ fake_data = 'Temporibus autem quibusdam et aut officiis debitis aut rerum necess
 E       assert 1 == 2
 
 demo-tests/test_basic.py:57: AssertionError
-_______________________________________________ test_basic_rerun_fail _______________________________________________
+__________________________________________ test_basic_rerun_fail __________________________________________
 
     @pytest.mark.flaky(reruns=2)
     def test_basic_rerun_fail():
@@ -157,7 +158,7 @@ _______________________________________________ test_basic_rerun_fail __________
 E       assert False
 
 demo-tests/test_basic.py:144: AssertionError
-================================================= warnings summary ==================================================
+============================================ warnings summary =============================================
 demo-tests/test_basic.py::test_basic_warning_1
   /Users/jwr003/coding/pytest-oof/demo-tests/test_basic.py:112: UserWarning: api v1, should use functions from v2
     warnings.warn(UserWarning("api v1, should use functions from v2"))
@@ -167,13 +168,13 @@ demo-tests/test_basic.py::test_basic_warning_2
     warnings.warn(UserWarning("api v2, should use functions from v3"))
 
 -- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
-====================================================== PASSES =======================================================
-============================================== rerun test summary info ==============================================
+================================================= PASSES ==================================================
+========================================= rerun test summary info =========================================
 RERUN demo-tests/test_basic.py::test_basic_rerun_pass
 RERUN demo-tests/test_basic.py::test_basic_rerun_pass
 RERUN demo-tests/test_basic.py::test_basic_rerun_fail
 RERUN demo-tests/test_basic.py::test_basic_rerun_fail
-============================================== short test summary info ==============================================
+========================================= short test summary info =========================================
 PASSED demo-tests/test_basic.py::test_basic_pass_1
 PASSED demo-tests/test_basic.py::test_basic_skip
 PASSED demo-tests/test_basic.py::test_basic_warning_1
@@ -185,17 +186,19 @@ XPASS demo-tests/test_basic.py::test_basic_xpass
 ERROR demo-tests/test_basic.py::test_basic_pass_3_error_in_fixture - Exception: Error in fixture
 FAILED demo-tests/test_basic.py::test_basic_fail_1 - assert 1 == 2
 FAILED demo-tests/test_basic.py::test_basic_rerun_fail - assert False
-============ 2 failed, 5 passed, 1 skipped, 1 xfailed, 1 xpassed, 2 warnings, 1 error, 4 rerun in 0.23s =============
+======= 2 failed, 5 passed, 1 skipped, 1 xfailed, 1 xpassed, 2 warnings, 1 error, 4 rerun in 0.23s ========
 ```
 
-And here's the result of the included sample script that consumes pytest-oof's output files:
+And here's the result of the included sample script that consumes pytest-oof's output files. As you can see, you have easy access to all the individual test results, as well as the various sections of the console output.
 
 ```
 $ oofda
 
-Session start time: 2023-11-04 06:27:34.495529
-Session end time: 2023-11-04 06:27:34.741546
-Session duration: 0:00:00.246017
+Session start time: 2023-11-05 16:42:48.540273
+Session end time: 2023-11-05 16:42:48.804730
+Session duration: 0:00:00.264457
+
+
 Number of tests: 15
 Number of passes: 5
 Number of failures: 2
@@ -205,6 +208,167 @@ Number of xfails: 1
 Number of xpasses: 1
 Number of warnings: 2
 Number or reruns: 4
+
+
+Output field name: pre_test
+Output field content:
+
+
+Output field name: test_session_starts
+Output field content:
+[1m=========================================== test session starts
+===========================================[0m
+platform darwin -- Python 3.11.4, pytest-7.4.3, pluggy-1.3.0 --
+/Users/jwr003/coding/pytest-oof/venv/bin/python
+cachedir: .pytest_cache
+rootdir: /Users/jwr003/coding/pytest-oof
+plugins: oof-0.2.0, anyio-4.0.0, rerunfailures-12.0, tally-1.3.1
+[1mcollecting ...
+[0m[1mcollected 11 items
+[0m
+
+demo-tests/test_basic.py::test_basic_pass_1 [32mPASSED[0m[32m
+[  9%][0m
+demo-tests/test_basic.py::test_basic_pass_3_error_in_fixture [31mERROR[0m[31m
+[ 18%][0m
+demo-tests/test_basic.py::test_basic_fail_1 [31mFAILED[0m[31m
+[ 27%][0m
+demo-tests/test_basic.py::test_basic_skip [32mPASSED[0m[31m
+[ 36%][0m
+demo-tests/test_basic.py::test_basic_xfail [33mXFAIL[0m[31m
+[ 45%][0m
+demo-tests/test_basic.py::test_basic_xpass [33mXPASS[0m[31m
+[ 54%][0m
+demo-tests/test_basic.py::test_basic_warning_1 [32mPASSED[0m[31m
+[ 63%][0m
+demo-tests/test_basic.py::test_basic_warning_2 [32mPASSED[0m[31m
+[ 72%][0m
+demo-tests/test_basic.py::test_basic_rerun_pass [33mRERUN[0m[31m
+[ 81%][0m
+demo-tests/test_basic.py::test_basic_rerun_pass [33mRERUN[0m[31m
+[ 81%][0m
+demo-tests/test_basic.py::test_basic_rerun_pass [32mPASSED[0m[31m
+[ 81%][0m
+demo-tests/test_basic.py::test_basic_rerun_fail [33mRERUN[0m[31m
+[ 90%][0m
+demo-tests/test_basic.py::test_basic_rerun_fail [33mRERUN[0m[31m
+[ 90%][0m
+demo-tests/test_basic.py::test_basic_rerun_fail [31mFAILED[0m[31m
+[ 90%][0m
+demo-tests/test_basic.py::test_basic_skip_marker [33mSKIPPED[0m (Skip this test with marker.)[31m
+[100%][0m
+
+
+
+Output field name: errors
+Output field content:
+================================================= ERRORS ==================================================
+[31m[1m__________________________ ERROR at setup of test_basic_pass_3_error_in_fixture
+___________________________[0m
+
+fake_data = 'Quis autem vel eum iure reprehenderit qui in ea voluptate velit esse quam nihil molestiae
+consequatur, vel illum qui ...odo id ut enim. Morbi ornare, nisi vel consectetur bibendum, nibh elit mollis
+quam, ac vestibulum velit est at turpis.'
+
+    [37m@pytest[39;49;00m.fixture[90m[39;49;00m
+    [94mdef[39;49;00m [92merror_fixt[39;49;00m(fake_data):[90m[39;49;00m
+>       [94mraise[39;49;00m [96mException[39;49;00m([33m"[39;49;00m[33mError in
+fixture[39;49;00m[33m"[39;49;00m)[90m[39;49;00m
+[1m[31mE       Exception: Error in fixture[0m
+
+[1m[31mdemo-tests/test_basic.py[0m:27: Exception
+
+
+Output field name: failures
+Output field content:
+================================================ FAILURES =================================================
+[31m[1m____________________________________________ test_basic_fail_1
+____________________________________________[0m
+
+fake_data = 'Ut enim ad minima veniam, quis nostrum exercitationem ullam corporis suscipit laboriosam, nisi
+ut aliquid ex ea commo... metus feugiat, gravida mi ac, sagittis nisl. Mauris varius sapien sed turpis
+congue, ac ullamcorper tortor tincidunt.'
+
+    [94mdef[39;49;00m [92mtest_basic_fail_1[39;49;00m(fake_data):[90m[39;49;00m
+        logger.debug(fake_data)[90m[39;49;00m
+        logger.debug(fake_data)[90m[39;49;00m
+        logger.debug(fake_data)[90m[39;49;00m
+        logger.debug(fake_data)[90m[39;49;00m
+        logger.debug(fake_data)[90m[39;49;00m
+        logger.debug(fake_data)[90m[39;49;00m
+        logger.debug(fake_data)[90m[39;49;00m
+        logger.debug(fake_data)[90m[39;49;00m
+        logger.debug(fake_data)[90m[39;49;00m
+        logger.debug(fake_data)[90m[39;49;00m
+        logger.debug(fake_data)[90m[39;49;00m
+>       [94massert[39;49;00m [94m1[39;49;00m == [94m2[39;49;00m[90m[39;49;00m
+[1m[31mE       assert 1 == 2[0m
+
+[1m[31mdemo-tests/test_basic.py[0m:57: AssertionError
+[31m[1m__________________________________________ test_basic_rerun_fail
+__________________________________________[0m
+
+    [37m@pytest[39;49;00m.mark.flaky(reruns=[94m2[39;49;00m)[90m[39;49;00m
+    [94mdef[39;49;00m [92mtest_basic_rerun_fail[39;49;00m():[90m[39;49;00m
+>       [94massert[39;49;00m [94mFalse[39;49;00m[90m[39;49;00m
+[1m[31mE       assert False[0m
+
+[1m[31mdemo-tests/test_basic.py[0m:144: AssertionError
+
+
+Output field name: passes
+Output field content:
+================================================= PASSES ==================================================
+
+
+Output field name: warnings_summary
+Output field content:
+[33m============================================ warnings summary
+=============================================[0m
+demo-tests/test_basic.py::test_basic_warning_1
+  /Users/jwr003/coding/pytest-oof/demo-tests/test_basic.py:112: UserWarning: api v1, should use functions
+from v2
+    warnings.warn(UserWarning("api v1, should use functions from v2"))
+
+demo-tests/test_basic.py::test_basic_warning_2
+  /Users/jwr003/coding/pytest-oof/demo-tests/test_basic.py:117: UserWarning: api v2, should use functions
+from v3
+    warnings.warn(UserWarning("api v2, should use functions from v3"))
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+
+
+Output field name: rerun_test_summary
+Output field content:
+========================================= rerun test summary info =========================================
+RERUN demo-tests/test_basic.py::test_basic_rerun_pass
+RERUN demo-tests/test_basic.py::test_basic_rerun_pass
+RERUN demo-tests/test_basic.py::test_basic_rerun_fail
+RERUN demo-tests/test_basic.py::test_basic_rerun_fail
+
+
+Output field name: short_test_summary
+Output field content:
+[36m[1m========================================= short test summary info
+=========================================[0m
+[32mPASSED[0m demo-tests/test_basic.py::[1mtest_basic_pass_1[0m
+[32mPASSED[0m demo-tests/test_basic.py::[1mtest_basic_skip[0m
+[32mPASSED[0m demo-tests/test_basic.py::[1mtest_basic_warning_1[0m
+[32mPASSED[0m demo-tests/test_basic.py::[1mtest_basic_warning_2[0m
+[32mPASSED[0m demo-tests/test_basic.py::[1mtest_basic_rerun_pass[0m
+[33mSKIPPED[0m [1] demo-tests/test_basic.py:147: Skip this test with marker.
+[33mXFAIL[0m demo-tests/test_basic.py::[1mtest_basic_xfail[0m
+[33mXPASS[0m demo-tests/test_basic.py::[1mtest_basic_xpass[0m
+[31mERROR[0m demo-tests/test_basic.py::[1mtest_basic_pass_3_error_in_fixture[0m - Exception: Error in
+fixture
+[31mFAILED[0m demo-tests/test_basic.py::[1mtest_basic_fail_1[0m - assert 1 == 2
+[31mFAILED[0m demo-tests/test_basic.py::[1mtest_basic_rerun_fail[0m - assert False
+
+
+Output field name: lastline
+Output field content:
+[31m======= [31m[1m2 failed[0m, [32m5 passed[0m, [33m1 skipped[0m, [33m1 xfailed[0m, [33m1 xpassed[0m,
+[33m2 warnings[0m, [31m[1m1 error[0m, [33m4 rerun[0m[31m in 0.23s[0m[31m ========[0m
 ```
 
 ## Limitations and Disclaimer
