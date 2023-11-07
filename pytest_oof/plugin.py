@@ -247,7 +247,7 @@ def pytest_configure(config: Config) -> None:
                     config._oof_sessionstart_test_outcome_next = True
 
             # If this is an actual test outcome line in the `=== short test summary info ===' field,
-            # populate the TestResult's outcome field.
+            # populate the TestResult's outcome and the has_warning attribute.
             if config._oof_current_field == "short_test_summary" and re.search(
                 short_test_summary_test_matcher, strip_ansi(s)
             ):
@@ -339,6 +339,19 @@ def pytest_unconfigure(config: Config) -> None:
     for oof_test_result in config._oof_test_results.test_results:
         if oof_test_result.outcome == "":
             oof_test_result.outcome = "SKIPPED"
+
+    # Tag any test that has a warning with the has_warning attribute.
+    fqtns = {result.fqtn for result in config._oof_test_results.test_results}
+    warning_field = strip_ansi(config._oof_fields.warnings_summary.content)
+    warning_lines = [
+        line
+        for line in warning_field.split("\n")
+        if any(fqtn in line for fqtn in fqtns)
+    ]
+    warning_fqtns = {line.split()[0] for line in warning_lines}
+    for test_result in config._oof_test_results.test_results:
+        if test_result.fqtn in warning_fqtns:
+            test_result.has_warning = True
 
     config.pluginmanager.getplugin(
         "terminalreporter"

@@ -8,8 +8,13 @@ and this project tries to adhere to [Semantic Versioning](https://semver.org/spe
 ## UNRELEASED
 - N/A
 
-## [0.2.0] 2023-11-03
-- Improved console script (allows specifying file lcoations; imrpvoed search mechanism for files))
+## [0.3.0] 2023-11-05
+- Added 'has_warning' attribute to TestResult object
+- Removed dependency on terminal_out.ansi
+
+## [0.2.0] 2023-11-05
+- Improved console script (allows specifying file location; improved search mechanism))
+- Added hook "pytest_oof_results"
 
 ## [0.1.1] 2023-11-03
 - Fixed console script (there was a conflicting name)

@@ -14,7 +14,7 @@ def read(fname):
 
 setup(
     name="pytest-oof",
-    version="0.2.0",
+    version="0.3.0",
     author="Jeff Wright",
     author_email="jeff.washcloth@gmail.com",
     license="MIT",
@@ -34,7 +34,7 @@ setup(
     include_package_data=True,
     classifiers=[
         "Framework :: Pytest",
-        "Development Status :: 3 - Alpha",
+        "Development Status :: 4 - Beta",
         "Intended Audience :: Developers",
         "Topic :: Software Development :: Testing",
         "Programming Language :: Python :: 3.8",

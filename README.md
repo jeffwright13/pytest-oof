@@ -1,6 +1,6 @@
 # pytest-oof: pytest Outcomes and Output-Fields
 
-## A pytest plugin providing structured access to your pytest results
+## A pytest plugin providing structured access to post-run pytest results
 
 ### Test outcomes:
 - Passes
@@ -28,9 +28,9 @@
 - lastline
 
 ## Target audience:
-- Pytest plugin developers and others who neeed access to pytest's results after a test run has completed
+- Pytest plugin developers and others who need access to pytest's results after a test run has completed
+- Testers who want a summary of their test run *as reported by pytest on the console* without having to parse pytest's complex console output
 - Taylor Swift fans
-- Anyone who wants to see a summary of their test run -as reported by pytest on the console- without having to parse pytest's console output
 
 ## Installation
 
@@ -385,12 +385,17 @@ Output field content:
 
 ## Limitations and Disclaimer
 
-`pytest-oof` uses pytest's console output in order to generate its results.  This means that if pytest changes its output format, `pytest-oof` may break.  I will do my best to keep up with changes to pytest, but I make no guarantees. So far the same algorithm has held up for 2+ years, but who knows what the pytest devs will do next?
+`pytest-oof` uses pytest's console output in order to generate its results. This means that if pytest changes its output format, `pytest-oof` may break. I will do my best to keep up with changes to pytest, but I make no guarantees. So far the same algorithm has held up for 2+ years, but who knows what the pytest devs will do next?
 
-Because it is parsing the console output, it also means that you won't have access to the results until after the test run has completed (specifically, in `pytest_unconfigure`). Once the test run is over, you are left with two files, as discussed above. If you want to consume the results in real-time, you'll need to use pytest's hooks and/or other plugins (see below for a suggestion).
+Because it is parsing the console output, it also means that you won't have access to the results until after the test run has completed (specifically, in `pytest_unconfigure`). Once the test run is over, you are left with two files, as discussed above. If you want to consume a test run's results in real-time, you'll need to use pytest's hooks, and/or other plugins (see below for a suggestion).
 
 I developed the algorithm used in this plugin while writing [pytest-tui](https://github.com/jeffwright13/pytest-tui), because I couldn't find another way to correctly determine the outcome types for the more esoteric outcomes like XPass, XFail, or Rerun. I knew there is a way to determine some of this from analyzing succesive TestReport objects, but that still didn't do Reruns correctly, nor Warnings (which are technically not an outcome, but a field in the console output). This plugin gives you all that, plus a string of the individual fields/sections of the console output (like "warnings_summary," "errors," "failures," etc).
 
-I do have code that outputs JSON-formatted results in real-time (part of [pytest-tally](https://github.com/jeffwright13/pytest-tally)), but it's not productized. I may do so and include it here in the future, however. This method gets close to being complete, but does not include fields/sections, nor does it correectly handle all ways of skipping tests.
+If you have any problems or questions with pytest-oof, open an issue. I'll do my best to address it.
 
-If you have any problems or questions, please open an issue on the repo.  I'll do my best to address it.
+## Other Ways to Get Tets Run Info ##
+
+- pytest-json-encode
+
+
+I do have code that outputs JSON-formatted results in real-time (part of [pytest-tally](https://github.com/jeffwright13/pytest-tally)). This code does *not* rely on the console output, intead getting its information from internal TestReport ojects as they are populated during a test run. In that respect, they are less fragile than pytest-oof. This method gets close to providing a complete representation of a test run's information, but does not include fields/sections, nor does it correectly handle all ways of skipping tests. However, that code is embedded in the tally library and is not prductized. I may do so and include it here in the future if there is any demand.
