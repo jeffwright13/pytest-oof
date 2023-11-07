@@ -8,6 +8,10 @@ and this project tries to adhere to [Semantic Versioning](https://semver.org/spe
 ## UNRELEASED
 - N/A
 
+## [0.3.1] 2023-11-07
+- Support for standard install with `pip`
+
+
 ## [0.3.0] 2023-11-05
 - Added 'has_warning' attribute to TestResult object
 - Removed dependency on terminal_out.ansi

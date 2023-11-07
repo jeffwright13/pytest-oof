@@ -29,14 +29,18 @@
 
 ## Target audience:
 - Pytest plugin developers and others who need access to pytest's results after a test run has completed
-- Testers who want a summary of their test run *as reported by pytest on the console* without having to parse pytest's complex console output
+- Testers who want a summary of their test run *as reported by pytest on the console* (doesn't get more authoritative than that), without having to parse pytest's complex console output
 - Taylor Swift fans
 
 ## Installation
 
+### Standard install
+`pip install -i https://test.pypi.org/simple/ pytest-oof`
+
+### For local development
 - Clone the repo
 - Make a venv; required dependencies are:
-  - pytest
+  - pytest (*duh*)
   - rich
   - strip-ansi
   - single-source
