@@ -53,7 +53,7 @@ class ResultsFromConfig(Results):
     def from_config(cls, config: Config):
         return cls(
             session_start_time=config._oof_session_start_time,
-            session_end_time=config._oof_session_end_time,
+            session_stop_time=config._oof_session_stop_time,
             session_duration=config._oof_session_duration,
             test_results=config._oof_test_results,
             rerun_test_groups=config._oof_rerun_test_groups,
@@ -129,8 +129,8 @@ def pytest_cmdline_main(config: Config) -> None:
         config._oof_sessionstart = True
     if not hasattr(config, "_oof_sessionstart_test_outcome_next"):
         config._oof_sessionstart_test_outcome_next = False
-    if not hasattr(config, "_oof_sessionstart_current_fqtn"):
-        config._oof_sessionstart_current_fqtn = ""
+    if not hasattr(config, "_oof_sessionstart_current_nodeid"):
+        config._oof_sessionstart_current_nodeid = ""
     if not hasattr(config, "_oof_rerun_test_groups"):
         config._oof_rerun_test_groups = []
     if not hasattr(config, "_oof_current_rerun_test_group"):
@@ -165,23 +165,23 @@ def pytest_report_teststatus(report: TestReport, config: Config) -> None:
 
     if hasattr(report, "caplog") and report.caplog:
         for oof_test_result in config._oof_test_results.test_results:
-            if oof_test_result.fqtn == report.nodeid:
+            if oof_test_result.nodeid == report.nodeid:
                 oof_test_result.caplog = report.caplog
 
     if hasattr(report, "capstderr") and report.capstderr:
         for oof_test_result in config._oof_test_results.test_results:
-            if oof_test_result.fqtn == report.nodeid:
+            if oof_test_result.nodeid == report.nodeid:
                 oof_test_result.capstderr = report.capstderr
 
     if hasattr(report, "capstdout") and report.capstdout:
         for oof_test_result in config._oof_test_results.test_results:
-            if oof_test_result.fqtn == report.nodeid:
+            if oof_test_result.nodeid == report.nodeid:
                 oof_test_result.capstdout = report.capstdout
 
     if hasattr(report, "longreprtext") and report.longreprtext:
         add_ansi_to_report(config, report)
         for oof_test_result in config._oof_test_results.test_results:
-            if oof_test_result.fqtn == report.nodeid:
+            if oof_test_result.nodeid == report.nodeid:
                 oof_test_result.longreprtext = report.ansi.val
     config._oof_reports.append(report)
 
@@ -239,11 +239,11 @@ def pytest_configure(config: Config) -> None:
 
                 search = re.search(test_session_starts_test_matcher, s, re.MULTILINE)
                 if search:
-                    fqtn = re.search(test_session_starts_test_matcher, s, re.MULTILINE)[
+                    nodeid = re.search(test_session_starts_test_matcher, s, re.MULTILINE)[
                         1
                     ].rstrip()
-                    config._oof_sessionstart_current_fqtn = fqtn
-                    config._oof_test_results.test_results.append(TestResult(fqtn=fqtn))
+                    config._oof_sessionstart_current_nodeid = nodeid
+                    config._oof_test_results.test_results.append(TestResult(nodeid=nodeid))
                     config._oof_sessionstart_test_outcome_next = True
 
             # If this is an actual test outcome line in the `=== short test summary info ===' field,
@@ -254,13 +254,13 @@ def pytest_configure(config: Config) -> None:
                 outcome = re.search(
                     short_test_summary_test_matcher, strip_ansi(s)
                 ).groups()[0]
-                fqtn = re.search(
+                nodeid = re.search(
                     short_test_summary_test_matcher, strip_ansi(s)
                 ).groups()[1]
 
                 for oof_test_result in config._oof_test_results.test_results:
                     if (
-                        oof_test_result.fqtn == fqtn
+                        oof_test_result.nodeid == nodeid
                         and oof_test_result.outcome != "RERUN"
                     ):
                         oof_test_result.outcome = outcome
@@ -290,19 +290,19 @@ def populate_rerun_groups(config: Config) -> List[RerunTestGroup]:
     rerun_test_groups = []
     for test_result in config._oof_test_results.test_results:
         if test_result.outcome == "RERUN":
-            if test_result.fqtn not in [group.fqtn for group in rerun_test_groups]:
+            if test_result.nodeid not in [group.nodeid for group in rerun_test_groups]:
                 oof_test_run_group = RerunTestGroup(
-                    fqtn=test_result.fqtn, forerunners=[test_result]
+                    nodeid=test_result.nodeid, forerunners=[test_result]
                 )
                 rerun_test_groups.append(oof_test_run_group)
             else:
                 for group in rerun_test_groups:
-                    if group.fqtn == test_result.fqtn:
+                    if group.nodeid == test_result.nodeid:
                         group.forerunners.append(test_result)
     for test_result in config._oof_test_results.test_results:
         if test_result.outcome != "RERUN":
             for group in rerun_test_groups:
-                if group.fqtn == test_result.fqtn:
+                if group.nodeid == test_result.nodeid:
                     group.test_outcome = test_result.outcome
                     group.final_test = test_result
     for group in rerun_test_groups:
@@ -317,40 +317,40 @@ def pytest_unconfigure(config: Config) -> None:
         return
 
     config._oof_rerun_test_groups = populate_rerun_groups(config)
-    config._oof_session_end_time = datetime.now(timezone.utc)
+    config._oof_session_stop_time = datetime.now(timezone.utc)
     config._oof_session_duration = (
-        config._oof_session_end_time - config._oof_session_start_time
+        config._oof_session_stop_time - config._oof_session_start_time
     )
 
     # Populate test result objects with total durations, from each test's TestReport object.
     for oof_test_result, test_report in itertools.product(
         config._oof_test_results.test_results, config._oof_reports
     ):
-        if test_report.nodeid == oof_test_result.fqtn:
+        if test_report.nodeid == oof_test_result.nodeid:
             oof_test_result.duration += test_report.duration
 
     # Assume any test that was not categorized earlier with an outcome is a Skipped test.
     # JUSTIFICATION:
     # Pytest displays Skipped tests in a different format than all other test categories in the
-    # "== short test summary info ==" field, truncating their fqtns and appending a line number
+    # "== short test summary info ==" field, truncating their nodeids and appending a line number
     # instead of specifying their test names. This plugin identifies all other test categories
-    # (passed, failed, errors, etc.) and populates their fqtns and outcomes with the appropriate
+    # (passed, failed, errors, etc.) and populates their nodeids and outcomes with the appropriate
     # values, leaving open one other possibility (Skipped).
     for oof_test_result in config._oof_test_results.test_results:
         if oof_test_result.outcome == "":
             oof_test_result.outcome = "SKIPPED"
 
     # Tag any test that has a warning with the has_warning attribute.
-    fqtns = {result.fqtn for result in config._oof_test_results.test_results}
+    nodeids = {result.nodeid for result in config._oof_test_results.test_results}
     warning_field = strip_ansi(config._oof_fields.warnings_summary.content)
     warning_lines = [
         line
         for line in warning_field.split("\n")
-        if any(fqtn in line for fqtn in fqtns)
+        if any(nodeid in line for nodeid in nodeids)
     ]
-    warning_fqtns = {line.split()[0] for line in warning_lines}
+    warning_nodeids = {line.split()[0] for line in warning_lines}
     for test_result in config._oof_test_results.test_results:
-        if test_result.fqtn in warning_fqtns:
+        if test_result.nodeid in warning_nodeids:
             test_result.has_warning = True
 
     config.pluginmanager.getplugin(
@@ -370,7 +370,7 @@ def pytest_unconfigure(config: Config) -> None:
         pickle.dump(
             {
                 "oof_session_start_time": config._oof_session_start_time,
-                "oof_session_end_time": config._oof_session_end_time,
+                "oof_session_stop_time": config._oof_session_stop_time,
                 "oof_session_duration": config._oof_session_duration,
                 "oof_test_results": config._oof_test_results,
                 "oof_rerun_test_groups": config._oof_rerun_test_groups,

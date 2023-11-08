@@ -8,9 +8,12 @@ and this project tries to adhere to [Semantic Versioning](https://semver.org/spe
 ## UNRELEASED
 - N/A
 
+## [0.3.2] 2023-11-08
+- Changed internal use of term "fqtn" to pytest-standard "nodeid"
+- Updated README.md to include class definitions
+
 ## [0.3.1] 2023-11-07
 - Support for standard install with `pip`
-
 
 ## [0.3.0] 2023-11-05
 - Added 'has_warning' attribute to TestResult object

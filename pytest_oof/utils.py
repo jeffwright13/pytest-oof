@@ -16,7 +16,7 @@ class TestResult:
     """
     'TestResult': a single test result, which is a single test run of a single test
 
-    'fqtn': fully-qualified test name (aka 'node_id' in oytest parlance)
+    'nodeid': pytestt node_id (fully-qualified test name)
     'outcome': outcome of the test (PASSED, FAILED, SKIPPED, etc.)
     'start_time': datetime object for the start time of the test
     'duration': duration of the test in microseconds
@@ -27,7 +27,7 @@ class TestResult:
     'has_warning': whether the test resulted in a warning
     """
 
-    fqtn: str = ""
+    nodeid: str = ""
     outcome: str = ""
     start_time: datetime = None
     duration: float = 0.0
@@ -39,7 +39,7 @@ class TestResult:
 
     def to_dict(self) -> Dict[str, Any]:
         return {
-            "fqtn": self.fqtn,
+            "nodeid": self.nodeid,
             "outcome": self.outcome,
             "start_time": self.start_time,
             "duration": self.duration,
@@ -120,9 +120,9 @@ class TestResults:
     def as_list(self) -> List[TestResult]:
         return list(self.test_results)
 
-    def find_test_result_by_fqtn(self, fqtn: str) -> Union[TestResult, None]:
+    def find_test_result_by_nodeid(self, nodeid: str) -> Union[TestResult, None]:
         for test_result in self.test_results:
-            if test_result.fqtn == fqtn:
+            if test_result.nodeid == nodeid:
                 return test_result
         return None
 
@@ -133,13 +133,13 @@ class RerunTestGroup:
     'RerunTestGroup': a single test that has been run multiple times using
      the 'pytest-rerunfailures' plugin
 
-    'fqtn': fully-qualified test name (same for all tests in a RerunTestGroup)
+    'nodeid': fully-qualified test name (same for all tests in a RerunTestGroup)
     'final_outcome': final outcome of the test
     'final_test' TestResult object for the last test run in the group (outcome != RERUN)
     'forerunners': list of TestResult objects for all test that preceded final outcome
     """
 
-    fqtn: str = ""
+    nodeid: str = ""
     final_outcome: str = ""
     final_test: TestResult = None
     forerunners: List[TestResult] = field(default_factory=list)
@@ -195,7 +195,7 @@ class Results:
     consumable by pytest-oof.
 
     'session_start_time': datetime object for the start time of the test session
-    'session_end_time': datetime object for the end time of the test session
+    'session_stop_time': datetime object for the end time of the test session
     'session_duration': timedelta object with duration of the test session in μs
     'test_results': collection of TestResult objects for all tests in the test session
     'output_fields': collection of OutputField objects for all output fields in the
@@ -205,7 +205,7 @@ class Results:
     """
 
     session_start_time: datetime
-    session_end_time: datetime
+    session_stop_time: datetime
     session_duration: timedelta
     test_results: List[TestResult]
     output_fields: OutputFields
@@ -225,7 +225,7 @@ class Results:
         # Construct the instance using the data loaded from file
         return cls(
             session_start_time=test_info["oof_session_start_time"],
-            session_end_time=test_info["oof_session_end_time"],
+            session_stop_time=test_info["oof_session_stop_time"],
             session_duration=test_info["oof_session_duration"],
             test_results=test_results,
             output_fields=output_fields,

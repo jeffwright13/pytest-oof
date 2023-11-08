@@ -60,7 +60,7 @@ def main() -> None:
         f"\nSession start time: {datetime.strftime(results.session_start_time, '%Y-%m-%d %H:%M:%S.%f')}"
     )
     print(
-        f"Session end time: {datetime.strftime(results.session_end_time, '%Y-%m-%d %H:%M:%S.%f')}"
+        f"Session end time: {datetime.strftime(results.session_stop_time, '%Y-%m-%d %H:%M:%S.%f')}"
     )
     print(
         f"Session duration: {timedelta(seconds=results.session_duration.total_seconds())}"

@@ -32,12 +32,12 @@
 - Testers who want a summary of their test run *as reported by pytest on the console* (doesn't get more authoritative than that), without having to parse pytest's complex console output
 - Taylor Swift fans
 
-## Installation
+# Installation
 
-### Standard install
+## Standard install
 `pip install -i https://test.pypi.org/simple/ pytest-oof`
 
-### For Local Development
+## For Local Development
 - Clone the repo
 - Make a venv; required dependencies are:
   - pytest (*duh*)
@@ -53,10 +53,10 @@
     - In your `conftest.py`, use the custom hook as you wish
 
 
-## Usage
+# Usage
 
 
-### Demo Script
+## Demo Script
 
 First, run your pytest campaign with the `--oof` option:
 
@@ -74,7 +74,7 @@ This script invokes the example code in `__main__.py`, shows how to consume the 
 
 Go ahead - compare the results with the last line of output from `pytest --oof` .
 
-### As an Importable Module
+## As an Importable Module
 
 Run your pytest campaign with the `--oof` option:
 
@@ -91,7 +91,7 @@ results = Results.from_files(
 )
 ```
 
-### As a Pytest Plugin with Custom Hook
+## As a Pytest Plugin with Custom Hook
 
 The 'results' parameter will be filled by pytest when the hook is called.
 You can then access the test session data within this block, and do whatever you want with it.
@@ -103,7 +103,7 @@ def pytest_oof_results(results):
     print(f"Received results: {results}")
 ```
 
-#### Example output
+### Example output
 
 Here's a quick test that has all of the outcomes and scenarios you might encounter during a typical run.
 
@@ -387,7 +387,106 @@ Output field content:
 [33m2 warnings[0m, [31m[1m1 error[0m, [33m4 rerun[0m[31m in 0.23s[0m[31m ========[0m
 ```
 
-## Limitations and Disclaimer
+# Format
+
+`pytest-oof` provides a structured Python object representation of the results of a pytest test run. Esentially, it is a collection of dataclasses, each representing a single test result. The dataclasses are organized into lists/dictionaries, and are pickled to a file for later consumption.
+
+## `Results` (top-level object)
+
+At the highest level you are presented with a `Results` object, defined as follows:
+
+| Attribute | Description |
+| --- | --- |
+| `session_start_time` | datetime object representing UTC time when test session started |
+| `session_stop_time` | datetime object representing UTC time when test session ended |
+| `session_duration` | timedelta object representing duration of test session (to µs resolution) |
+| `test_results` | a single `TestResults` object (see below for definition, but it is essentially a list of `TestResult` instances, with helpful methods to gather TestResult instances based on outcome) |
+| `output_fields` | a dictionary of `OutputField` objects (see below for definition, but basically a dictionary of strings containing the full ANSI-encoded content of a section) |
+| `rerun_test_groups` | a single `RerunTestGroup` instance (see below for complete definition) |
+
+The data structures are defined in `pytest_oof/util.py`. The dataclasses are:
+
+### TestResult
+
+A single test result, which is a single test run of a single test.
+
+| attribute | data type | description |
+| --- | ---- | --- |
+| `nodeid`      | str | canonical test name, with format `source file:::test name` |
+| `outcome` | str | the individual outcome of this test |
+| `start_time` | datetime | UTC time when test started |
+| `duration` | float | duration of test in seconds |
+| `caplog` | str | the contents of the captured log |
+| `capstderr` | str | the contents of the captured stderr |
+| `capstdout` | str | the contents of the captured stdout |
+| `longreprtext` | str | the contents of the captured longreprtext |
+| `has_warning` | bool | whether or not this test had a warning |
+| `to_dict()` | method | returns a dictionary representation of the TestResult object |
+
+### TestResults
+
+A collection of TestResult objects, with convenience methods for accessing subsets of the collection.
+
+| attribute | data type | description |
+| --- | ---- | --- |
+| `test_results` | list | a list of TestResult objects |
+| `all_tests` | method | returns a list of all TestResult objects |
+| `all_passes` | method | returns a list of all TestResult objects with outcome == "passed" |
+| `all_failures` | method | returns a list of all TestResult objects with outcome == "failed" |
+| `all_errors` | method | returns a list of all TestResult objects with outcome == "error" |
+| `all_skips` | method | returns a list of all TestResult objects with outcome == "skipped" |
+| `all_xfails` | method | returns a list of all TestResult objects with outcome == "xfail" |
+| `all_xpasses` | method | returns a list of all TestResult objects with outcome == "xpass" |
+| `all_warnings` | method | returns a list of all TestResult objects with outcome == "warning" |
+| `all_reruns` | method | returns a list of all TestResult objects with outcome == "rerun" |
+| `all_reruns` | method | returns a list of all TestResult objects with outcome == "rerun_group" |
+
+### OutputField
+
+An 'output field' (aka a 'section') is a block of text that is displayed in the terminal
+output during a pytest run. It provides additional information about the test run:
+warnings, errors, etc.
+
+| attribute | data type | description |
+| --- | ---- | --- |
+| `name` | str | the name of the output field |
+| `content` | str | the full ANSI-encoded content of the output field |
+
+### OutputFields
+
+A collection of all available types of OutputField objects. Not all fields will
+be present in every test run. It depends on the plugins that are installed and
+which "-r" flags are specified. This plugin forces the use of "-r RA" to ensure
+any fields that are available are included in the output.
+
+| attribute | data type | description |
+| --- | ---- | --- |
+| `live_log_sessionstart` | OutputField | the first output field, which contains the start time of the test session |
+| `test_session_starts` | OutputField | the second output field, which contains the start time of each test |
+| `errors` | OutputField | the third output field, which contains the error output of each test |
+| `failures` | OutputField | the fourth output field, which contains the failure output of each test |
+| `passes` | OutputField | the fifth output field, which contains the pass output of each test |
+| `warnings_summary` | OutputField | the sixth output field, which contains a summary of warnings |
+| `rerun_test_summary` | OutputField | the seventh output field, which contains a summary of rerun tests |
+| `short_test_summary` | OutputField | the eighth output field, which contains a summary of test outcomes |
+| `lastline` | OutputField | the ninth output field, which contains the last line of terminal output |
+
+### RerunTestGroup
+
+'RerunTestGroup': a single test that has been run multiple times using the 'pytest-rerunfailures' plugin
+
+| attribute | data type | description |
+| --- | ---- | --- |
+| `nodeid` | str | canonical test name, with format `source file:::test name` |
+| `final_outcome` | str | the final outcome of the test group |
+| `final_test` | TestResult | the final TestResult object of the test group |
+| `forerunners` | list | a list of TestResult objects that were rerun |
+| `full_test_list` | list | a chronological list of all TestResult objects in the test group |
+
+
+
+
+# Limitations and Disclaimer
 
 `pytest-oof` uses pytest's console output in order to generate its results. This means that if pytest changes its output format, `pytest-oof` may break. I will do my best to keep up with changes to pytest, but I make no guarantees. So far the same algorithm has held up for 2+ years, but who knows what the pytest devs will do next?
 
@@ -397,7 +496,7 @@ I developed the algorithm used in this plugin while writing [pytest-tui](https:/
 
 If you have any problems or questions with pytest-oof, open an issue. I'll do my best to address it.
 
-## Other Ways to Get Test Run Info ##
+# Other Ways to Get Test Run Info ##
 
 [pytest's junitxml](https://docs.pytest.org/en/6.2.x/usage.html#creating-junitxml-format-files)
 [pytest-json-report](https://pypi.org/project/pytest-json-report/)

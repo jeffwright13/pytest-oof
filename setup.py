@@ -14,7 +14,7 @@ def read(fname):
 
 setup(
     name="pytest-oof",
-    version="0.3.1",
+    version="0.3.2",
     author="Jeff Wright",
     author_email="jeff.washcloth@gmail.com",
     license="MIT",
