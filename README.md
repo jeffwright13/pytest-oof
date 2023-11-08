@@ -2,7 +2,7 @@
 
 ## A pytest plugin providing structured access to post-run pytest results
 
-### Test outcomes:
+### Test Outcomes:
 - Passes
 - Failures
 - Errors
@@ -12,11 +12,11 @@
 - Warnings
 - Reruns
 
-### Grouped reruns:
+### Grouped Reruns:
 - Rerun tests listed individually
 - Reruns listed by "rerun group" (i.e. all reruns of a given test, with final outcome assigned to group)
 
-### Test output fields (aka "sections"):
+### Test Output Fields (aka "sections"):
 - live_log_sessionstart
 - test_session_starts
 - errors
@@ -27,7 +27,7 @@
 - short_test_summary
 - lastline
 
-## Target audience:
+## Target Audience:
 - Pytest plugin developers and others who need access to pytest's results after a test run has completed
 - Testers who want a summary of their test run *as reported by pytest on the console* (doesn't get more authoritative than that), without having to parse pytest's complex console output
 - Taylor Swift fans
@@ -37,7 +37,7 @@
 ### Standard install
 `pip install -i https://test.pypi.org/simple/ pytest-oof`
 
-### For local development
+### For Local Development
 - Clone the repo
 - Make a venv; required dependencies are:
   - pytest (*duh*)
@@ -56,7 +56,7 @@
 ## Usage
 
 
-### Demo script
+### Demo Script
 
 First, run your pytest campaign with the `--oof` option:
 
@@ -74,7 +74,7 @@ This script invokes the example code in `__main__.py`, shows how to consume the 
 
 Go ahead - compare the results with the last line of output from `pytest --oof` .
 
-### As an importable module
+### As an Importable Module
 
 Run your pytest campaign with the `--oof` option:
 
@@ -91,7 +91,7 @@ results = Results.from_files(
 )
 ```
 
-### As a pytest plugin with custom hooks
+### As a Pytest Plugin with Custom Hook
 
 The 'results' parameter will be filled by pytest when the hook is called.
 You can then access the test session data within this block, and do whatever you want with it.
@@ -391,15 +391,16 @@ Output field content:
 
 `pytest-oof` uses pytest's console output in order to generate its results. This means that if pytest changes its output format, `pytest-oof` may break. I will do my best to keep up with changes to pytest, but I make no guarantees. So far the same algorithm has held up for 2+ years, but who knows what the pytest devs will do next?
 
-Because it is parsing the console output, it also means that you won't have access to the results until after the test run has completed (specifically, in `pytest_unconfigure`). Once the test run is over, you are left with two files, as discussed above. If you want to consume a test run's results in real-time, you'll need to use pytest's hooks, and/or other plugins (see below for a suggestion).
+Because it is parsing the console output, it also means that you won't have access to the results until after the test run has completed (specifically, in `pytest_unconfigure`). Once the test run is over, you are left with two files, as discussed above. If you want to consume a test run's results in real-time, you'll need to use pytest's hooks, and/or other plugins (see below for other suggestions).
 
-I developed the algorithm used in this plugin while writing [pytest-tui](https://github.com/jeffwright13/pytest-tui), because I couldn't find another way to correctly determine the outcome types for the more esoteric outcomes like XPass, XFail, or Rerun. I knew there is a way to determine some of this from analyzing succesive TestReport objects, but that still didn't do Reruns correctly, nor Warnings (which are technically not an outcome, but a field in the console output). This plugin gives you all that, plus a string of the individual fields/sections of the console output (like "warnings_summary," "errors," "failures," etc).
+I developed the algorithm used in this plugin while writing [pytest-tui](https://github.com/jeffwright13/pytest-tui), because I couldn't find another way to correctly determine the outcome types for the more esoteric outcomes like XPass, XFail, or Rerun. I knew there was a way to determine some of this from analyzing succesive TestReport objects, but that still didn't do Reruns correctly, nor Warnings (which are technically not an outcome, but a field in the console output). This plugin gives you all that, plus a string of the individual fields/sections of the console output (like "warnings_summary," "errors," "failures," etc).
 
 If you have any problems or questions with pytest-oof, open an issue. I'll do my best to address it.
 
-## Other Ways to Get Tets Run Info ##
+## Other Ways to Get Test Run Info ##
 
-- pytest-json-encode
+[pytest's junitxml](https://docs.pytest.org/en/6.2.x/usage.html#creating-junitxml-format-files)
+[pytest-json-report](https://pypi.org/project/pytest-json-report/)
 
 
-I do have code that outputs JSON-formatted results in real-time (part of [pytest-tally](https://github.com/jeffwright13/pytest-tally)). This code does *not* rely on the console output, intead getting its information from internal TestReport ojects as they are populated during a test run. In that respect, they are less fragile than pytest-oof. This method gets close to providing a complete representation of a test run's information, but does not include fields/sections, nor does it correectly handle all ways of skipping tests. However, that code is embedded in the tally library and is not prductized. I may do so and include it here in the future if there is any demand.
+I also have code that outputs JSON-formatted results in real-time (part of [pytest-tally](https://github.com/jeffwright13/pytest-tally)). This code does *not* rely on the console output, intead getting its information from internal TestReport ojects as they are populated during a test run. In that respect, they are less fragile than pytest-oof. This method gets close to providing a complete representation of a test run's information, but does not include fields/sections, nor does it correectly handle all ways of skipping tests. However, that code is embedded in the tally library and is not prductized. I may do so and include it here in the future if there is any demand.
