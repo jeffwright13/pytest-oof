@@ -17,7 +17,6 @@
 - Reruns listed by "rerun group" (i.e. all reruns of a given test, with final outcome assigned to group)
 
 ### Test Output Fields (aka "sections"):
-- live_log_sessionstart
 - test_session_starts
 - errors
 - failures
@@ -461,7 +460,6 @@ any fields that are available are included in the output.
 
 | attribute | data type | description |
 | --- | ---- | --- |
-| `live_log_sessionstart` | OutputField | the first output field, which contains the start time of the test session |
 | `test_session_starts` | OutputField | the second output field, which contains the start time of each test |
 | `errors` | OutputField | the third output field, which contains the error output of each test |
 | `failures` | OutputField | the fourth output field, which contains the failure output of each test |

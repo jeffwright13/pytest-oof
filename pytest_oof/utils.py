@@ -166,7 +166,6 @@ class OutputFields:
     which "-r" flags are specified. This plugin forces the use of "-r RA" to ensure
     any fields that are available are included in the output.
 
-    'live_log_sessionstart': the first output field, which contains the start time of the test session
     'test_session_starts': the second output field, which contains the start time of each test
     'errors': the third output field, which contains the error output of each test
     'failures': the fourth output field, which contains the failure output of each test
@@ -177,7 +176,6 @@ class OutputFields:
     'lastline': the ninth output field, which contains the last line of terminal output
     """
 
-    live_log_sessionstart: OutputField
     test_session_starts: OutputField
     errors: OutputField
     failures: OutputField

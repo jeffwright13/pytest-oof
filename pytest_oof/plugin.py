@@ -80,7 +80,6 @@ def pytest_addoption(parser: Parser) -> None:
 
 def pytest_addhooks(pluginmanager: PytestPluginManager) -> None:
     """Add hooks used by pytest-oof."""
-    print("Inside hooks.py/pytest_addhooks")
     pluginmanager.add_hookspecs(hooks.HookSpecs)
 
 
@@ -120,10 +119,8 @@ def pytest_cmdline_main(config: Config) -> None:
             config.option.reportchars += "R"
 
     # Using global Config object to store OOF-specific attributes.
-    # TODO: port to Stash.
-    # config._oof_session_start_time = (
-    #     datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S.%f")
-    # )
+    # TODO: port to Stash in future; but this breaks backwards compatibility
+    # for pytest < 7.0.
     config._oof_session_start_time = datetime.now(timezone.utc)
     if not hasattr(config, "_oof_sessionstart"):
         config._oof_sessionstart = True
@@ -145,7 +142,6 @@ def pytest_cmdline_main(config: Config) -> None:
         config._oof_terminal_out = tempfile.TemporaryFile("wb+")
     if not hasattr(config, "_oof_fields"):
         config._oof_fields = OutputFields(
-            live_log_sessionstart=OutputField(name="pre_test", content=""),
             test_session_starts=OutputField(name="test_session_starts", content=""),
             errors=OutputField(name="errors", content=""),
             failures=OutputField(name="failures", content=""),

@@ -74,12 +74,9 @@ def main() -> None:
     print(f"Number of xfails: {len(results.test_results.all_xfails())}")
     print(f"Number of xpasses: {len(results.test_results.all_xpasses())}")
     print(f"Number of warnings: {len(results.test_results.all_warnings())}")
-    print(f"Number or reruns: {len(results.test_results.all_reruns())}")
+    print(f"Number of reruns (total): {len(results.test_results.all_reruns())}")
+    print(f"Number of reruns (unique): {len(set([rerun.nodeid for rerun in results.test_results.all_reruns()]))}")
 
-    print(f"\nOutput field name: {results.output_fields.live_log_sessionstart.name}")
-    print(
-        f"Output field content: \n{results.output_fields.live_log_sessionstart.content}"
-    )
     print(f"\nOutput field name: {results.output_fields.test_session_starts.name}")
     print(
         f"Output field content: \n{results.output_fields.test_session_starts.content}"
