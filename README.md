@@ -411,7 +411,7 @@ A single test result, which is a single test run of a single test.
 
 | attribute | data type | description |
 | --- | ---- | --- |
-| `nodeid`      | str | canonical test name, with format `source file:::test name` |
+| `nodeid`      | str | canonical test name, with format `source file::test name` |
 | `outcome` | str | the individual outcome of this test |
 | `start_time` | datetime | UTC time when test started |
 | `duration` | float | duration of test in seconds |
@@ -475,7 +475,7 @@ any fields that are available are included in the output.
 
 | attribute | data type | description |
 | --- | ---- | --- |
-| `nodeid` | str | canonical test name, with format `source file:::test name` |
+| `nodeid` | str | canonical test name, with format `source file::test name` |
 | `final_outcome` | str | the final outcome of the test group |
 | `final_test` | TestResult | the final TestResult object of the test group |
 | `forerunners` | list | a list of TestResult objects that were rerun |
