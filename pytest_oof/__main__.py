@@ -1,7 +1,7 @@
 import argparse
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Dict
+from typing import Dict, Tuple
 
 from rich import print
 
@@ -17,13 +17,19 @@ def search_for_oof_files() -> Dict[str, Path]:
     }
 
 
-def parse_args_and_get_files() -> Path:
+def parse_args_and_get_files() -> Tuple[str, Path]:
     parser = argparse.ArgumentParser(description="Process some files.")
     parser.add_argument(
         "-r",
         "--results-file",
         type=str,
         help="Path to the results file (results.pickle)",
+    )
+    parser.add_argument(
+        "-s",
+        "--summary",
+        action="store_true",
+        help="Print a summary of the test results",
     )
 
     args = parser.parse_args()
@@ -41,12 +47,12 @@ def parse_args_and_get_files() -> Path:
             print(f"Results file gotten from default: {RESULTS_FILE}")
             results_file = RESULTS_FILE
 
-    return results_file
+    return (args, results_file)
 
 
 def main() -> None:
     # Get the file from command line arguments or defaults
-    results_file = parse_args_and_get_files()
+    args, results_file = parse_args_and_get_files()
 
     # Usage example:
     try:
@@ -73,28 +79,29 @@ def main() -> None:
     print(f"Number of skips: {len(results.test_results.all_skips())}")
     print(f"Number of xfails: {len(results.test_results.all_xfails())}")
     print(f"Number of xpasses: {len(results.test_results.all_xpasses())}")
-    print(f"Number of warnings: {len(results.test_results.all_warnings())}")
     print(f"Number of reruns (total): {len(results.test_results.all_reruns())}")
     print(f"Number of reruns (unique): {len(set([rerun.nodeid for rerun in results.test_results.all_reruns()]))}")
+    print(f"Number of tests with warnings: {len(results.test_results.all_warnings())}")
 
-    print(f"\nOutput field name: {results.output_fields.test_session_starts.name}")
-    print(
-        f"Output field content: \n{results.output_fields.test_session_starts.content}"
-    )
-    print(f"\nOutput field name: {results.output_fields.errors.name}")
-    print(f"Output field content: \n{results.output_fields.errors.content}")
-    print(f"\nOutput field name: {results.output_fields.failures.name}")
-    print(f"Output field content: \n{results.output_fields.failures.content}")
-    print(f"\nOutput field name: {results.output_fields.passes.name}")
-    print(f"Output field content: \n{results.output_fields.passes.content}")
-    print(f"\nOutput field name: {results.output_fields.warnings_summary.name}")
-    print(f"Output field content: \n{results.output_fields.warnings_summary.content}")
-    print(f"\nOutput field name: {results.output_fields.rerun_test_summary.name}")
-    print(f"Output field content: \n{results.output_fields.rerun_test_summary.content}")
-    print(f"\nOutput field name: {results.output_fields.short_test_summary.name}")
-    print(f"Output field content: \n{results.output_fields.short_test_summary.content}")
-    print(f"\nOutput field name: {results.output_fields.lastline.name}")
-    print(f"Output field content: \n{results.output_fields.lastline.content}")
+    if not args.summary:
+        print(f"\nOutput field name: {results.output_fields.test_session_starts.name}")
+        print(
+            f"Output field content: \n{results.output_fields.test_session_starts.content}"
+        )
+        print(f"\nOutput field name: {results.output_fields.errors.name}")
+        print(f"Output field content: \n{results.output_fields.errors.content}")
+        print(f"\nOutput field name: {results.output_fields.failures.name}")
+        print(f"Output field content: \n{results.output_fields.failures.content}")
+        print(f"\nOutput field name: {results.output_fields.passes.name}")
+        print(f"Output field content: \n{results.output_fields.passes.content}")
+        print(f"\nOutput field name: {results.output_fields.warnings_summary.name}")
+        print(f"Output field content: \n{results.output_fields.warnings_summary.content}")
+        print(f"\nOutput field name: {results.output_fields.rerun_test_summary.name}")
+        print(f"Output field content: \n{results.output_fields.rerun_test_summary.content}")
+        print(f"\nOutput field name: {results.output_fields.short_test_summary.name}")
+        print(f"Output field content: \n{results.output_fields.short_test_summary.content}")
+        print(f"\nOutput field name: {results.output_fields.lastline.name}")
+        print(f"Output field content: \n{results.output_fields.lastline.content}")
 
 
 if __name__ == "__main__":
