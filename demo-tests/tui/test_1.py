@@ -258,7 +258,7 @@ def test_10_fail_capturing(fake_data, capsys, logger):
     print("FAIL this stdout is captured")
     print("FAIL this stderr is captured", file=sys.stderr)
     logger.warning("FAIL this log is captured")
-    with capsys.disabled(logger):
+    with capsys.disabled():
         print("FAIL stdout not captured, going directly to sys.stdout")
         print("FAIL stderr not captured, going directly to sys.stderr", file=sys.stderr)
         logger.warning("FAIL is this log captured?")
