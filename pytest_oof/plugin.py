@@ -107,6 +107,20 @@ def add_ansi_to_report(config: Config, report: TestReport) -> None:
     reporter._tw = original_writer
 
 
+def replace_string(original_string, new_char, new_phrase):
+    parts = original_string.split(" ")
+
+    old_phrase_length = len(parts[1])
+    new_phrase_length = len(new_phrase)
+    length_difference = old_phrase_length - new_phrase_length
+    char_count = len(parts[0]) + length_difference // 2
+
+    if length_difference % 2 != 0:
+        return f"{new_char * char_count} {new_phrase} {new_char * (char_count + 1)}"
+    else:
+        return f"{new_char * char_count} {new_phrase} {new_char * char_count}"
+
+
 def pytest_cmdline_main(config: Config) -> None:
     # If the oof option is enabled, put the OOF plugin in verbose mode,
     # and force all test results to be reported, including reruns.
@@ -159,20 +173,41 @@ def pytest_report_teststatus(report: TestReport, config: Config) -> None:
     if not config.option._oof:
         return
 
+    # Instantiate TerminalWriter to write separation strings for captured stdout,
+    # stderr and stdlog. These are appended to the TuiTestResult's capstdout,
+    # captstderr and caplog attrs to replicate terminal output.
+    # Don't do this for longreptext, as it is already included there.
+    caplog_sep = (
+        replace_string(config._oof_test_session_starts_line, "-", "Captured log call")
+        + "\n"
+    )
+    capstderr_sep = (
+        replace_string(
+            config._oof_test_session_starts_line, "-", "Captured stderr call"
+        )
+        + "\n"
+    )
+    capstdout_sep = (
+        replace_string(
+            config._oof_test_session_starts_line, "-", "Captured stdout call"
+        )
+        + "\n"
+    )
+
     if hasattr(report, "caplog") and report.caplog:
         for oof_test_result in config._oof_test_results.test_results:
             if oof_test_result.nodeid == report.nodeid:
-                oof_test_result.caplog = report.caplog
+                oof_test_result.caplog = caplog_sep + report.caplog + "\n"
 
     if hasattr(report, "capstderr") and report.capstderr:
         for oof_test_result in config._oof_test_results.test_results:
             if oof_test_result.nodeid == report.nodeid:
-                oof_test_result.capstderr = report.capstderr
+                oof_test_result.capstderr = capstderr_sep + report.capstderr
 
     if hasattr(report, "capstdout") and report.capstdout:
         for oof_test_result in config._oof_test_results.test_results:
             if oof_test_result.nodeid == report.nodeid:
-                oof_test_result.capstdout = report.capstdout
+                oof_test_result.capstdout = capstdout_sep + report.capstdout
 
     if hasattr(report, "longreprtext") and report.longreprtext:
         add_ansi_to_report(config, report)
@@ -201,6 +236,7 @@ def pytest_configure(config: Config) -> None:
             # Check to see if current line is a field start marker
             if re.search(test_session_starts_field_matcher, s):
                 config._oof_current_field = "test_session_starts"
+                config._oof_test_session_starts_line = s
             if re.search(errors_field_matcher, s):
                 config._oof_current_field = "errors"
             if re.search(failures_field_matcher, s):
@@ -235,11 +271,13 @@ def pytest_configure(config: Config) -> None:
 
                 search = re.search(test_session_starts_test_matcher, s, re.MULTILINE)
                 if search:
-                    nodeid = re.search(test_session_starts_test_matcher, s, re.MULTILINE)[
-                        1
-                    ].rstrip()
+                    nodeid = re.search(
+                        test_session_starts_test_matcher, s, re.MULTILINE
+                    )[1].rstrip()
                     config._oof_sessionstart_current_nodeid = nodeid
-                    config._oof_test_results.test_results.append(TestResult(nodeid=nodeid))
+                    config._oof_test_results.test_results.append(
+                        TestResult(nodeid=nodeid)
+                    )
                     config._oof_sessionstart_test_outcome_next = True
 
             # If this is an actual test outcome line in the `=== short test summary info ===' field,

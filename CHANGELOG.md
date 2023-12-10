@@ -8,6 +8,13 @@ and this project tries to adhere to [Semantic Versioning](https://semver.org/spe
 ## UNRELEASED
 - N/A
 
+## [1.1.0] 2023-12-10
+- Fixed issue 1 (individual test reports are missing section separators)
+- Implemented centralized logging with UTC timestamps in conftest.py for demo-tests.
+
+## [1.0.1] 2023-12-04
+- Added "-s | --summary" option to 'oofda' script
+
 ## [1.0.0] 2023-11-12
 - Improved 'oofda' script to break down Reruns into Total Num Reruns vs. Total Num Unique Reruns
 - Removed unused "live_log_sessionstart" output field; any live log section data is

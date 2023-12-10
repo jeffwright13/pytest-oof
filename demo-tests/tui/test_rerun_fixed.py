@@ -1,6 +1,3 @@
-import random
-import time
-
 import pytest
 
 new_outcome = False

@@ -14,12 +14,12 @@ def read(fname):
 
 setup(
     name="pytest-oof",
-    version="1.0.0",
+    version="1.1.0",
     author="Jeff Wright",
     author_email="jeff.washcloth@gmail.com",
     license="MIT",
     url="https://github.com/jeffwright13/pytest-oof",
-    description="A Pytest plugin providing structured access to a test run's results",
+    description="A Pytest plugin providing structured, programmatic access to a test run's results",
     long_description=read("README.md"),
     long_description_content_type="text/markdown",
     packages=find_packages(),

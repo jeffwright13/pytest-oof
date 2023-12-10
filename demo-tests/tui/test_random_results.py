@@ -1,4 +1,3 @@
-import logging
 import random
 from dataclasses import dataclass
 
@@ -16,8 +15,6 @@ OUTCOMES = [
     "rerun",
 ]
 WEIGHTS = [0.15, 0.60, 0.05, 0.03, 0.02, 0.07, 0.03, 0.05]
-
-logger = logging.getLogger()
 
 
 @pytest.fixture
@@ -81,13 +78,11 @@ def random_result_regex(
     return ret
 
 
-def test_0():
-    logger = logging.get
+def test_0(logger):
     logger.info(random_result_regex("  *-> ", 13, 10, 30))
     assert True
 
 
-def test_1():
-    logger = logging.get
+def test_1(logger):
     logger.info(random_result_regex("  *-> ", 13, 10, 30))
     assert True

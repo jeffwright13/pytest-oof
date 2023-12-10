@@ -1,13 +1,10 @@
-import logging
 import warnings
 
 import pytest
 
-logger = logging.getLogger()
-
 
 @pytest.mark.xfail()
-def test0_xfail():
+def test0_xfail(logger):
     print("Test 0 XFail")
     logger.critical("CRITICAL")
     logger.error("ERROR")
@@ -19,7 +16,7 @@ def test0_xfail():
 
 
 @pytest.mark.xfail()
-def test0_xpass():
+def test0_xpass(logger):
     print("Test 0 XPass")
     logger.critical("CRITICAL")
     logger.error("ERROR")
