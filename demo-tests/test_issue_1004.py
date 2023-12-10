@@ -19,11 +19,3 @@ def test_foo2(bad):
 def good():
     yield
     pass
-
-
-def test_foo(good):
-    assert True
-
-
-def test_foo2(good):
-    assert False
