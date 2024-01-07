@@ -19,11 +19,11 @@ def test_basic_pass_1(fake_data, logger):
 
 
 @pytest.fixture
-def error_fixt(fake_data, logger):
+def error_fixture():
     raise Exception("Error in fixture")
 
 
-def test_basic_pass_3_error_in_fixture(error_fixt, logger, fake_data):
+def test_basic_pass_3_error_in_fixture(logger, fake_data):
     logger.debug(fake_data)
     logger.debug(fake_data)
     logger.debug(fake_data)

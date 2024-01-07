@@ -8,7 +8,7 @@ LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
 
 
 @pytest.fixture
-def error_fixture(fake_data, logger):
+def error_fixtureure(fake_data, logger):
     logger.critical(fake_data)
     logger.error(fake_data)
     logger.warning(fake_data)
@@ -35,13 +35,14 @@ def test_b_fail(fake_data, logger):
     assert 0
 
 
-def test_c_error(fake_data, error_fixture, logger):
+def test_c_error(fake_data, error_fixtureure, logger):
     print("This test should be marked as an Error.")
     logger.critical(fake_data)
     logger.error(fake_data)
     logger.warning(fake_data)
     logger.info(fake_data)
     logger.debug(fake_data)
+    pass
 
 
 def test_d1_skip(fake_data, logger):

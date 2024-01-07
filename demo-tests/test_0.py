@@ -60,11 +60,11 @@ def test0_pass_2_logs(logger):
 
 
 @pytest.fixture
-def error_fixt(logger):
+def error_fixture(logger):
     raise Exception("Error in fixture")
 
 
-def test0_pass_3_error_in_fixture(error_fixt):
+def test0_pass_3_error_in_fixture(error_fixture):
     print("Test Pass 3!")
     assert True
 
