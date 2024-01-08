@@ -4,6 +4,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Union
 
+from strip_ansi import strip_ansi
+
 OOF_FILES_DIR = Path.cwd().resolve() / "oof"
 # OOF_FILES_DIR = Path(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
 OOF_FILES_DIR.mkdir(exist_ok=True)
@@ -228,4 +230,30 @@ class Results:
             test_results=test_results,
             output_fields=output_fields,
             rerun_test_groups=test_info["oof_rerun_test_groups"],
+        )
+
+
+@dataclass
+class TerminalOutput:
+    """
+    'TerminalOutput': the terminal output from a pytest run, with convenience methods
+    """
+
+    output: str = ""
+    output_ansi: str = r""
+
+    @classmethod
+    def from_file(
+        cls,
+        terminal_output_file_path: Path = TERMINAL_OUTPUT_FILE,
+    ) -> "TerminalOutput":
+        # Retrieve terminal output data from 'terminal_output.ansi' file
+        with open(terminal_output_file_path, "r") as f:
+            output_ansi = f.read()
+        output = strip_ansi(output_ansi)
+
+        # Construct the instance using the data loaded from file
+        return cls(
+            output_ansi=output_ansi,
+            output=output,
         )

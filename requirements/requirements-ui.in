@@ -1,0 +1,7 @@
+-c requirements.txt
+
+ansi2html==1.8.0
+faker==18.3.1
+json2table==1.1.5
+pytest-metadata==2.0.4
+textual==0.1.18

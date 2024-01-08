@@ -14,7 +14,7 @@ def read(fname):
 
 setup(
     name="pytest-oof",
-    version="1.1.0",
+    version="2.0.0",
     author="Jeff Wright",
     author_email="jeff.washcloth@gmail.com",
     license="MIT",
@@ -26,9 +26,13 @@ setup(
     py_modules=["pytest_oof"],
     python_requires=">=3.8",
     install_requires=[
+        "ansi2html==1.8.0",
+        "json2table==1.1.5",
+        "pytest-metadata==2.0.4",
         "rich>=10.6.0",
         "single-source>=0.3.0",
         "strip-ansi>=0.1.1",
+        "textual==0.1.18",
     ],
     setup_requires=["setuptools_scm"],
     include_package_data=True,
@@ -49,6 +53,9 @@ setup(
         "pytest11": ["pytest_oof = pytest_oof.plugin"],
         "console_scripts": [
             "oofda = pytest_oof.__main__:main",
+            "oof-console = pytest_oof.clients.console_gen:main",
+            "oof-html = pytest_oof.clients.html_gen:main",
+            "oof-tui = pytest_oof.clients.tui_gen:main",
         ],
     },
 )

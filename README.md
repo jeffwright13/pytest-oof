@@ -5,16 +5,16 @@
 ### Test Outcomes:
 - Passes
 - Failures
-- Errors
 - Skips
 - Xfails
 - XPasses
 - Warnings
+- Errors
 - Reruns
 
 ### Grouped Reruns:
-- Rerun tests listed individually
-- Reruns listed by "rerun group" (i.e. all reruns of a given test, with final outcome assigned to group)
+- Reruns and outcomes listed individually
+- Reruns listed by "rerun group" (all reruns of a given test, with final outcome assigned to group)
 
 ### Test Output Fields (aka "sections"):
 - test_session_starts
@@ -34,22 +34,23 @@
 # Installation
 
 ## Standard install
-`pip install -i https://test.pypi.org/simple/ pytest-oof`
+`pip install -i https://test.pypi.org/simple/pytest-oof`
 
 ## For Local Development
 - Clone the repo
-- Make a venv; required dependencies are:
-  - pytest (*duh*)
-  - rich
-  - strip-ansi
-  - single-source
-  - pytest-rerunfailures (if you want to run the demo tests)
-  - faker (if you want to run the demo tests)
-- Install the plugin: `pip install .`
-- Use as below:
-    - Run the demo console script: `oofda` (specify `--help` for options)
-    - In your own code, `from pytest-oof.utils import Results` and use as you wish
-    - In your `conftest.py`, use the custom hook as you wish
+- Make yourself a venv:
+    - `python -m venv venv`
+    - `source venv/bin/activate --prompt pytest-oof`
+- Install dependencies:
+    - `pip install -r requirements.txt` for standard execution
+    - `pip install -r requirements-dev.txt` for development / unit testing
+    - `pip install -r requirements-ui.txt` for running UIs via console script
+      (UIs available in `pytest_oof/clients`: `oof-argparse`, `oof-html`, `oof-tui`)
+- Install the plugin:
+    - `pip install .` for standard execution / UIs
+    - `pip install -e .` for development / unit testing
+- In your own code, `from pytest-oof.utils import Results` and use as you wish
+- In your `conftest.py`, use the custom hook as you wish
 
 
 # Usage
@@ -67,7 +68,11 @@ This generates two files in the `/oof` directory:
 
 Now run the included console script `oofda`:
 
-`$ oofda`
+`$ oofda --help` (see all options)
+`$ oofda --simple` (generate console output showing Results and TerminalOutput objects)
+`$ oofda --html` (generate an HTML file, `oofda.html`)
+`$ oofda --tui` (run a TUI that displays the same information as the HTML file)
+
 
 This script invokes the example code in `__main__.py`, shows how to consume the oof files, and presents basic results on the console.
 
@@ -82,11 +87,13 @@ Run your pytest campaign with the `--oof` option:
 Now use as you wish:
 
 ```
-from pytest_oof.utils import Results
+from pytest_oof.utils import Results, TerminalOutput
 
-results = Results.from_files(
+results = Results.from_file(
     results_file_path="oof/results.pickle",
-    output_file_path="oof/terminal_output.ansi",
+
+terminal_output = TerminalOutput.from_file(
+    terminal_output_file_path="oof/terminal_output.ansi",
 )
 ```
 
