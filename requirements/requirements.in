@@ -1,4 +1,6 @@
+from-root==1.3.0
 pytest>=6.2.2
-rich>=10.6.0
+rich==12.6.0
 single-source>=0.3.0
 strip-ansi>=0.1.1
+typer==0.9.0

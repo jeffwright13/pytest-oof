@@ -12,7 +12,7 @@ from strip_ansi import strip_ansi
 
 from pytest_oof import __version__
 from pytest_oof.plugin import test_session_starts_results_grabber
-from pytest_oof.utils import TERMINAL_OUTPUT_FILE, Results  # DEFAULT_HTML_FILE,
+from pytest_oof.utils import HTML_FILES_DIR, TERMINAL_OUTPUT_FILE, Results
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -337,7 +337,7 @@ class HtmlPage:
                     f"""<div id="{tab}" class="tabcontent"> {self.get_collapsible_results(tab.lower())} </div>"""
                 )
 
-        # Stitch all the results together to be displayed withint their individual category tabs
+        # Stitch all the results together to be displayed within their individual category tabs
         tab_results = "".join(tab_result_content)
 
         # Construct a single tab which drops down and displays individual Pytest output sections (e.g. "Summary", "Errors", etc.)
@@ -561,8 +561,7 @@ def main():
     html_trailer = page.create_trailer()
     html_out = html_header + html_tabs + html_trailer
 
-    # html_outfile = Path(results.tui_test_info.get("tui_htmlfile", DEFAULT_HTML_FILE))
-    html_outfile = Path(Path.cwd().resolve() / "oof" / "oof-html.html")
+    html_outfile = Path(HTML_FILES_DIR / "oof-html.html")
     page.create_output_file(html_outfile, html_out)
 
 

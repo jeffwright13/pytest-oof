@@ -1,6 +1,6 @@
 # pytest-oof: pytest Outcomes and Output-Fields
 
-## A pytest plugin providing structured access to post-run pytest results
+## a pytest plugin providing structured, programmatic access to a test run's results, as rendered in console
 
 ### Test Outcomes:
 - Passes
@@ -69,7 +69,7 @@ This generates two files in the `/oof` directory:
 Now run the included console script `oofda`:
 
 `$ oofda --help` (see all options)
-`$ oofda --simple` (generate console output showing Results and TerminalOutput objects)
+`$ oofda --console` (generate console output showing Results and TerminalOutput objects)
 `$ oofda --html` (generate an HTML file, `oofda.html`)
 `$ oofda --tui` (run a TUI that displays the same information as the HTML file)
 
@@ -117,7 +117,7 @@ Here's a quick test that has all of the outcomes and scenarios you might encount
 $ pytest --oof
 
 =========================================== test session starts ===========================================
-platform darwin -- Python 3.11.4, pytest-7.4.3, pluggy-1.3.0 -- /Users/jwr003/coding/pytest-oof/venv/bin/python
+platform darwin -- Python 3.11.4, pytest-7.4.3, pluggy-1.3.0
 cachedir: .pytest_cache
 rootdir: /Users/jwr003/coding/pytest-oof
 plugins: oof-0.2.0, anyio-4.0.0, rerunfailures-12.0, tally-1.3.1

@@ -415,3 +415,4 @@ def pytest_unconfigure(config: Config) -> None:
 
     results = ResultsFromConfig.from_config(config)
     config.hook.pytest_oof_results(results=results, _pytest=True)
+    results = ResultsFromConfig.from_config(config)

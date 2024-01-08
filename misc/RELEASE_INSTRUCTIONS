@@ -9,7 +9,7 @@ RELEASE_INSTRUCTIONS
     $ python -m venv venv
     $ source venv/bin/activate
     $ pip install pip-tools
-    $ pip-compile --no-emit-index-url requirements/requirements.in && pip-compile --no-emit-index-url requirements/requirements-dev.in
+    $ pip-compile --no-emit-index-url requirements/requirements.in && pip-compile --no-emit-index-url requirements/requirements-dev.in && pip-compile --no-emit-index-url requirements/requirements-ui.in
     $ pip install -r requirements/requirements.txt
     $ pip install -e .
     $ pytest --oof (R)

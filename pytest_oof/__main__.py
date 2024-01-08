@@ -2,15 +2,17 @@ import os
 import subprocess
 
 import typer
-from rich.console import Console
+from rich.console import Console as rich_console
+
+from pytest_oof.utils import HTML_FILES_DIR
 
 app = typer.Typer()
-console = Console()
+rich_console = rich_console()
 
 
 @app.command()
 def html():
-    console.print("Generating HTML from /oof...", style="green")
+    rich_console.print(f"Generating HTML in {HTML_FILES_DIR}/", style="green")
     subprocess.run(["oof-html"])
     html_file = os.path.join("/oof", "oof-html.html")
     subprocess.run(["python", "-m", "webbrowser", "-t", html_file])
@@ -18,13 +20,13 @@ def html():
 
 @app.command()
 def tui():
-    console.print("Launching TUI...", style="green")
+    rich_console.print("Launching TUI...", style="green")
     subprocess.run(["oof-tui"])
 
 
 @app.command()
-def simple():
-    console.print("Executing Simple UI...", style="green")
+def console():
+    rich_console.print("Executing Simple UI...", style="green")
     subprocess.run(["oof-console"])
 
 

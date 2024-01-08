@@ -10,7 +10,7 @@ from textual.widget import Widget
 from textual.widgets import ScrollView, TreeClick
 
 from pytest_oof.resources.tree_control import TreeControl
-from pytest_oof.utils import Results, TerminalOutput
+from pytest_oof.utils import RESULTS_FILE, TERMINAL_OUTPUT_FILE, Results, TerminalOutput
 
 TREE_WIDTH = 120
 SECTIONS = {
@@ -57,14 +57,14 @@ class Tabs(Widget):
 
         body = self.parent.parent.body
         results = self.parent.parent.results
-        terminal_output = self.parent.parent.terminal_output
+        terminal_out = self.parent.parent.terminal_out
         section_content = {
             "Summary": results.output_fields.lastline.content
             + results.output_fields.test_session_starts.content
             + results.output_fields.short_test_summary.content,
             "Warnings": results.output_fields.warnings_summary.content,
             "Errors": results.output_fields.errors.content,
-            "Full Output": terminal_output.output,
+            "Full Output": terminal_out.output,
         }
         tree_names = {
             "Failures": "failures_tree",
@@ -107,18 +107,14 @@ class Tabs(Widget):
 
 class TuiApp(App):
     async def on_load(self, event: events.Load) -> None:
-        # Get test result sections
-        # self.results = Results()
-        self.results = Results.from_file(
-            results_file_path="oof/results.pickle",
-        )
+        self.results = Results.from_file(RESULTS_FILE)
         if not self.results.output_fields and self.results.test_results:
             exit()
         self.summary_results = self.results.output_fields.lastline.content.replace(
             "=", ""
         )
-        self.terminal_output = TerminalOutput.from_file(
-            terminal_output_file_path="oof/terminal_output.ansi",
+        self.terminal_out = TerminalOutput.from_file(
+            terminal_output_file_path=TERMINAL_OUTPUT_FILE
         )
         await self.bind("q", "quit", "Quit")
 

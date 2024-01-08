@@ -6,11 +6,14 @@ from typing import Any, Dict, List, Union
 
 from strip_ansi import strip_ansi
 
-OOF_FILES_DIR = Path.cwd().resolve() / "oof"
-# OOF_FILES_DIR = Path(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
+from pytest_oof import _project_root
+
+# OOF_FILES_DIR = Path.cwd().resolve() / "oof"
+OOF_FILES_DIR = Path(_project_root) / "oof"
 OOF_FILES_DIR.mkdir(exist_ok=True)
 TERMINAL_OUTPUT_FILE = OOF_FILES_DIR / "terminal_output.ansi"
 RESULTS_FILE = OOF_FILES_DIR / "results.pickle"
+HTML_FILES_DIR = OOF_FILES_DIR / "html"
 
 
 @dataclass
@@ -18,7 +21,7 @@ class TestResult:
     """
     'TestResult': a single test result, which is a single test run of a single test
 
-    'nodeid': pytestt node_id (fully-qualified test name)
+    'nodeid': pytest 'node_id' (formerly fully-qualified test name, or 'fqtn')
     'outcome': outcome of the test (PASSED, FAILED, SKIPPED, etc.)
     'start_time': datetime object for the start time of the test
     'duration': duration of the test in microseconds

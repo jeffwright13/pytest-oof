@@ -2,11 +2,6 @@ import pytest
 
 from .utils import Results
 
-# def pytest_addhooks(pluginmanager: PytestPluginManager) -> None:
-#     """Add hooks used by pytest-oof."""
-#     print("Inside hooks.py/pytest_addhooks")
-#     pluginmanager.add_hookspecs(HookSpecs)
-
 
 class HookSpecs:
     @pytest.hookspec(firstresult=True)
