@@ -11,8 +11,9 @@ from pytest_oof import _project_root
 # OOF_FILES_DIR = Path.cwd().resolve() / "oof"
 OOF_FILES_DIR = Path(_project_root) / "oof"
 OOF_FILES_DIR.mkdir(exist_ok=True)
-TERMINAL_OUTPUT_FILE = OOF_FILES_DIR / "terminal_output.ansi"
-RESULTS_FILE = OOF_FILES_DIR / "results.pickle"
+TERMINAL_OUTPUT_FILE = OOF_FILES_DIR / "oof-terminal_output.ansi"
+RESULTS_FILE = OOF_FILES_DIR / "oof-results.pickle"
+JSON_OUT_FILE = OOF_FILES_DIR / "oof-results.json"
 HTML_FILES_DIR = OOF_FILES_DIR / "html"
 
 

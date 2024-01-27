@@ -1,4 +1,5 @@
 import itertools
+import json
 import pickle
 import re
 import tempfile
@@ -17,6 +18,7 @@ from strip_ansi import strip_ansi
 
 from pytest_oof import hooks
 from pytest_oof.utils import (
+    JSON_OUT_FILE,
     RESULTS_FILE,
     TERMINAL_OUTPUT_FILE,
     OutputField,
@@ -413,6 +415,23 @@ def pytest_unconfigure(config: Config) -> None:
             file,
         )
 
+    """
+    Pickle2JSON is a simple Python Command Line program for converting Pickle file to JSON file.
+    Arguments: Only one (1) argument is expected which is the pickle file.
+    Usage: python pickle2json.py myfile.pkl
+    Output: The output is a JSON file bearing the same filename containing the JSON document of the converted Pickle file.
+    """
+    with open(RESULTS_FILE, "rb") as infile:
+        obj = pickle.load(infile)
+
+    # convert pickle object to json object
+    json_obj = json.loads(json.dumps(obj, default=str))
+
+    # write the json file
+    with open(JSON_OUT_FILE, "w", encoding="utf-8") as outfile:
+        json.dump(json_obj, outfile, ensure_ascii=False, indent=4)
+
+    # define the pytest-oof hook
     results = ResultsFromConfig.from_config(config)
     config.hook.pytest_oof_results(results=results, _pytest=True)
     results = ResultsFromConfig.from_config(config)
