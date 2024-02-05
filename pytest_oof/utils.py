@@ -2,7 +2,7 @@ import pickle
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Dict, List, Union
+from typing import Any, Dict, List
 
 from strip_ansi import strip_ansi
 
@@ -18,6 +18,41 @@ HTML_FILES_DIR = OOF_FILES_DIR / "html"
 
 
 @dataclass
+class TestSessionStats:
+    """
+    'TestSessionStats': cumulative statistics for the entire test session
+    """
+
+    num_tests: int = 0
+    num_passes: int = 0
+    num_failures: int = 0
+    num_errors: int = 0
+    num_skips: int = 0
+    num_xfails: int = 0
+    num_xpasses: int = 0
+    num_reruns_total: int = 0
+    num_reruns_unique: int = 0
+    num_warnings: int = 0
+    num_warnings: int = 0
+    num_warnings_unique: int = 0
+
+    def to_dict(self) -> Dict[str, int]:
+        return {
+            "num_tests": self.num_tests,
+            "num_passes": self.num_passes,
+            "num_failures": self.num_failures,
+            "num_errors": self.num_errors,
+            "num_skips": self.num_skips,
+            "num_xfails": self.num_xfails,
+            "num_xpasses": self.num_xpasses,
+            "num_reruns_total": self.num_reruns_total,
+            "num_reruns_unique": self.num_reruns_unique,
+            "num_warnings": self.num_warnings,
+            "num_warnings_unique": self.num_warnings_unique,
+        }
+
+
+@dataclass
 class TestResult:
     """
     'TestResult': a single test result, which is a single test run of a single test
@@ -30,6 +65,7 @@ class TestResult:
     'capstderr': captured stderr output
     'capstdout': captured stdout output
     'longreprtext': any supplementary text output by the test
+    'longreprtext_stripped': the longreprtext from above, un-ANSI-encoded
     'has_warning': whether the test resulted in a warning
     """
 
@@ -41,6 +77,7 @@ class TestResult:
     capstderr: str = ""
     capstdout: str = ""
     longreprtext: str = ""
+    longreprtext_stripped: str = ""
     has_warning: bool = False
 
     def to_dict(self) -> Dict[str, Any]:
@@ -53,6 +90,7 @@ class TestResult:
             "capstderr": self.capstderr,
             "capstdout": self.capstdout,
             "longreprtext": self.longreprtext,
+            "longreprtext_stripped": self.longreprtext_stripped,
             "has_warning": self.has_warning,
         }
 
@@ -118,19 +156,36 @@ class TestResults:
             if test_result.outcome == "RERUN"
         ]
 
-    def all_warnings(self) -> List[TestResult]:
-        return [
+    def all_warnings(self, uniques_only: bool = False) -> List[TestResult]:
+        """search the warnings section for unique nodeids; mark all TestResult objects that have the same nodeid;
+        then return list of TestResults"""
+        nodeids = set([test_result.nodeid for test_result in self.test_results])
+        for nodeid in nodeids:
+            test_results = [
+                test_result
+                for test_result in self.test_results
+                if test_result.nodeid == nodeid
+            ]
+            if len(test_results) > 1:
+                for test_result in test_results:
+                    test_result.has_warning = True
+        all_tests = [
             test_result for test_result in self.test_results if test_result.has_warning
         ]
+
+        seen_nodeids = set()
+        uniques = []
+        for test_result in self.test_results:
+            if test_result.nodeid not in all_tests:
+                uniques.append(test_result)
+                seen_nodeids.add(test_result.nodeid)
+        return uniques if uniques_only else all_tests
 
     def as_list(self) -> List[TestResult]:
         return list(self.test_results)
 
-    def find_test_result_by_nodeid(self, nodeid: str) -> Union[TestResult, None]:
-        for test_result in self.test_results:
-            if test_result.nodeid == nodeid:
-                return test_result
-        return None
+    def to_list(self) -> List[Dict[str, Any]]:
+        return [test_result.to_dict() for test_result in self.test_results]
 
 
 @dataclass
@@ -150,6 +205,17 @@ class RerunTestGroup:
     final_test: TestResult = None
     forerunners: List[TestResult] = field(default_factory=list)
     full_test_list: List[TestResult] = field(default_factory=list)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "nodeid": self.nodeid,
+            "final_outcome": self.final_outcome,
+            "final_test": self.final_test.to_dict(),
+            "forerunners": [test_result.to_dict() for test_result in self.forerunners],
+            "full_test_list": [
+                test_result.to_dict() for test_result in self.full_test_list
+            ],
+        }
 
 
 @dataclass
@@ -190,6 +256,44 @@ class OutputFields:
     rerun_test_summary: OutputField
     short_test_summary: OutputField
     lastline: OutputField
+    lastline_stripped: str
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "test_session_starts": {
+                "name": self.test_session_starts.name,
+                "content": self.test_session_starts.content,
+            },
+            "errors": {
+                "name": self.errors.name,
+                "content": self.errors.content,
+            },
+            "failures": {
+                "name": self.failures.name,
+                "content": self.failures.content,
+            },
+            "passes": {
+                "name": self.passes.name,
+                "content": self.passes.content,
+            },
+            "warnings_summary": {
+                "name": self.warnings_summary.name,
+                "content": self.warnings_summary.content,
+            },
+            "rerun_test_summary": {
+                "name": self.rerun_test_summary.name,
+                "content": self.rerun_test_summary.content,
+            },
+            "short_test_summary": {
+                "name": self.short_test_summary.name,
+                "content": self.short_test_summary.content,
+            },
+            "lastline": {
+                "name": self.lastline.name,
+                "content": self.lastline.content,
+            },
+            "last_line_stripped": strip_ansi(self.lastline.content),
+        }
 
 
 @dataclass
@@ -198,6 +302,7 @@ class Results:
     'Results': a collection of all data collected during a test run, made nicely
     consumable by pytest-oof.
 
+    'session_stats': overall statistics for this test session
     'session_start_time': datetime object for the start time of the test session
     'session_stop_time': datetime object for the end time of the test session
     'session_duration': timedelta object with duration of the test session in μs
@@ -208,6 +313,7 @@ class Results:
      rerun during the test session
     """
 
+    session_stats: TestSessionStats
     session_start_time: datetime
     session_stop_time: datetime
     session_duration: timedelta
@@ -228,6 +334,8 @@ class Results:
 
         # Construct the instance using the data loaded from file
         return cls(
+            session_stats=test_info["oof_session_stats"],
+            last_line_stripped=strip_ansi(output_fields.lastline.content),
             session_start_time=test_info["oof_session_start_time"],
             session_stop_time=test_info["oof_session_stop_time"],
             session_duration=test_info["oof_session_duration"],

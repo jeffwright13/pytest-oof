@@ -27,6 +27,7 @@ from pytest_oof.utils import (
     Results,
     TestResult,
     TestResults,
+    TestSessionStats,
 )
 
 # regex matching patterns for pytest console output fields/sections
@@ -57,6 +58,7 @@ class ResultsFromConfig(Results):
             session_start_time=config._oof_session_start_time,
             session_stop_time=config._oof_session_stop_time,
             session_duration=config._oof_session_duration,
+            session_stats=config._oof_session_stats,
             test_results=config._oof_test_results,
             rerun_test_groups=config._oof_rerun_test_groups,
             output_fields=config._oof_fields,
@@ -135,7 +137,7 @@ def pytest_cmdline_main(config: Config) -> None:
             config.option.reportchars += "R"
 
     # Using global Config object to store OOF-specific attributes.
-    # TODO: port to Stash in future; but this breaks backwards compatibility
+    # TODO: port to Stash in future; but that will break backwards compatibility
     # for pytest < 7.0.
     config._oof_session_start_time = datetime.now(timezone.utc)
     if not hasattr(config, "_oof_sessionstart"):
@@ -144,6 +146,8 @@ def pytest_cmdline_main(config: Config) -> None:
         config._oof_sessionstart_test_outcome_next = False
     if not hasattr(config, "_oof_sessionstart_current_nodeid"):
         config._oof_sessionstart_current_nodeid = ""
+    if not hasattr(config, "_oof_session_stats"):
+        config._oof_session_stats = TestSessionStats()
     if not hasattr(config, "_oof_rerun_test_groups"):
         config._oof_rerun_test_groups = []
     if not hasattr(config, "_oof_current_rerun_test_group"):
@@ -166,6 +170,7 @@ def pytest_cmdline_main(config: Config) -> None:
             rerun_test_summary=OutputField(name="rerun_test_summary", content=""),
             short_test_summary=OutputField(name="short_test_summary", content=""),
             lastline=OutputField(name="lastline", content=""),
+            lastline_stripped=OutputField(name="lastline_stripped", content=""),
         )
 
 
@@ -216,6 +221,14 @@ def pytest_report_teststatus(report: TestReport, config: Config) -> None:
         for oof_test_result in config._oof_test_results.test_results:
             if oof_test_result.nodeid == report.nodeid:
                 oof_test_result.longreprtext = report.ansi.val
+                oof_test_result.longreprtext_stripped = oof_test_result.longreprtext
+
+    if hasattr(report, "longreprtext") and report.longreprtext:
+        add_ansi_to_report(config, report)
+        for oof_test_result in config._oof_test_results.test_results:
+            if oof_test_result.nodeid == report.nodeid:
+                oof_test_result.longreprtext = report.ansi.val
+
     config._oof_reports.append(report)
 
 
@@ -264,7 +277,7 @@ def pytest_configure(config: Config) -> None:
                 s += "\n"
 
             # If this is an actual test outcome line in the initial `=== test session starts ==='
-            # field, populate the TestResult's fully qualified test name field.
+            # field, populate the TestResult's fully qualified test name field (aka nodeid).
             if config._oof_current_field == "test_session_starts":
                 if config._oof_sessionstart_test_outcome_next:
                     outcome = s.strip()
@@ -283,7 +296,7 @@ def pytest_configure(config: Config) -> None:
                     config._oof_sessionstart_test_outcome_next = True
 
             # If this is an actual test outcome line in the `=== short test summary info ===' field,
-            # populate the TestResult's outcome and the has_warning attribute.
+            # populate the TestResult's outcome attribute.
             if config._oof_current_field == "short_test_summary" and re.search(
                 short_test_summary_test_matcher, strip_ansi(s)
             ):
@@ -322,7 +335,7 @@ def pytest_configure(config: Config) -> None:
 
 
 def populate_rerun_groups(config: Config) -> List[RerunTestGroup]:
-    """Build a list of RerunTestGroup objects from the test results."""
+    """Build a list of RerunTestGroup objects from the test"""
     rerun_test_groups = []
     for test_result in config._oof_test_results.test_results:
         if test_result.outcome == "RERUN":
@@ -341,6 +354,7 @@ def populate_rerun_groups(config: Config) -> List[RerunTestGroup]:
                 if group.nodeid == test_result.nodeid:
                     group.test_outcome = test_result.outcome
                     group.final_test = test_result
+                    group.final_outcome = test_result.outcome
     for group in rerun_test_groups:
         group.full_test_list = group.forerunners + [group.final_test]
     return rerun_test_groups
@@ -356,6 +370,21 @@ def pytest_unconfigure(config: Config) -> None:
     config._oof_session_stop_time = datetime.now(timezone.utc)
     config._oof_session_duration = (
         config._oof_session_stop_time - config._oof_session_start_time
+    )
+    config._oof_session_stats = TestSessionStats(
+        num_tests=len(config._oof_test_results.all_tests()),
+        num_passes=len(config._oof_test_results.all_passes()),
+        num_failures=len(config._oof_test_results.all_failures()),
+        num_skips=len(config._oof_test_results.all_skips()),
+        num_errors=len(config._oof_test_results.all_errors()),
+        num_xfails=len(config._oof_test_results.all_xfails()),
+        num_xpasses=len(config._oof_test_results.all_xpasses()),
+        num_reruns_total=len(config._oof_test_results.all_reruns()),
+        num_reruns_unique=len(
+            set([rerun.nodeid for rerun in config._oof_test_results.all_reruns()])
+        ),
+        num_warnings=len(config._oof_test_results.all_warnings()),
+        # num_warnings_unique = config._oof_test_results.num_warnings_unique()
     )
 
     # Populate test result objects with total durations, from each test's TestReport object.
@@ -376,22 +405,22 @@ def pytest_unconfigure(config: Config) -> None:
         if oof_test_result.outcome == "":
             oof_test_result.outcome = "SKIPPED"
 
-    # Tag any test that has a warning with the has_warning attribute.
+    # Tag any test that appears in the warning field with the 'has_warning' attribute.
+
     nodeids = {result.nodeid for result in config._oof_test_results.test_results}
     warning_field = strip_ansi(config._oof_fields.warnings_summary.content)
-    warning_lines = [
-        line
-        for line in warning_field.split("\n")
-        if any(nodeid in line for nodeid in nodeids)
-    ]
-    warning_nodeids = {line.split()[0] for line in warning_lines}
+    warning_lines = warning_field.split("\n")
+    warning_nodeids = set(
+        [line for line in warning_lines if any(nodeid in line for nodeid in nodeids)]
+    )
     for test_result in config._oof_test_results.test_results:
-        if test_result.nodeid in warning_nodeids:
-            test_result.has_warning = True
+        for warning_nodeid in warning_nodeids:
+            if test_result.nodeid is warning_nodeid:
+                test_result.has_warning = True
 
-    config.pluginmanager.getplugin(
-        "terminalreporter"
-    )  # <= ???  does not appear to be used
+    # config.pluginmanager.getplugin(
+    #     "terminalreporter"
+    # )  # <= ???  does not appear to be used
 
     # Rewind the temp file containing all the raw ANSI lines sent to the terminal;
     # read its contents;  then close it. Then, write info to file.
@@ -401,10 +430,13 @@ def pytest_unconfigure(config: Config) -> None:
     with open(TERMINAL_OUTPUT_FILE, "wb") as file:
         file.write(terminal_out)
 
-    # Write the test results to pickle file so we can access them as Python objects later.
+    # Write the test results to a pickle file so we can access them as Python objects later.
     with open(RESULTS_FILE, "wb") as file:
         pickle.dump(
             {
+                "oof_session_stats": config._oof_session_stats.to_dict(),
+                # "oof_lastline": config._oof_fields.lastline.content,
+                # "oof_lastline_stripped": strip_ansi(config._oof_fields.lastline.content),
                 "oof_session_start_time": config._oof_session_start_time,
                 "oof_session_stop_time": config._oof_session_stop_time,
                 "oof_session_duration": config._oof_session_duration,
@@ -415,23 +447,28 @@ def pytest_unconfigure(config: Config) -> None:
             file,
         )
 
-    """
-    Pickle2JSON is a simple Python Command Line program for converting Pickle file to JSON file.
-    Arguments: Only one (1) argument is expected which is the pickle file.
-    Usage: python pickle2json.py myfile.pkl
-    Output: The output is a JSON file bearing the same filename containing the JSON document of the converted Pickle file.
-    """
-    with open(RESULTS_FILE, "rb") as infile:
-        obj = pickle.load(infile)
-
-    # convert pickle object to json object
-    json_obj = json.loads(json.dumps(obj, default=str))
-
-    # write the json file
+    # We can't pickle dataclassses, so we'll write the test results to a JSON file as well.
     with open(JSON_OUT_FILE, "w", encoding="utf-8") as outfile:
-        json.dump(json_obj, outfile, ensure_ascii=False, indent=4)
+        json.dump(
+            {
+                "oof_session_stats": config._oof_session_stats.to_dict(),
+                # "oof_lastline": config._oof_fields.lastline.content,
+                # "oof_lastline_stripped": strip_ansi(config._oof_fields.lastline.content),
+                "oof_session_start_time": config._oof_session_start_time.isoformat(),
+                "oof_session_stop_time": config._oof_session_stop_time.isoformat(),
+                "oof_session_duration": config._oof_session_duration.total_seconds(),
+                "oof_test_results": config._oof_test_results.to_list(),
+                "oof_rerun_test_groups": [
+                    group.to_dict() for group in config._oof_rerun_test_groups
+                ],
+                "oof_fields": config._oof_fields.to_dict(),
+            },
+            outfile,
+            ensure_ascii=False,
+            indent=4,
+        )
 
     # define the pytest-oof hook
     results = ResultsFromConfig.from_config(config)
     config.hook.pytest_oof_results(results=results, _pytest=True)
-    results = ResultsFromConfig.from_config(config)
+    print()
