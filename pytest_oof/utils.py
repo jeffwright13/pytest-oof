@@ -30,9 +30,8 @@ class TestSessionStats:
     num_skips: int = 0
     num_xfails: int = 0
     num_xpasses: int = 0
-    num_reruns_total: int = 0
+    num_reruns: int = 0
     num_reruns_unique: int = 0
-    num_warnings: int = 0
     num_warnings: int = 0
     num_warnings_unique: int = 0
 
@@ -45,7 +44,7 @@ class TestSessionStats:
             "num_skips": self.num_skips,
             "num_xfails": self.num_xfails,
             "num_xpasses": self.num_xpasses,
-            "num_reruns_total": self.num_reruns_total,
+            "num_reruns": self.num_reruns,
             "num_reruns_unique": self.num_reruns_unique,
             "num_warnings": self.num_warnings,
             "num_warnings_unique": self.num_warnings_unique,
@@ -156,9 +155,11 @@ class TestResults:
             if test_result.outcome == "RERUN"
         ]
 
-    def all_warnings(self, uniques_only: bool = False) -> List[TestResult]:
+    def all_warnings(self) -> List[TestResult]:
         """search the warnings section for unique nodeids; mark all TestResult objects that have the same nodeid;
         then return list of TestResults"""
+
+        # Populate 'has_warning' attribute for all TestResult objects
         nodeids = set([test_result.nodeid for test_result in self.test_results])
         for nodeid in nodeids:
             test_results = [
@@ -169,17 +170,25 @@ class TestResults:
             if len(test_results) > 1:
                 for test_result in test_results:
                     test_result.has_warning = True
-        all_tests = [
+
+        return [
             test_result for test_result in self.test_results if test_result.has_warning
         ]
 
+    def all_warnings_unique(
+        self,
+    ) -> List[TestResult]:
+        all_warnings = self.all_warnings()
+
+        # Uniquify the list of TestResult objects that have 'has_warning' attr
         seen_nodeids = set()
         uniques = []
         for test_result in self.test_results:
-            if test_result.nodeid not in all_tests:
+            if test_result.nodeid not in all_warnings:
                 uniques.append(test_result)
                 seen_nodeids.add(test_result.nodeid)
-        return uniques if uniques_only else all_tests
+
+        return uniques
 
     def as_list(self) -> List[TestResult]:
         return list(self.test_results)

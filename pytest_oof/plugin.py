@@ -379,12 +379,12 @@ def pytest_unconfigure(config: Config) -> None:
         num_errors=len(config._oof_test_results.all_errors()),
         num_xfails=len(config._oof_test_results.all_xfails()),
         num_xpasses=len(config._oof_test_results.all_xpasses()),
-        num_reruns_total=len(config._oof_test_results.all_reruns()),
+        num_reruns=len(config._oof_test_results.all_reruns()),
         num_reruns_unique=len(
             set([rerun.nodeid for rerun in config._oof_test_results.all_reruns()])
         ),
         num_warnings=len(config._oof_test_results.all_warnings()),
-        # num_warnings_unique = config._oof_test_results.num_warnings_unique()
+        num_warnings_unique=len(config._oof_test_results.all_warnings_unique()),
     )
 
     # Populate test result objects with total durations, from each test's TestReport object.
@@ -417,10 +417,6 @@ def pytest_unconfigure(config: Config) -> None:
         for warning_nodeid in warning_nodeids:
             if test_result.nodeid is warning_nodeid:
                 test_result.has_warning = True
-
-    # config.pluginmanager.getplugin(
-    #     "terminalreporter"
-    # )  # <= ???  does not appear to be used
 
     # Rewind the temp file containing all the raw ANSI lines sent to the terminal;
     # read its contents;  then close it. Then, write info to file.
