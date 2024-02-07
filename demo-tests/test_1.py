@@ -150,6 +150,24 @@ def test_g_eval_parameterized(fake_data, test_input, expected, logger):
     assert eval(test_input) == expected
 
 
+@pytest.mark.parametrize("test_input, expected", [("3+5", 8), ("2+4", 6), ("6*9", 42)])
+def test_g2_eval_parameterized_for_warning(fake_data, test_input, expected, logger):
+    print(f"Testing {test_input} == {expected}")
+    warnings.warn(Warning(fake_data(50, 200)))
+    warnings.warn(UserWarning(fake_data(55, 205)))
+    warnings.warn(DeprecationWarning(fake_data(55, 205)))
+    warnings.warn(SyntaxWarning(fake_data(55, 205)))
+    warnings.warn(RuntimeWarning(fake_data(55, 205)))
+    warnings.warn(FutureWarning(fake_data(55, 205)))
+    warnings.warn(PendingDeprecationWarning(fake_data(55, 205)))
+    warnings.warn(ImportWarning(fake_data(55, 205)))
+    warnings.warn(UnicodeWarning(fake_data(55, 205)))
+    warnings.warn(BytesWarning(fake_data(55, 205)))
+    warnings.warn(ResourceWarning(fake_data(55, 205)))
+    warnings.warn((fake_data(55, 205)))
+    assert True
+
+
 @pytest.fixture
 def log_testname(fake_data, logger):
     logger.info(f"Running test {__name__}...")

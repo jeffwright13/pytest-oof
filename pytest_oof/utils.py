@@ -72,12 +72,12 @@ class TestResult:
     outcome: str = ""
     start_time: datetime = None
     duration: float = 0.0
+    has_warning: bool = False
     caplog: str = ""
     capstderr: str = ""
     capstdout: str = ""
     longreprtext: str = ""
     longreprtext_stripped: str = ""
-    has_warning: bool = False
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -156,39 +156,64 @@ class TestResults:
         ]
 
     def all_warnings(self) -> List[TestResult]:
-        """search the warnings section for unique nodeids; mark all TestResult objects that have the same nodeid;
-        then return list of TestResults"""
-
-        # Populate 'has_warning' attribute for all TestResult objects
-        nodeids = set([test_result.nodeid for test_result in self.test_results])
-        for nodeid in nodeids:
-            test_results = [
-                test_result
-                for test_result in self.test_results
-                if test_result.nodeid == nodeid
-            ]
-            if len(test_results) > 1:
-                for test_result in test_results:
-                    test_result.has_warning = True
-
         return [
             test_result for test_result in self.test_results if test_result.has_warning
         ]
 
-    def all_warnings_unique(
-        self,
-    ) -> List[TestResult]:
-        all_warnings = self.all_warnings()
+    def all_warnings_unique(self) -> List[TestResult]:
+        # Get a list of TestResult objects with warnings
+        warnings = self.all_warnings()
 
-        # Uniquify the list of TestResult objects that have 'has_warning' attr
-        seen_nodeids = set()
-        uniques = []
-        for test_result in self.test_results:
-            if test_result.nodeid not in all_warnings:
-                uniques.append(test_result)
-                seen_nodeids.add(test_result.nodeid)
+        # Use a set to track unique nodeids
+        unique_nodeids = set()
 
-        return uniques
+        # Initialize a list for unique TestResult objects
+        unique_results = []
+
+        # Iterate through the warnings
+        for warning in warnings:
+            # Check if the nodeid is unique
+            if warning.nodeid not in unique_nodeids:
+                # Add the TestResult to the list of unique results
+                unique_results.append(warning)
+
+                # Mark the nodeid as seen
+                unique_nodeids.add(warning.nodeid)
+
+        return unique_results
+
+    # def all_warnings_unique(self) -> List[TestResult]:
+    #     # Get a list of TestResult objects with warnings
+    #     warnings = self.all_warnings()
+
+    #     # Use a set to track unique nodeids
+    #     unique_nodeids = set()
+
+    #     # Initialize a list for unique TestResult objects
+    #     unique_results = []
+
+    #     # Iterate through the warnings
+    #     for warning in warnings:
+    #         # Check if the nodeid is unique
+    #         if warning.nodeid not in unique_nodeids:
+    #             # Add the TestResult to the list of unique results
+    #             unique_results.append(warning)
+
+    #             # Mark the nodeid as seen
+    #             unique_nodeids.add(warning.nodeid)
+
+    #     return unique_results
+
+    # def all_warnings_unique(
+    #     self,
+    # ) -> List[TestResult]:
+    #     # Uniquify the list of TestResult objects that have 'has_warning' attr
+
+    #     uniques = []
+    #     for warning in self.all_warnings():
+    #         if warning.nodeid not in [unique.nodeid for unique in uniques]:
+    #             uniques.append(warning)
+    #     return uniques
 
     def as_list(self) -> List[TestResult]:
         return list(self.test_results)
@@ -237,6 +262,7 @@ class OutputField:
 
     name: str = ""
     content: str = ""
+    content_stripped: str = ""
 
 
 @dataclass
@@ -265,44 +291,85 @@ class OutputFields:
     rerun_test_summary: OutputField
     short_test_summary: OutputField
     lastline: OutputField
-    lastline_stripped: str
 
     def to_dict(self) -> Dict[str, Any]:
-        return {
-            "test_session_starts": {
-                "name": self.test_session_starts.name,
-                "content": self.test_session_starts.content,
-            },
-            "errors": {
-                "name": self.errors.name,
-                "content": self.errors.content,
-            },
-            "failures": {
-                "name": self.failures.name,
-                "content": self.failures.content,
-            },
-            "passes": {
-                "name": self.passes.name,
-                "content": self.passes.content,
-            },
-            "warnings_summary": {
-                "name": self.warnings_summary.name,
-                "content": self.warnings_summary.content,
-            },
-            "rerun_test_summary": {
-                "name": self.rerun_test_summary.name,
-                "content": self.rerun_test_summary.content,
-            },
-            "short_test_summary": {
-                "name": self.short_test_summary.name,
-                "content": self.short_test_summary.content,
-            },
-            "lastline": {
-                "name": self.lastline.name,
-                "content": self.lastline.content,
-            },
-            "last_line_stripped": strip_ansi(self.lastline.content),
-        }
+        fields = [
+            "test_session_starts",
+            "errors",
+            "failures",
+            "passes",
+            "warnings_summary",
+            "rerun_test_summary",
+            "short_test_summary",
+            "lastline",
+        ]
+
+        output_dict = {}
+        for fld in fields:
+            output_field = getattr(self, fld)
+            output_dict[fld] = {
+                "name": output_field.name,
+                "content": output_field.content,
+                "content_stripped": strip_ansi(output_field.content),
+            }
+
+        return output_dict
+
+    # def to_dict(self) -> Dict[str, Any]:
+    #     output_dict = {}
+    #     for field_name, output_field in self.__dict__.items():
+    #         if not field_name.startswith('_') and isinstance(output_field, OutputField):
+    #             output_dict[field_name] = {
+    #                 "name": output_field.name,
+    #                 "content": output_field.content,
+    #                 "content_stripped": strip_ansi(output_field.content),
+    #             }
+
+    #     return output_dict
+
+    # def to_dict(self) -> Dict[str, Any]:
+    #     return {
+    #         "test_session_starts": {
+    #             "name": self.test_session_starts.name,
+    #             "content": self.test_session_starts.content,
+    #             "content_stripped": strip_ansi(self.content),
+    #         },
+    #         "errors": {
+    #             "name": self.errors.name,
+    #             "content": self.errors.content,
+    #             "content_stripped": strip_ansi(self.errors.content),
+    #         },
+    #         "failures": {
+    #             "name": self.failures.name,
+    #             "content": self.failures.content,
+    #             "content_stripped": strip_ansi(self.failures.content),
+    #         },
+    #         "passes": {
+    #             "name": self.passes.name,
+    #             "content": self.passes.content,
+    #             "content_stripped": strip_ansi(self.passes.content),
+    #         },
+    #         "warnings_summary": {
+    #             "name": self.warnings_summary.name,
+    #             "content": self.warnings_summary.content,
+    #             "content_stripped": strip_ansi(self.warnings_summary.content),
+    #         },
+    #         "rerun_test_summary": {
+    #             "name": self.rerun_test_summary.name,
+    #             "content": self.rerun_test_summary.content,
+    #             "content_stripped": strip_ansi(self.rerun_test_summary.content),
+    #         },
+    #         "short_test_summary": {
+    #             "name": self.short_test_summary.name,
+    #             "content": self.short_test_summary.content,
+    #             "content_stripped": strip_ansi(self.short_test_summary.content),
+    #         },
+    #         "lastline": {
+    #             "name": self.lastline.name,
+    #             "content": self.lastline.content,
+    #             "content_stripped": strip_ansi(self.lastline.content),
+    #         },
+    #     }
 
 
 @dataclass
@@ -318,6 +385,7 @@ class Results:
     'test_results': collection of TestResult objects for all tests in the test session
     'output_fields': collection of OutputField objects for all output fields in the
      test session's console-out
+    'warnings': collection of TestResult objects for all tests that resulted in warnings
     'rerun_test_groups': collection of RerunTestGroup objects for all tests that were
      rerun during the test session
     """
@@ -328,6 +396,7 @@ class Results:
     session_duration: timedelta
     test_results: List[TestResult]
     output_fields: OutputFields
+    warnings: List[TestResult]
     rerun_test_groups: List[RerunTestGroup]
 
     @classmethod
@@ -350,6 +419,7 @@ class Results:
             session_duration=test_info["oof_session_duration"],
             test_results=test_results,
             output_fields=output_fields,
+            warnings=test_info["oof_warnings"],
             rerun_test_groups=test_info["oof_rerun_test_groups"],
         )
 

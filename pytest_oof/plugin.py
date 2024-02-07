@@ -43,25 +43,31 @@ short_test_summary_field_matcher = re.compile(r"^==.*\sshort test summary info\s
 short_test_summary_test_matcher = re.compile(
     r"^(PASSED|FAILED|ERROR|SKIPPED|XFAIL|XPASS|RERUN)\s+(?:\[\d+\]\s)?(\S+)(?:.*)?$"
 )
-warnings_summary_test_matcher = re.compile(r"^([^\n]+:{1,2}[^\n]+)\n([^\n]+\n)+")
+# warnings_summary_test_matcher = re.compile(r"^([^\n]+:{1,2}[^\n]+)\n([^\n]+\n)+")
+warnings_summary_test_matcher = re.compile(r"^[\w\/-]+\.py:+:*\w+")
+
 lastline_matcher = re.compile(r"^==.*in\s\d+.\d+s.*=+")
 standard_test_matcher = re.compile(
     r"(.*\::\S+)\s(PASSED|FAILED|ERROR|SKIPPED|XFAIL|XPASS|RERUN)"
 )
+# nodeid_matcher = re.compile(r"([\w/.]+::[\w/]+(?:\[[^\]]+\])?)")
 
 
 @dataclass
 class ResultsFromConfig(Results):
     @classmethod
-    def from_config(cls, config: Config):
+    def from_config(
+        cls, config: Config
+    ):  # 'config' refers to global pytest Config object
         return cls(
+            session_stats=config._oof_session_stats,
             session_start_time=config._oof_session_start_time,
             session_stop_time=config._oof_session_stop_time,
             session_duration=config._oof_session_duration,
-            session_stats=config._oof_session_stats,
             test_results=config._oof_test_results,
-            rerun_test_groups=config._oof_rerun_test_groups,
             output_fields=config._oof_fields,
+            warnings=config._oof_test_results.all_warnings(),
+            rerun_test_groups=config._oof_rerun_test_groups,
         )
 
 
@@ -170,7 +176,6 @@ def pytest_cmdline_main(config: Config) -> None:
             rerun_test_summary=OutputField(name="rerun_test_summary", content=""),
             short_test_summary=OutputField(name="short_test_summary", content=""),
             lastline=OutputField(name="lastline", content=""),
-            lastline_stripped=OutputField(name="lastline_stripped", content=""),
         )
 
 
@@ -326,12 +331,16 @@ def pytest_configure(config: Config) -> None:
             kwargs.pop("flush") if "flush" in kwargs else None
             s_orig = TerminalWriter().markup(s, **kwargs)
             exec(f"config._oof_fields.{config._oof_current_field}.content += s_orig")
+            exec(
+                f"config._oof_fields.{config._oof_current_field}.content_stripped += strip_ansi(s_orig)"
+            )
             if isinstance(s_orig, str):
                 unmarked_up = s_orig.encode("utf-8")
             config._oof_terminal_out.write(unmarked_up)
 
         # Write to both terminal/console and tempfiles
         tr._tw.write = tee_write
+        print()
 
 
 def populate_rerun_groups(config: Config) -> List[RerunTestGroup]:
@@ -360,6 +369,32 @@ def populate_rerun_groups(config: Config) -> List[RerunTestGroup]:
     return rerun_test_groups
 
 
+def mark_warning_tests(config: Config) -> List[TestResult]:
+    """Mark tests that have warnings in the warnings field."""
+    # nodeids = [result.nodeid for result in config._oof_test_results.test_results]
+    warning_field = strip_ansi(config._oof_fields.warnings_summary.content)
+    warning_lines = warning_field.split("\n")
+
+    # use regex warnings_summary_test_matcher to match the nodeids in the warning field
+    warning_nodeids = []
+    for line in warning_lines:
+        if re.search(warnings_summary_test_matcher, line):
+            warning_nodeids.append(line)
+
+    # for line in warning_lines:
+    #     if re.search(warnings_summary_test_matcher, line):
+    #         print(line)
+    # warning_nodeids = list(re.finditer(warnings_summary_test_matcher, warning_field))
+    # warning_node_ids =
+    # warning_nodeids = [line for line in warning_lines if any(nodeid in line for nodeid in nodeids)]
+
+    for test_result in config._oof_test_results.test_results:
+        for warning_nodeid in warning_nodeids:
+            if test_result.nodeid == warning_nodeid:
+                test_result.has_warning = True
+    return warning_nodeids
+
+
 def pytest_unconfigure(config: Config) -> None:
     if not hasattr(config.option, "_oof"):
         return
@@ -367,6 +402,7 @@ def pytest_unconfigure(config: Config) -> None:
         return
 
     config._oof_rerun_test_groups = populate_rerun_groups(config)
+    config._oof_tests_w_warnings = mark_warning_tests(config)
     config._oof_session_stop_time = datetime.now(timezone.utc)
     config._oof_session_duration = (
         config._oof_session_stop_time - config._oof_session_start_time
@@ -375,8 +411,8 @@ def pytest_unconfigure(config: Config) -> None:
         num_tests=len(config._oof_test_results.all_tests()),
         num_passes=len(config._oof_test_results.all_passes()),
         num_failures=len(config._oof_test_results.all_failures()),
-        num_skips=len(config._oof_test_results.all_skips()),
         num_errors=len(config._oof_test_results.all_errors()),
+        num_skips=len(config._oof_test_results.all_skips()),
         num_xfails=len(config._oof_test_results.all_xfails()),
         num_xpasses=len(config._oof_test_results.all_xpasses()),
         num_reruns=len(config._oof_test_results.all_reruns()),
@@ -387,7 +423,7 @@ def pytest_unconfigure(config: Config) -> None:
         num_warnings_unique=len(config._oof_test_results.all_warnings_unique()),
     )
 
-    # Populate test result objects with total durations, from each test's TestReport object.
+    # Populate test result objects with total durations, summing each test's TestReport objects.
     for oof_test_result, test_report in itertools.product(
         config._oof_test_results.test_results, config._oof_reports
     ):
@@ -406,15 +442,15 @@ def pytest_unconfigure(config: Config) -> None:
             oof_test_result.outcome = "SKIPPED"
 
     # Tag any test that appears in the warning field with the 'has_warning' attribute.
-
     nodeids = {result.nodeid for result in config._oof_test_results.test_results}
     warning_field = strip_ansi(config._oof_fields.warnings_summary.content)
     warning_lines = warning_field.split("\n")
-    warning_nodeids = set(
-        [line for line in warning_lines if any(nodeid in line for nodeid in nodeids)]
-    )
+    warning_nodeids = [
+        line for line in warning_lines if any(nodeid in line for nodeid in nodeids)
+    ]
+    warning_nodeids_unique = set(warning_nodeids)
     for test_result in config._oof_test_results.test_results:
-        for warning_nodeid in warning_nodeids:
+        for warning_nodeid in warning_nodeids_unique:
             if test_result.nodeid is warning_nodeid:
                 test_result.has_warning = True
 
@@ -431,8 +467,10 @@ def pytest_unconfigure(config: Config) -> None:
         pickle.dump(
             {
                 "oof_session_stats": config._oof_session_stats.to_dict(),
-                # "oof_lastline": config._oof_fields.lastline.content,
-                # "oof_lastline_stripped": strip_ansi(config._oof_fields.lastline.content),
+                "oof_lastline": config._oof_fields.lastline.content,
+                "oof_lastline_stripped": strip_ansi(
+                    config._oof_fields.lastline.content
+                ),
                 "oof_session_start_time": config._oof_session_start_time,
                 "oof_session_stop_time": config._oof_session_stop_time,
                 "oof_session_duration": config._oof_session_duration,
@@ -448,8 +486,10 @@ def pytest_unconfigure(config: Config) -> None:
         json.dump(
             {
                 "oof_session_stats": config._oof_session_stats.to_dict(),
-                # "oof_lastline": config._oof_fields.lastline.content,
-                # "oof_lastline_stripped": strip_ansi(config._oof_fields.lastline.content),
+                "oof_lastline": config._oof_fields.lastline.content,
+                "oof_lastline_stripped": strip_ansi(
+                    config._oof_fields.lastline.content
+                ),
                 "oof_session_start_time": config._oof_session_start_time.isoformat(),
                 "oof_session_stop_time": config._oof_session_stop_time.isoformat(),
                 "oof_session_duration": config._oof_session_duration.total_seconds(),
