@@ -18,6 +18,25 @@ HTML_FILES_DIR = OOF_FILES_DIR / "html"
 
 
 @dataclass
+class SessionMetadata:
+    """
+    'Metadata': metadata about the test run, including the test run's start time,
+    stop time, and duration
+    """
+
+    start_time: datetime
+    stop_time: datetime
+    duration: timedelta
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "start_time": self.start_time,
+            "stop_time": self.stop_time,
+            "duration": self.duration,
+        }
+
+
+@dataclass
 class TestSessionStats:
     """
     'TestSessionStats': cumulative statistics for the entire test session
@@ -101,6 +120,8 @@ class TestResults:
     subsets of the collection.
     """
 
+    session_metadata: SessionMetadata = None
+    session_stats: TestSessionStats = None
     test_results: List[TestResult] = field(default_factory=list)
 
     def all_tests(self) -> List[TestResult]:

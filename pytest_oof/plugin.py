@@ -467,10 +467,10 @@ def pytest_unconfigure(config: Config) -> None:
         pickle.dump(
             {
                 "oof_session_stats": config._oof_session_stats.to_dict(),
-                "oof_lastline": config._oof_fields.lastline.content,
-                "oof_lastline_stripped": strip_ansi(
-                    config._oof_fields.lastline.content
-                ),
+                # "oof_lastline": config._oof_fields.lastline.content,
+                # "oof_lastline_stripped": strip_ansi(
+                #     config._oof_fields.lastline.content
+                # ),
                 "oof_session_start_time": config._oof_session_start_time,
                 "oof_session_stop_time": config._oof_session_stop_time,
                 "oof_session_duration": config._oof_session_duration,
@@ -486,10 +486,10 @@ def pytest_unconfigure(config: Config) -> None:
         json.dump(
             {
                 "oof_session_stats": config._oof_session_stats.to_dict(),
-                "oof_lastline": config._oof_fields.lastline.content,
-                "oof_lastline_stripped": strip_ansi(
-                    config._oof_fields.lastline.content
-                ),
+                # "oof_lastline": config._oof_fields.lastline.content,
+                # "oof_lastline_stripped": strip_ansi(
+                #     config._oof_fields.lastline.content
+                # ),
                 "oof_session_start_time": config._oof_session_start_time.isoformat(),
                 "oof_session_stop_time": config._oof_session_stop_time.isoformat(),
                 "oof_session_duration": config._oof_session_duration.total_seconds(),
