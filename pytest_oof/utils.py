@@ -326,9 +326,9 @@ class OutputFields:
         ]
 
         output_dict = {}
-        for fld in fields:
-            output_field = getattr(self, fld)
-            output_dict[fld] = {
+        for field in fields:
+            output_field = getattr(self, field)
+            output_dict[field] = {
                 "name": output_field.name,
                 "content": output_field.content,
                 "content_stripped": strip_ansi(output_field.content),

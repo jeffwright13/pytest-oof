@@ -118,6 +118,7 @@ def add_ansi_to_report(config: Config, report: TestReport) -> None:
 
 
 def replace_string(original_string, new_char, new_phrase):
+    """Replace a phrase in a string with a new phrase, padding with a new character."""
     parts = original_string.split(" ")
 
     old_phrase_length = len(parts[1])
@@ -371,27 +372,22 @@ def populate_rerun_groups(config: Config) -> List[RerunTestGroup]:
 
 def mark_warning_tests(config: Config) -> List[TestResult]:
     """Mark tests that have warnings in the warnings field."""
-    # nodeids = [result.nodeid for result in config._oof_test_results.test_results]
+    warning_tests = []
     warning_field = strip_ansi(config._oof_fields.warnings_summary.content)
-    warning_lines = warning_field.split("\n")
+    warning_field_lines = warning_field.split("\n")
 
     # use regex warnings_summary_test_matcher to match the nodeids in the warning field
+    # to the config test results in the test_results list
     warning_nodeids = []
-    for line in warning_lines:
+    for line in warning_field_lines:
         if re.search(warnings_summary_test_matcher, line):
             warning_nodeids.append(line)
-
-    # for line in warning_lines:
-    #     if re.search(warnings_summary_test_matcher, line):
-    #         print(line)
-    # warning_nodeids = list(re.finditer(warnings_summary_test_matcher, warning_field))
-    # warning_node_ids =
-    # warning_nodeids = [line for line in warning_lines if any(nodeid in line for nodeid in nodeids)]
 
     for test_result in config._oof_test_results.test_results:
         for warning_nodeid in warning_nodeids:
             if test_result.nodeid == warning_nodeid:
                 test_result.has_warning = True
+
     return warning_nodeids
 
 
@@ -403,6 +399,7 @@ def pytest_unconfigure(config: Config) -> None:
 
     config._oof_rerun_test_groups = populate_rerun_groups(config)
     config._oof_tests_w_warnings = mark_warning_tests(config)
+    config._oof_tests_w_warnings_unique = list(set(config._oof_tests_w_warnings))
     config._oof_session_stop_time = datetime.now(timezone.utc)
     config._oof_session_duration = (
         config._oof_session_stop_time - config._oof_session_start_time
@@ -420,7 +417,7 @@ def pytest_unconfigure(config: Config) -> None:
             set([rerun.nodeid for rerun in config._oof_test_results.all_reruns()])
         ),
         num_warnings=len(config._oof_test_results.all_warnings()),
-        num_warnings_unique=len(config._oof_test_results.all_warnings_unique()),
+        num_warnings_unique=len(config._oof_tests_w_warnings_unique),
     )
 
     # Populate test result objects with total durations, summing each test's TestReport objects.
@@ -441,13 +438,15 @@ def pytest_unconfigure(config: Config) -> None:
         if oof_test_result.outcome == "":
             oof_test_result.outcome = "SKIPPED"
 
-    # Tag any test that appears in the warning field with the 'has_warning' attribute.
-    nodeids = {result.nodeid for result in config._oof_test_results.test_results}
+    # Tag any test whose nodeid is in the warning field with the 'has_warning' attribute.
+    all_nodeids = {result.nodeid for result in config._oof_test_results.test_results}
     warning_field = strip_ansi(config._oof_fields.warnings_summary.content)
-    warning_lines = warning_field.split("\n")
-    warning_nodeids = [
-        line for line in warning_lines if any(nodeid in line for nodeid in nodeids)
-    ]
+    warning_field_lines = warning_field.split("\n")
+    warning_nodeids = []
+    for line in warning_field_lines:
+        if re.search(warnings_summary_test_matcher, line):
+            warning_nodeids.append(line)
+
     warning_nodeids_unique = set(warning_nodeids)
     for test_result in config._oof_test_results.test_results:
         for warning_nodeid in warning_nodeids_unique:

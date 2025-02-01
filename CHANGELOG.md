@@ -8,6 +8,10 @@ and this project tries to adhere to [Semantic Versioning](https://semver.org/spe
 ## UNRELEASED
 - N/A
 
+## [[2.0.0] 2024-12-09
+- Created new JSON out file.
+- Revamped stats.
+
 ## [1.1.0] 2023-12-10
 - Fixed issue 1 (individual test reports are missing section separators)
 - Implemented centralized logging with UTC timestamps in conftest.py for demo-tests.

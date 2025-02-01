@@ -96,3 +96,6 @@ venv.bak/
 
 # VSCode
 .vscode/
+
+# IDEA (Pycharm, IntelliJ, etc.)
+.idea/*

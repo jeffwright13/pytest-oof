@@ -552,7 +552,7 @@ class HtmlPage:
 def main():
     # results = Results()
     results = Results.from_file(
-        results_file_path="oof/results.pickle",
+        results_file_path="oof/oof-results.pickle",
     )
     page = HtmlPage(results)
     page.remove_tabs_without_content()
