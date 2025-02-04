@@ -455,30 +455,50 @@ def pytest_configure(config: Config) -> None:
 
 
 def populate_rerun_groups(config: Config) -> List[RerunTestGroup]:
-    """Build a list of RerunTestGroup objects from the test"""
+    """Build a list of RerunTestGroup objects from the test
+    results in the config object."""
     rerun_test_groups = []
-    for test_result in config._oof_test_results.test_results:
-        if test_result.outcome == "RERUN":
-            if test_result.nodeid not in [group.nodeid for group in rerun_test_groups]:
-                oof_test_run_group = RerunTestGroup(
-                    nodeid=test_result.nodeid, forerunners=[test_result]
-                )
-                rerun_test_groups.append(oof_test_run_group)
-                # Update unique rerun count when creating a new group
-                config._oof_session_stats.num_reruns_unique += 1
-            else:
-                for group in rerun_test_groups:
-                    if group.nodeid == test_result.nodeid:
-                        group.forerunners.append(test_result)
-    for test_result in config._oof_test_results.test_results:
-        if test_result.outcome != "RERUN":
-            for group in rerun_test_groups:
-                if group.nodeid == test_result.nodeid:
-                    group.test_outcome = test_result.outcome
-                    group.final_test = test_result
-                    group.final_outcome = test_result.outcome
-    for group in rerun_test_groups:
-        group.full_test_list = group.forerunners + [group.final_test]
+
+    # First, get all test results that have an outcome of "RERUN"
+    rerun_tests = [
+        test_result
+        for test_result in config._oof_test_results.test_results
+        if test_result.outcome == "RERUN"
+    ]
+
+    # If there are no rerun tests, return empty list
+    if not rerun_tests:
+        return rerun_test_groups
+
+    # Group the rerun tests by nodeid
+    rerun_tests_by_nodeid = {}
+    for test_result in rerun_tests:
+        if test_result.nodeid not in rerun_tests_by_nodeid:
+            rerun_tests_by_nodeid[test_result.nodeid] = []
+        rerun_tests_by_nodeid[test_result.nodeid].append(test_result)
+
+    # Update num_rerun_groups with the number of unique nodeids that had reruns
+    config._oof_session_stats.num_rerun_groups = len(rerun_tests_by_nodeid)
+
+    # For each nodeid that had reruns, create a RerunTestGroup object
+    for nodeid, rerun_tests in rerun_tests_by_nodeid.items():
+        # Find the final test result for this nodeid
+        final_test = None
+        for test_result in config._oof_test_results.test_results:
+            if test_result.nodeid == nodeid and test_result.outcome != "RERUN":
+                final_test = test_result
+                break
+
+        if final_test:
+            rerun_test_group = RerunTestGroup(
+                nodeid=nodeid,
+                final_outcome=final_test.outcome,
+                final_test=final_test,
+                forerunners=rerun_tests,
+            )
+            rerun_test_group.full_test_list = rerun_tests + [final_test]
+            rerun_test_groups.append(rerun_test_group)
+
     return rerun_test_groups
 
 

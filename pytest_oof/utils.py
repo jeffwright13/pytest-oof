@@ -91,7 +91,7 @@ class TestSessionStats:
     num_xfails: int = 0
     num_xpasses: int = 0
     num_reruns: int = 0
-    num_reruns_unique: int = 0
+    num_rerun_groups: int = 0  # Number of distinct test groups that had reruns
     num_warnings: int = 0
     num_warnings_unique: int = 0
 
@@ -105,7 +105,7 @@ class TestSessionStats:
             "num_xfails": self.num_xfails,
             "num_xpasses": self.num_xpasses,
             "num_reruns": self.num_reruns,
-            "num_reruns_unique": self.num_reruns_unique,
+            "num_rerun_groups": self.num_rerun_groups,
             "num_warnings": self.num_warnings,
             "num_warnings_unique": self.num_warnings_unique,
         }
