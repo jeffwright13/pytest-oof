@@ -1,6 +1,6 @@
 # This repo (pytest-oof)
-# .oof/
-# oof/
+.oof/
+oof/
 
 # JSON
 # *.json

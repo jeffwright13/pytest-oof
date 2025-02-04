@@ -3,17 +3,20 @@ import pickle
 import re
 import tempfile
 from dataclasses import dataclass
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 from io import StringIO
 from pathlib import Path
 from types import SimpleNamespace
-from typing import List
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import pytest
 from _pytest._io.terminalwriter import TerminalWriter
 from _pytest.config import Config, PytestPluginManager, create_terminal_writer
 from _pytest.config.argparsing import Parser
+from _pytest.main import Session
+from _pytest.nodes import Item
 from _pytest.reports import TestReport
+from _pytest.terminal import TerminalReporter
 from strip_ansi import strip_ansi
 
 from pytest_oof import hooks
@@ -32,6 +35,14 @@ from pytest_oof.utils import (
     TestResults,
     TestSessionStats,
     generate_timestamp_uuid,
+)
+
+from .db import (
+    add_console_line,
+    add_report_metric,
+    add_session,
+    add_test_result,
+    init_db,
 )
 
 # regex matching patterns for pytest console output fields/sections
@@ -91,8 +102,12 @@ class ResultsFromConfig(Results):
         instance = cls()
         instance.session_metadata = SessionMetadata(
             session_id=getattr(config, "_oof_session_id", generate_timestamp_uuid()),
-            start_time=getattr(config, "_oof_session_start_time", datetime.now(timezone.utc)),
-            stop_time=getattr(config, "_oof_session_stop_time", datetime.now(timezone.utc)),
+            start_time=getattr(
+                config, "_oof_session_start_time", datetime.now(timezone.utc)
+            ),
+            stop_time=getattr(
+                config, "_oof_session_stop_time", datetime.now(timezone.utc)
+            ),
             duration=getattr(config, "_oof_session_duration", timedelta(0)),
             sut_id=getattr(config, "_oof_sut_id", ""),
             sut_type=getattr(config, "_oof_sut_type", ""),
@@ -119,48 +134,51 @@ class ResultsFromConfig(Results):
 
 
 def pytest_addoption(parser: Parser) -> None:
+    """Add pytest-oof options to pytest's command-line parser."""
     group = parser.getgroup("oof")
     group.addoption(
         "--oof",
         action="store_true",
         dest="_oof",
         default=None,
-        help=("Enable the pytest-oof plugin (reults in files being populated/updated in /oof directory)"),
+        help=(
+            "Enable the pytest-oof plugin (results in files being populated/updated in /oof directory)"
+        ),
     )
     group.addoption(
         "--oof-sut-id",
         action="store",
         dest="oof_sut_id",
         help="SUT (system under test) unique identifier",
-        default=""
+        default="",
     )
     group.addoption(
         "--oof-sut-type",
         action="store",
         dest="oof_sut_type",
         help="Type/category of the system under test",
-        default=""
+        default="",
     )
     group.addoption(
         "--oof-sut-version",
         action="store",
         dest="oof_sut_version",
         help="Version of the system under test",
-        default=""
+        default="",
     )
     group.addoption(
         "--oof-sut-env",
         action="store",
         dest="oof_sut_env",
         help="Environment details for the system under test",
-        default=""
+        default="",
     )
     group.addoption(
         "--oof-sut-metadata",
         action="store",
         dest="oof_sut_metadata",
         help="Additional metadata for the system under test (as JSON string)",
-        default="{}"
+        default="{}",
     )
     group.addoption(
         "--oof-max-history",
@@ -168,7 +186,14 @@ def pytest_addoption(parser: Parser) -> None:
         dest="oof_max_history",
         help="Maximum number of test runs to keep in history (default: 100, 0 for unlimited)",
         type=int,
-        default=100
+        default=100,
+    )
+    group.addoption(
+        "--oof-db-path",
+        action="store",
+        dest="oof_db_path",
+        default="oof/oof-results.db",
+        help="Path to SQLite database file (default: %(default)s)",
     )
     parser.addini(
         "oof",
@@ -368,13 +393,15 @@ def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo) -> None:
             nodeid=report.nodeid,
             outcome=report.outcome,
             duration=report.duration,
-            longreprtext=report.longrepr if hasattr(report, 'longrepr') else None,
-            capstdout=report.capstdout if hasattr(report, 'capstdout') else "",
-            capstderr=report.capstderr if hasattr(report, 'capstderr') else "",
-            caplog=report.caplog if hasattr(report, 'caplog') else "",
+            longreprtext=report.longrepr if hasattr(report, "longrepr") else None,
+            capstdout=report.capstdout if hasattr(report, "capstdout") else "",
+            capstderr=report.capstderr if hasattr(report, "capstderr") else "",
+            caplog=report.caplog if hasattr(report, "caplog") else "",
             has_warning=False,
             start_time=datetime.now(timezone.utc),
-            longreprtext_stripped=strip_ansi(str(report.longrepr)) if hasattr(report, 'longrepr') else None,
+            longreprtext_stripped=strip_ansi(str(report.longrepr))
+            if hasattr(report, "longrepr")
+            else None,
         )
         test_results.test_results.append(test_result)
 
@@ -424,6 +451,11 @@ def pytest_configure(config: Config) -> None:
     if not enabled:
         return
 
+    # Initialize SQLite database
+    db_path = Path(config.getoption("oof_db_path"))
+    init_db(db_path)
+    config._oof_db_path = db_path
+
     # Get SUT-related options
     sut_id = config.getoption("oof_sut_id")
     sut_type = config.getoption("oof_sut_type")
@@ -448,6 +480,16 @@ def pytest_configure(config: Config) -> None:
     config._oof_sut_version = sut_version
     config._oof_sut_environment = sut_environment
     config._oof_sut_metadata = sut_metadata
+
+    # Initialize SQLite session
+    config._oof_db_session_id = add_session(
+        db_path,
+        session_start_time,
+        sut_id=sut_id,
+        sut_type=sut_type,
+        sut_version=sut_version,
+        sut_env=sut_environment,
+    )
 
     # Initialize other session data
     config._oof_session_stats = TestSessionStats()
