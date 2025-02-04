@@ -477,8 +477,16 @@ def populate_rerun_groups(config: Config) -> List[RerunTestGroup]:
             rerun_tests_by_nodeid[test_result.nodeid] = []
         rerun_tests_by_nodeid[test_result.nodeid].append(test_result)
 
-    # Update num_rerun_groups with the number of unique nodeids that had reruns
-    config._oof_session_stats.num_rerun_groups = len(rerun_tests_by_nodeid)
+    # Get unique nodeids from rerun test summary field
+    rerun_summary = config._oof_fields.rerun_test_summary.content
+    rerun_nodeids = set()
+    for line in rerun_summary.split('\n'):
+        if line.startswith('RERUN '):
+            nodeid = line.replace('RERUN ', '').strip()
+            rerun_nodeids.add(nodeid)
+
+    # Update num_rerun_groups with the number of unique nodeids from summary
+    config._oof_session_stats.num_rerun_groups = len(rerun_nodeids)
 
     # For each nodeid that had reruns, create a RerunTestGroup object
     for nodeid, rerun_tests in rerun_tests_by_nodeid.items():
