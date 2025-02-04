@@ -3,7 +3,7 @@ import pickle
 import re
 import tempfile
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from io import StringIO
 from pathlib import Path
 from types import SimpleNamespace
@@ -59,16 +59,41 @@ standard_test_matcher = re.compile(
 
 @dataclass
 class ResultsFromConfig(Results):
+    """
+    Creates a Results object from a pytest Config object.
+    This is used during test execution to collect results.
+    """
+
+    def __init__(self):
+        super().__init__(
+            session_metadata=SessionMetadata(
+                session_id=generate_timestamp_uuid(),
+                start_time=datetime.now(timezone.utc),
+                stop_time=datetime.now(timezone.utc),
+                duration=timedelta(0),
+                sut_id="",
+                sut_type="",
+                sut_version="",
+                sut_environment="",
+                sut_metadata={},
+            ),
+            session_stats=TestSessionStats(),
+            report_stats=ReportBasedStats(),
+            test_results=[],
+            output_fields=OutputFields(),
+            warnings=[],
+            rerun_test_groups=[],
+        )
+
     @classmethod
-    def from_config(
-        cls, config: Config
-    ):  # 'config' refers to global pytest Config object
-        # Create SessionMetadata with SUT information
-        session_metadata = SessionMetadata(
-            session_id=config._oof_session_id,
-            start_time=config._oof_session_start_time,
-            stop_time=config._oof_session_stop_time,
-            duration=config._oof_session_duration,
+    def from_config(cls, config: Config) -> "ResultsFromConfig":
+        """Create a Results object from a pytest Config object."""
+        instance = cls()
+        instance.session_metadata = SessionMetadata(
+            session_id=getattr(config, "_oof_session_id", generate_timestamp_uuid()),
+            start_time=getattr(config, "_oof_session_start_time", datetime.now(timezone.utc)),
+            stop_time=getattr(config, "_oof_session_stop_time", datetime.now(timezone.utc)),
+            duration=getattr(config, "_oof_session_duration", timedelta(0)),
             sut_id=getattr(config, "_oof_sut_id", ""),
             sut_type=getattr(config, "_oof_sut_type", ""),
             sut_version=getattr(config, "_oof_sut_version", ""),
@@ -78,20 +103,19 @@ class ResultsFromConfig(Results):
 
         if not hasattr(config, "_oof_report_stats"):
             config._oof_report_stats = ReportBasedStats()
-        # Initialize total test count including deselected
-        config._oof_report_stats.num_tests_total = (
-            config._oof_session_stats.num_tests_total
-        )
+            # Initialize total test count including deselected
+            config._oof_report_stats.num_tests_total = (
+                config._oof_session_stats.num_tests_total
+            )
 
-        return cls(
-            session_metadata=session_metadata,
-            session_stats=config._oof_session_stats,
-            report_stats=config._oof_report_stats,
-            test_results=config._oof_test_results.test_results,
-            output_fields=config._oof_fields,
-            warnings=config._oof_test_results.all_warnings(),
-            rerun_test_groups=config._oof_rerun_test_groups,
-        )
+        instance.session_stats = config._oof_session_stats
+        instance.report_stats = config._oof_report_stats
+        instance.test_results = config._oof_test_results.test_results
+        instance.output_fields = config._oof_fields
+        instance.warnings = config._oof_test_results.all_warnings()
+        instance.rerun_test_groups = config._oof_rerun_test_groups
+
+        return instance
 
 
 def pytest_addoption(parser: Parser) -> None:
@@ -101,42 +125,50 @@ def pytest_addoption(parser: Parser) -> None:
         action="store_true",
         dest="_oof",
         default=None,
-        help=("Enable the pytest-oof plugin."),
+        help=("Enable the pytest-oof plugin (reults in files being populated/updated in /oof directory)"),
     )
     group.addoption(
-        "--sut-id",
+        "--oof-sut-id",
         action="store",
-        dest="_sut_id",
-        default="",
-        help="Unique identifier for the system under test",
+        dest="oof_sut_id",
+        help="SUT (system under test) unique identifier",
+        default=""
     )
     group.addoption(
-        "--sut-type",
+        "--oof-sut-type",
         action="store",
-        dest="_sut_type",
-        default="",
-        help="Type/category of the system (e.g., 'GEMS', 'production', 'staging')",
+        dest="oof_sut_type",
+        help="Type/category of the system under test",
+        default=""
     )
     group.addoption(
-        "--sut-version",
+        "--oof-sut-version",
         action="store",
-        dest="_sut_version",
-        default="",
-        help="Version information about the system under test",
+        dest="oof_sut_version",
+        help="Version of the system under test",
+        default=""
     )
     group.addoption(
-        "--sut-env",
+        "--oof-sut-env",
         action="store",
-        dest="_sut_environment",
-        default="",
-        help="Environment details (e.g., 'prod', 'staging', 'dev')",
+        dest="oof_sut_env",
+        help="Environment details for the system under test",
+        default=""
     )
     group.addoption(
-        "--sut-metadata",
+        "--oof-sut-metadata",
         action="store",
-        dest="_sut_metadata",
-        default="{}",
-        help="JSON string containing additional SUT-specific metadata",
+        dest="oof_sut_metadata",
+        help="Additional metadata for the system under test (as JSON string)",
+        default="{}"
+    )
+    group.addoption(
+        "--oof-max-history",
+        action="store",
+        dest="oof_max_history",
+        help="Maximum number of test runs to keep in history (default: 100, 0 for unlimited)",
+        type=int,
+        default=100
     )
     parser.addini(
         "oof",
@@ -317,7 +349,11 @@ def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo) -> None:
             item.session.testscollected
         )
 
+    if not hasattr(item.session.config, "_oof_test_results"):
+        item.session.config._oof_test_results = TestResults()
+
     report_stats = item.session.config._oof_report_stats
+    test_results = item.session.config._oof_test_results
 
     # Get the report
     outcome = yield
@@ -326,6 +362,21 @@ def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo) -> None:
     # Only process the call phase for counting test outcomes
     if report.when == "call":
         report_stats.num_tests += 1  # Total runs including reruns
+
+        # Create a TestResult object
+        test_result = TestResult(
+            nodeid=report.nodeid,
+            outcome=report.outcome,
+            duration=report.duration,
+            longreprtext=report.longrepr if hasattr(report, 'longrepr') else None,
+            capstdout=report.capstdout if hasattr(report, 'capstdout') else "",
+            capstderr=report.capstderr if hasattr(report, 'capstderr') else "",
+            caplog=report.caplog if hasattr(report, 'caplog') else "",
+            has_warning=False,
+            start_time=datetime.now(timezone.utc),
+            longreprtext_stripped=strip_ansi(str(report.longrepr)) if hasattr(report, 'longrepr') else None,
+        )
+        test_results.test_results.append(test_result)
 
         # Handle xfail/xpass cases
         if hasattr(report, "wasxfail"):
@@ -374,12 +425,12 @@ def pytest_configure(config: Config) -> None:
         return
 
     # Get SUT-related options
-    sut_id = config.getoption("_sut_id")
-    sut_type = config.getoption("_sut_type")
-    sut_version = config.getoption("_sut_version")
-    sut_environment = config.getoption("_sut_environment")
+    sut_id = config.getoption("oof_sut_id")
+    sut_type = config.getoption("oof_sut_type")
+    sut_version = config.getoption("oof_sut_version")
+    sut_environment = config.getoption("oof_sut_env")
     try:
-        sut_metadata = json.loads(config.getoption("_sut_metadata"))
+        sut_metadata = json.loads(config.getoption("oof_sut_metadata"))
     except json.JSONDecodeError:
         sut_metadata = {}
 
@@ -621,6 +672,9 @@ def pytest_unconfigure(config: Config) -> None:
     if not hasattr(config, "_oof_session_id"):
         return
 
+    if not config.getoption("_oof"):
+        return
+
     # Calculate session duration
     config._oof_session_stop_time = datetime.now(timezone.utc)
     config._oof_session_duration = (
@@ -638,15 +692,34 @@ def pytest_unconfigure(config: Config) -> None:
     with open(RESULTS_FILE, "wb") as f:
         pickle.dump(results, f)
 
-    # Write JSON results to both locations
+    # Convert to JSON
     json_results = results.to_dict()
-    # Write to oof directory
-    with open(JSON_OUT_FILE, "w") as f:
-        json.dump(json_results, f, indent=2)
-    # Write to current working directory
-    cwd_json_file = Path.cwd() / "oof-results.json"
-    with open(cwd_json_file, "w") as f:
-        json.dump(json_results, f, indent=2)
+
+    # Load and update JSON history
+    json_history_file = Path("oof/oof-results.json")
+    existing_results = []
+    
+    if json_history_file.exists():
+        try:
+            with open(json_history_file) as f:
+                existing_results = json.load(f)
+        except json.JSONDecodeError:
+            existing_results = []
+    
+    if not isinstance(existing_results, list):
+        existing_results = []
+    
+    existing_results.append(json_results)
+    
+    # Apply history size limit if configured
+    max_history = config.getoption("oof_max_history")
+    if max_history > 0 and len(existing_results) > max_history:
+        # Keep only the most recent runs up to max_history
+        existing_results = existing_results[-max_history:]
+    
+    # Save JSON history
+    with open(json_history_file, "w") as f:
+        json.dump(existing_results, f, indent=2)
 
     # Update test history
     try:
@@ -655,4 +728,9 @@ def pytest_unconfigure(config: Config) -> None:
         history = TestHistory()
 
     history.add_run(results)
+    
+    # Apply same limit to TestHistory
+    if max_history > 0:
+        history.limit_runs(max_history)
+    
     history.save(HISTORY_FILE)

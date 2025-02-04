@@ -166,7 +166,7 @@ class TestResult:
             "sut_metadata": self.sut_metadata,
             "nodeid": self.nodeid,
             "outcome": self.outcome,
-            "start_time": self.start_time,
+            "start_time": self.start_time.isoformat() if self.start_time else None,
             "duration": self.duration,
             "caplog": self.caplog,
             "capstderr": self.capstderr,
@@ -246,7 +246,7 @@ class RerunTestGroup:
         return {
             "nodeid": self.nodeid,
             "final_outcome": self.final_outcome,
-            "final_test": self.final_test.to_dict(),
+            "final_test": self.final_test.to_dict() if self.final_test else None,
             "forerunners": [test_result.to_dict() for test_result in self.forerunners],
             "full_test_list": [
                 test_result.to_dict() for test_result in self.full_test_list
@@ -344,20 +344,19 @@ class Results:
     rerun_test_groups: List[RerunTestGroup]
 
     @classmethod
-    def from_file(
-        cls,
-        results_file_path: Path = RESULTS_FILE,
-    ) -> "Results":
-        """Retrieve test run data from 'results.pickle' file"""
-        with open(results_file_path, "rb") as f:
-            test_info = pickle.load(f)
+    def from_file(cls, results_file_path: Path = RESULTS_FILE) -> "Results":
+        """Retrieve test run data from a results file."""
+        try:
+            with open(results_file_path, "rb") as f:
+                test_info = pickle.load(f)
+        except (FileNotFoundError, pickle.UnpicklingError) as e:
+            raise ValueError(f"Failed to load results file {results_file_path}: {e}")
 
-        # Create SessionMetadata from the loaded data
         session_metadata = SessionMetadata(
-            session_id=test_info["oof_session_id"],
-            start_time=test_info["oof_session_start_time"],
-            stop_time=test_info["oof_session_stop_time"],
-            duration=test_info["oof_session_duration"],
+            session_id=test_info.get("oof_session_id", ""),
+            start_time=test_info.get("oof_session_start_time", 0),
+            stop_time=test_info.get("oof_session_stop_time", 0),
+            duration=test_info.get("oof_session_duration", 0),
             sut_id=test_info.get("oof_sut_id", ""),
             sut_type=test_info.get("oof_sut_type", ""),
             sut_version=test_info.get("oof_sut_version", ""),
@@ -367,15 +366,16 @@ class Results:
 
         return cls(
             session_metadata=session_metadata,
-            session_stats=test_info["oof_session_stats"],
-            report_stats=ReportBasedStats(),  # Initialize report_stats with default values
-            test_results=test_info["oof_test_results"],
-            output_fields=test_info["oof_fields"],
-            warnings=test_info["oof_warnings"],
-            rerun_test_groups=test_info["oof_rerun_test_groups"],
+            session_stats=test_info.get("oof_session_stats", TestSessionStats()),
+            report_stats=test_info.get("oof_report_stats", ReportBasedStats()),
+            test_results=test_info.get("oof_test_results", []),
+            output_fields=test_info.get("oof_fields", OutputFields()),
+            warnings=test_info.get("oof_warnings", []),
+            rerun_test_groups=test_info.get("oof_rerun_test_groups", []),
         )
 
     def to_dict(self) -> Dict[str, Any]:
+        """Convert the Results object to a dictionary."""
         return {
             "session_metadata": self.session_metadata.to_dict(),
             "session_stats": self.session_stats.to_dict(),
@@ -383,7 +383,7 @@ class Results:
             "test_results": [tr.to_dict() for tr in self.test_results],
             "output_fields": self.output_fields.to_dict(),
             "warnings": [w.to_dict() for w in self.warnings],
-            "rerun_test_groups": [rtg.to_dict() for rtg in self.rerun_test_groups],
+            "rerun_test_groups": [rg.to_dict() for rg in self.rerun_test_groups],
         }
 
 
@@ -416,36 +416,55 @@ class TerminalOutput:
 @dataclass
 class TestHistory:
     """
-    TestHistory maintains a collection of Results objects from multiple test runs,
-    typically associated with a single SUT over time.
-
-    The actual SUT identification and filtering is left to client applications - this class
-    simply provides the data structure and methods for storing and accessing multiple
-    test runs.
+    Maintains a collection of Results objects from multiple test runs.
     """
 
     results: List[Results] = field(default_factory=list)
 
     def add_run(self, result: Results) -> None:
-        """Add a new test run result."""
+        """Add a test run to the history."""
         self.results.append(result)
 
-    def get_runs(
-        self, start_time: Optional[datetime] = None, end_time: Optional[datetime] = None
-    ) -> List[Results]:
-        """Get test runs within the specified time range."""
-        if not (start_time or end_time):
-            return self.results
+    def limit_runs(self, max_runs: int) -> None:
+        """Limit the number of runs in history to max_runs, keeping the most recent."""
+        if len(self.results) > max_runs:
+            self.results = self.results[-max_runs:]
 
+    def get_runs(self, start_time: Optional[datetime] = None, end_time: Optional[datetime] = None) -> List[Results]:
+        """Get test runs within the specified time range."""
         filtered = self.results
         if start_time:
-            filtered = [
-                r for r in filtered if r.session_metadata.start_time >= start_time
-            ]
+            filtered = [r for r in filtered if r.session_metadata.start_time >= start_time]
         if end_time:
-            filtered = [
-                r for r in filtered if r.session_metadata.start_time <= end_time
-            ]
+            filtered = [r for r in filtered if r.session_metadata.start_time <= end_time]
+        return filtered
+
+    def get_sut_runs(self, sut_id: str = "", sut_type: str = "", sut_version: str = "", sut_environment: str = "") -> List[Results]:
+        """Get test runs for a specific SUT configuration.
+        
+        All specified parameters are combined with AND logic. For example:
+            get_sut_runs(sut_id="my-app", sut_version="1.0.0")
+        will only return results where sut_id is "my-app" AND sut_version is "1.0.0".
+        
+        Args:
+            sut_id: Filter by specific SUT identifier
+            sut_type: Filter by SUT type/category
+            sut_version: Filter by specific SUT version
+            sut_environment: Filter by specific environment
+            
+        Returns:
+            List of Results objects matching ALL specified criteria.
+            If no parameters are specified, returns all results.
+        """
+        filtered = self.results
+        if sut_id:
+            filtered = [r for r in filtered if r.session_metadata.sut_id == sut_id]
+        if sut_type:
+            filtered = [r for r in filtered if r.session_metadata.sut_type == sut_type]
+        if sut_version:
+            filtered = [r for r in filtered if r.session_metadata.sut_version == sut_version]
+        if sut_environment:
+            filtered = [r for r in filtered if r.session_metadata.sut_environment == sut_environment]
         return filtered
 
     def get_latest_run(self) -> Optional[Results]:
@@ -467,4 +486,181 @@ class TestHistory:
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary format."""
-        return {"results": [r.to_dict() for r in self.results]}
+        return {
+            "results": [r.to_dict() for r in self.results],
+        }
+
+
+@dataclass
+class LongitudinalAnalysis:
+    """
+    Provides longitudinal (over time) analysis capabilities for test histories.
+    This class helps answer questions about test trends, changes, and patterns
+    across multiple test sessions for a single SUT.
+    """
+
+    history: TestHistory
+    sut_id: str = ""
+    sut_type: str = ""
+    sut_version: str = ""
+    sut_environment: str = ""
+
+    def _get_filtered_runs(self, start_time: Optional[datetime] = None, end_time: Optional[datetime] = None) -> List[Results]:
+        """Get test runs filtered by SUT and time range."""
+        runs = self.history.get_sut_runs(
+            sut_id=self.sut_id,
+            sut_type=self.sut_type,
+            sut_version=self.sut_version,
+            sut_environment=self.sut_environment
+        )
+        if start_time:
+            runs = [r for r in runs if r.session_metadata.start_time >= start_time]
+        if end_time:
+            runs = [r for r in runs if r.session_metadata.start_time <= end_time]
+        return runs
+
+    def get_test_status_changes(
+        self, start_time: Optional[datetime] = None, end_time: Optional[datetime] = None
+    ) -> Dict[str, List[Dict[str, Any]]]:
+        """
+        Track how test outcomes have changed over time.
+        Returns a dict mapping test nodeids to their outcome history.
+        """
+        runs = self._get_filtered_runs(start_time, end_time)
+        if not runs:
+            return {}
+
+        test_history = {}
+        for run in sorted(runs, key=lambda r: r.session_metadata.start_time):
+            for test in run.test_results:
+                if test.nodeid not in test_history:
+                    test_history[test.nodeid] = []
+                test_history[test.nodeid].append({
+                    'time': run.session_metadata.start_time,
+                    'outcome': test.outcome,
+                    'duration': test.duration
+                })
+
+        return test_history
+
+    def compare_test_sets(
+        self, session_id1: str, session_id2: str
+    ) -> Dict[str, List[str]]:
+        """
+        Compare test sets between two sessions to find:
+        - Tests unique to session1
+        - Tests unique to session2
+        - Tests common to both sessions
+        """
+        runs = self._get_filtered_runs()
+        run1 = next((r for r in runs if r.session_metadata.session_id == session_id1), None)
+        run2 = next((r for r in runs if r.session_metadata.session_id == session_id2), None)
+
+        if not run1 or not run2:
+            return {'error': ['One or both session IDs not found in the specified SUT']}
+
+        tests1 = {t.nodeid for t in run1.test_results}
+        tests2 = {t.nodeid for t in run2.test_results}
+
+        return {
+            'unique_to_session1': sorted(list(tests1 - tests2)),
+            'unique_to_session2': sorted(list(tests2 - tests1)),
+            'common': sorted(list(tests1 & tests2))
+        }
+
+    def find_test_changes(self, last_n_sessions: int = 1) -> Dict[str, List[str]]:
+        """
+        Find tests that have changed status in recent sessions compared to their history.
+        A test is considered changed if its outcome differs from its most common outcome
+        in previous sessions.
+        """
+        runs = self._get_filtered_runs()
+        if not runs or last_n_sessions < 1:
+            return {}
+
+        sorted_runs = sorted(runs, key=lambda r: r.session_metadata.start_time)
+        if len(sorted_runs) < last_n_sessions + 1:  # Need at least one previous session
+            return {}
+
+        # Get the most recent session and all previous sessions
+        latest_run = sorted_runs[-1]
+        previous_runs = sorted_runs[:-1]
+
+        changes = {
+            'new_failures': [],
+            'new_passes': [],
+            'intermittent': []
+        }
+
+        # Build historical outcome frequencies for each test
+        test_history = {}
+        for run in previous_runs:
+            for test in run.test_results:
+                if test.nodeid not in test_history:
+                    test_history[test.nodeid] = []
+                test_history[test.nodeid].append(test.outcome)
+
+        # Analyze the latest run for changes
+        for test in latest_run.test_results:
+            # For new tests that don't have history
+            if test.nodeid not in test_history:
+                if test.outcome == 'FAILED':
+                    changes['new_failures'].append(test.nodeid)
+                continue
+
+            hist_outcomes = test_history[test.nodeid]
+            most_common = max(set(hist_outcomes), key=hist_outcomes.count)
+
+            # Check for status changes in the latest run
+            if most_common == 'PASSED' and test.outcome == 'FAILED':
+                changes['new_failures'].append(test.nodeid)
+            elif most_common == 'FAILED' and test.outcome == 'PASSED':
+                changes['new_passes'].append(test.nodeid)
+
+            # Check for intermittent behavior
+            if len(set(hist_outcomes)) > 1:
+                changes['intermittent'].append(test.nodeid)
+
+        return changes
+
+    def get_trend_stats(
+        self, window_size: timedelta = timedelta(days=1)
+    ) -> List[Dict[str, Any]]:
+        """
+        Calculate trend statistics over time using a sliding window.
+        Returns statistics for each window period.
+        """
+        runs = self._get_filtered_runs()
+        if not runs:
+            return []
+
+        sorted_runs = sorted(runs, key=lambda r: r.session_metadata.start_time)
+        start_time = sorted_runs[0].session_metadata.start_time
+        end_time = sorted_runs[-1].session_metadata.start_time
+
+        # Create windows
+        windows = []
+        window_start = start_time
+        while window_start <= end_time:
+            window_end = window_start + window_size
+            window_runs = [
+                r for r in sorted_runs
+                if window_start <= r.session_metadata.start_time < window_end
+            ]
+
+            if window_runs:
+                stats = {
+                    'window_start': window_start,
+                    'window_end': window_end,
+                    'num_runs': len(window_runs),
+                    'num_tests': sum(r.session_stats.num_tests for r in window_runs),
+                    'num_passes': sum(r.session_stats.num_passes for r in window_runs),
+                    'num_failures': sum(r.session_stats.num_failures for r in window_runs),
+                    'num_errors': sum(r.session_stats.num_errors for r in window_runs),
+                    'num_skips': sum(r.session_stats.num_skips for r in window_runs),
+                }
+                windows.append(stats)
+
+            window_start = window_end
+
+        return windows
