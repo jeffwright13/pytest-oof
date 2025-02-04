@@ -42,6 +42,7 @@ from .db import (
     add_report_metric,
     add_session,
     add_test_result,
+    db_connection,
     init_db,
 )
 
@@ -291,7 +292,7 @@ def pytest_cmdline_main(config: Config) -> None:
     if not hasattr(config, "_oof_test_results"):
         config._oof_test_results = TestResults()
     if not hasattr(config, "_oof_terminal_out"):
-        config._oof_terminal_out = tempfile.TemporaryFile("wb+")
+        config._oof_terminal_out = tempfile.NamedTemporaryFile(mode="wb", delete=True)
     if not hasattr(config, "_oof_fields"):
         config._oof_fields = OutputFields(
             test_session_starts=OutputField(name="test_session_starts", content=""),
@@ -405,6 +406,28 @@ def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo) -> None:
         )
         test_results.test_results.append(test_result)
 
+        # Write test result to database
+        if hasattr(item.session.config, "_oof_db_session_id"):
+            db_path = Path(item.session.config.getoption("oof_db_path"))
+            add_test_result(
+                db_path=db_path,
+                session_id=item.session.config._oof_db_session_id,
+                test_id=report.nodeid,
+                outcome=report.outcome,
+                timestamp=test_result.start_time,
+                duration=report.duration,
+                error_message=str(report.longrepr)
+                if hasattr(report, "longrepr")
+                else None,
+                error_type=None,  # TODO: Extract error type from longrepr
+                error_traceback=None,  # TODO: Extract traceback from longrepr
+                parameters=None,  # TODO: Extract parameters from item
+                has_warning=False,
+                caplog=test_result.caplog,
+                capstderr=test_result.capstderr,
+                capstdout=test_result.capstdout,
+            )
+
         # Handle xfail/xpass cases
         if hasattr(report, "wasxfail"):
             if report.outcome in ("passed", "failed"):
@@ -451,51 +474,65 @@ def pytest_configure(config: Config) -> None:
     if not enabled:
         return
 
-    # Initialize SQLite database
-    db_path = Path(config.getoption("oof_db_path"))
-    init_db(db_path)
-    config._oof_db_path = db_path
+    # Create output directory
+    Path("oof").mkdir(exist_ok=True)
 
-    # Get SUT-related options
-    sut_id = config.getoption("oof_sut_id")
-    sut_type = config.getoption("oof_sut_type")
-    sut_version = config.getoption("oof_sut_version")
-    sut_environment = config.getoption("oof_sut_env")
+    # Initialize database
+    db_path = Path(config.getoption("oof_db_path"))
+    if not db_path.parent.exists():
+        db_path.parent.mkdir(parents=True)
+    if not db_path.exists():
+        init_db(db_path)
+
+    # Create database session
+    config._oof_db_session_id = add_session(
+        db_path=db_path,
+        start_time=datetime.now(timezone.utc),
+        sut_id=config.getoption("oof_sut_id"),
+        sut_type=config.getoption("oof_sut_type"),
+        sut_version=config.getoption("oof_sut_version", ""),
+        sut_env=config.getoption("oof_sut_env", ""),
+    )
+
+    # Add hooks used by pytest-oof
+    config.pluginmanager.register(hooks, "pytest-oof")
+
+    # Initialize session metadata
+    config._oof_session_id = generate_timestamp_uuid()
+    config._oof_session_start_time = datetime.now(timezone.utc)
+    config._oof_session_stop_time = None
+    config._oof_session_duration = None
+
+    # Parse SUT metadata
     try:
         sut_metadata = json.loads(config.getoption("oof_sut_metadata"))
     except json.JSONDecodeError:
         sut_metadata = {}
 
-    # Initialize session data
-    session_id = generate_timestamp_uuid()
-    session_start_time = datetime.now(timezone.utc)
-    config._oof_session_id = session_id
-    config._oof_session_start_time = session_start_time
-    config._oof_session_stop_time = None
-    config._oof_session_duration = None
-
-    # Store SUT information
-    config._oof_sut_id = sut_id
-    config._oof_sut_type = sut_type
-    config._oof_sut_version = sut_version
-    config._oof_sut_environment = sut_environment
+    # Store SUT info
+    config._oof_sut_id = config.getoption("oof_sut_id")
+    config._oof_sut_type = config.getoption("oof_sut_type")
+    config._oof_sut_version = config.getoption("oof_sut_version")
+    config._oof_sut_environment = config.getoption("oof_sut_env")
     config._oof_sut_metadata = sut_metadata
 
-    # Initialize SQLite session
-    config._oof_db_session_id = add_session(
-        db_path,
-        session_start_time,
-        sut_id=sut_id,
-        sut_type=sut_type,
-        sut_version=sut_version,
-        sut_env=sut_environment,
-    )
-
-    # Initialize other session data
-    config._oof_session_stats = TestSessionStats()
+    # Initialize test results tracking
     config._oof_test_results = TestResults()
-    config._oof_fields = OutputFields()
     config._oof_rerun_test_groups = []
+
+    # Initialize test session stats
+    config._oof_stats = TestSessionStats()
+    config._oof_warnings = []
+
+    # Initialize output fields
+    config._oof_fields = OutputFields()
+
+    # Create a temporary file for terminal output
+    config._oof_terminal_out = tempfile.NamedTemporaryFile(mode="wb", delete=True)
+    config._oof_current_field = "test_session_starts"
+    config._oof_sessionstart = True
+    config._oof_sessionstart_test_outcome_next = False
+    config._oof_sessionstart_current_nodeid = None
 
     # Examine Pytest terminal output to mark different fields of the output.
     # This code is based on pytest's 'pastebin.py'.
@@ -711,68 +748,48 @@ def pytest_unconfigure(config: Config) -> None:
     """
     Called before test process is exited.
     """
-    if not hasattr(config, "_oof_session_id"):
-        return
-
     if not config.getoption("_oof"):
         return
 
-    # Calculate session duration
-    config._oof_session_stop_time = datetime.now(timezone.utc)
-    config._oof_session_duration = (
-        config._oof_session_stop_time - config._oof_session_start_time
-    )
+    # Update session end time and duration
+    db_path = Path(config.getoption("oof_db_path"))
+    if db_path.exists():
+        with db_connection(db_path) as conn:
+            c = conn.cursor()
+            c.execute(
+                """
+                UPDATE test_sessions
+                SET end_time = ?,
+                    duration = ?,
+                    num_tests = ?,
+                    num_passes = ?,
+                    num_failures = ?,
+                    num_errors = ?,
+                    num_skips = ?,
+                    num_xfails = ?,
+                    num_xpasses = ?,
+                    num_warnings = ?
+                WHERE id = ?
+                """,
+                (
+                    datetime.now(timezone.utc),
+                    (
+                        datetime.now(timezone.utc) - config._oof_session_start_time
+                    ).total_seconds(),
+                    config._oof_stats.num_tests,
+                    config._oof_stats.num_passes,
+                    config._oof_stats.num_failures,
+                    config._oof_stats.num_errors,
+                    config._oof_stats.num_skips,
+                    config._oof_stats.num_xfails,
+                    config._oof_stats.num_xpasses,
+                    config._oof_stats.num_warnings,
+                    config._oof_db_session_id,
+                ),
+            )
+            conn.commit()
 
-    # Process rerun groups and warnings
-    config._oof_rerun_test_groups = populate_rerun_groups(config)
-    mark_warning_tests(config)
-
-    # Create Results object
-    results = ResultsFromConfig.from_config(config)
-
-    # Save individual results
-    with open(RESULTS_FILE, "wb") as f:
-        pickle.dump(results, f)
-
-    # Convert to JSON
-    json_results = results.to_dict()
-
-    # Load and update JSON history
-    json_history_file = Path("oof/oof-results.json")
-    existing_results = []
-
-    if json_history_file.exists():
-        try:
-            with open(json_history_file) as f:
-                existing_results = json.load(f)
-        except json.JSONDecodeError:
-            existing_results = []
-
-    if not isinstance(existing_results, list):
-        existing_results = []
-
-    existing_results.append(json_results)
-
-    # Apply history size limit if configured
-    max_history = config.getoption("oof_max_history")
-    if max_history > 0 and len(existing_results) > max_history:
-        # Keep only the most recent runs up to max_history
-        existing_results = existing_results[-max_history:]
-
-    # Save JSON history
-    with open(json_history_file, "w") as f:
-        json.dump(existing_results, f, indent=2)
-
-    # Update test history
-    try:
-        history = TestHistory.load(HISTORY_FILE)
-    except (FileNotFoundError, EOFError, pickle.UnpicklingError):
-        history = TestHistory()
-
-    history.add_run(results)
-
-    # Apply same limit to TestHistory
-    if max_history > 0:
-        history.limit_runs(max_history)
-
-    history.save(HISTORY_FILE)
+    # Clean up temporary files
+    if hasattr(config, "_oof_terminal_out"):
+        config._oof_terminal_out.close()
+        del config._oof_terminal_out

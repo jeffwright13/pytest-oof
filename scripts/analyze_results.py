@@ -1,24 +1,12 @@
 #!/usr/bin/env python3
 
 import argparse
-import json
-import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
-from pytest_oof.utils import (
-    LongitudinalAnalysis,
-    OutputField,
-    OutputFields,
-    ReportBasedStats,
-    RerunTestGroup,
-    Results,
-    SessionMetadata,
-    TestHistory,
-    TestResult,
-    TestSessionStats,
-)
+from pytest_oof.db import export_results, init_db
+from pytest_oof.utils import LongitudinalAnalysis, Results, TestHistory
 
 
 def parse_datetime(s: str) -> datetime:
@@ -29,89 +17,8 @@ def parse_datetime(s: str) -> datetime:
         return datetime.strptime(s, "%Y-%m-%d").replace(tzinfo=timezone.utc)
 
 
-def dict_to_results(data: dict) -> Results:
-    """Convert a dictionary back into a Results object."""
-    # Convert session metadata
-    session_metadata = SessionMetadata(
-        session_id=data["session_metadata"]["session_id"],
-        start_time=datetime.fromisoformat(data["session_metadata"]["start_time"]),
-        stop_time=datetime.fromisoformat(
-            data["session_metadata"].get(
-                "stop_time", data["session_metadata"]["start_time"]
-            )
-        ),
-        duration=timedelta(seconds=data["session_metadata"]["duration"]),
-        sut_id=data["session_metadata"].get("sut_id", ""),
-        sut_type=data["session_metadata"].get("sut_type", ""),
-        sut_version=data["session_metadata"].get("sut_version", ""),
-        sut_environment=data["session_metadata"].get("sut_environment", ""),
-        sut_metadata=data["session_metadata"].get("sut_metadata", {}),
-    )
-
-    # Convert test results
-    test_results = []
-    for tr in data["test_results"]:
-        test_result = TestResult(
-            nodeid=tr["nodeid"],
-            outcome=tr["outcome"],
-            start_time=datetime.fromisoformat(tr["start_time"])
-            if tr.get("start_time")
-            else None,
-            duration=tr.get("duration", 0.0),
-            has_warning=tr.get("has_warning", False),
-            caplog=tr.get("caplog", ""),
-            capstderr=tr.get("capstderr", ""),
-            capstdout=tr.get("capstdout", ""),
-            longreprtext=tr.get("longreprtext", ""),
-            longreprtext_stripped=tr.get("longreprtext_stripped", ""),
-        )
-        test_results.append(test_result)
-
-    # Convert stats
-    session_stats = (
-        TestSessionStats(**data["session_stats"]) if data.get("session_stats") else None
-    )
-    report_stats = (
-        ReportBasedStats(**data["report_stats"]) if data.get("report_stats") else None
-    )
-
-    # Create output fields
-    output_fields = OutputFields()
-    if data.get("output_fields"):
-        for field_name, field_data in data["output_fields"].items():
-            if hasattr(output_fields, field_name):
-                field = OutputField(
-                    name=field_data.get("name", ""),
-                    content=field_data.get("content", ""),
-                    content_stripped=field_data.get("content_stripped", ""),
-                )
-                setattr(output_fields, field_name, field)
-
-    # Convert warnings and rerun groups
-    warnings = [TestResult(**w) for w in data.get("warnings", [])]
-    rerun_groups = []
-    for rg in data.get("rerun_test_groups", []):
-        group = RerunTestGroup(
-            nodeid=rg["nodeid"],
-            final_outcome=rg["final_outcome"],
-            final_test=TestResult(**rg["final_test"]) if rg.get("final_test") else None,
-            forerunners=[TestResult(**t) for t in rg.get("forerunners", [])],
-        )
-        rerun_groups.append(group)
-
-    return Results(
-        session_metadata=session_metadata,
-        session_stats=session_stats,
-        report_stats=report_stats,
-        test_results=test_results,
-        output_fields=output_fields,
-        warnings=warnings,
-        rerun_test_groups=rerun_groups,
-    )
-
-
 def analyze_results(
-    json_file: Path,
+    db_path: Path,
     sut_id: str = "",
     sut_type: str = "",
     sut_version: str = "",
@@ -126,36 +33,46 @@ def analyze_results(
 ):
     """Analyze test results using various methods."""
 
-    # Check if file exists
-    if not json_file.exists():
-        print(f"Error: File not found: {json_file}")
-        return
-
-    # Check if file is empty
-    if json_file.stat().st_size == 0:
-        print(f"Error: File is empty: {json_file}")
+    # Check if database exists and initialize if needed
+    if not db_path.exists():
+        print(f"Initializing new database at: {db_path}")
+        init_db(db_path)
         return
 
     try:
-        # Load JSON history
-        with open(json_file) as f:
-            results_history = json.load(f)
-
-        if not isinstance(results_history, list):
-            print(
-                f"Error: Expected a list of results in {json_file}, but got {type(results_history).__name__}. The file may be corrupted."
-            )
+        # Parse times if provided
+        try:
+            start = parse_datetime(start_time) if start_time else None
+            end = parse_datetime(end_time) if end_time else None
+        except ValueError as e:
+            print(f"Error: Invalid date format: {e}")
+            print("Please use ISO format (YYYY-MM-DDTHH:MM:SS+HH:MM) or YYYY-MM-DD")
             return
 
-        if not results_history:
-            print(f"No test results found in {json_file}")
+        # Export results from database to Results objects
+        results_data = export_results(
+            db_path=db_path,
+            start_time=start,
+            end_time=end,
+            sut_id=sut_id,
+            sut_type=sut_type,
+            sut_version=sut_version,
+            sut_env=sut_env,
+        )
+
+        if not results_data:
+            print(f"No test results found in database {db_path}")
             return
 
-        # Convert JSON results to Results objects
+        # Convert database results to Results objects
         history = TestHistory()
-        for result_data in results_history:
+        for result_data in results_data:
             try:
-                history.add_run(dict_to_results(result_data))
+                # Create a copy of the data with session_id in the expected location
+                result_copy = result_data.copy()
+                result_copy["session_id"] = result_copy["session"]["session_id"]
+                result = Results.from_dict(result_copy)
+                history.add_run(result)
             except (KeyError, ValueError) as e:
                 print(f"Error: Failed to parse result data: {e}")
                 return
@@ -168,15 +85,6 @@ def analyze_results(
             sut_version=sut_version,
             sut_environment=sut_env,
         )
-
-        # Parse times if provided
-        try:
-            start = parse_datetime(start_time) if start_time else None
-            end = parse_datetime(end_time) if end_time else None
-        except ValueError as e:
-            print(f"Error: Invalid date format: {e}")
-            print("Please use ISO format (YYYY-MM-DDTHH:MM:SS+HH:MM) or YYYY-MM-DD")
-            return
 
         # Get test status changes
         print("\n=== Test Status Changes ===")
@@ -345,9 +253,6 @@ def analyze_results(
 
             print(f"\nCommon tests: {len(comparison['common_tests'])}")
 
-    except json.JSONDecodeError:
-        print(f"Error: Invalid JSON format in {json_file}")
-        return
     except Exception as e:
         print(f"Error: Failed to analyze results: {e}")
         return
@@ -356,10 +261,10 @@ def analyze_results(
 def main():
     parser = argparse.ArgumentParser(description="Analyze test results")
     parser.add_argument(
-        "json_file",
+        "db_path",
         type=Path,
-        help="Path to oof-results.json file",
-        default=Path("oof/oof-results.json"),
+        help="Path to database file",
+        default=Path("oof/oof-results.db"),
         nargs="?",
     )
     parser.add_argument("--sut-id", help="Filter by SUT ID")
@@ -399,7 +304,7 @@ def main():
 
     try:
         analyze_results(
-            json_file=args.json_file,
+            db_path=args.db_path,
             sut_id=args.sut_id or "",
             sut_type=args.sut_type or "",
             sut_version=args.sut_version or "",
@@ -414,7 +319,7 @@ def main():
         )
     except KeyboardInterrupt:
         print("\nAnalysis interrupted by user")
-        sys.exit(1)
+        return
 
 
 if __name__ == "__main__":

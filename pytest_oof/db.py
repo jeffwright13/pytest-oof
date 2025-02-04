@@ -4,7 +4,7 @@ import sqlite3
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Any, Dict, List, Optional
 
 
 @contextmanager
@@ -24,149 +24,207 @@ def init_db(db_path: Path) -> None:
     with db_connection(db_path) as conn:
         c = conn.cursor()
 
-        # Create tables with indices for faster querying
-        c.executescript(
+        # Check if schema version table exists
+        c.execute(
             """
-            -- Test sessions table to store metadata about each test run
-            CREATE TABLE IF NOT EXISTS test_sessions (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                start_time TIMESTAMP NOT NULL,
-                end_time TIMESTAMP,
-                sut_id TEXT,
-                sut_type TEXT,
-                sut_version TEXT,
-                sut_env TEXT,
-                python_version TEXT,
-                os_info TEXT,
-                pytest_version TEXT,
-                command_line TEXT,
-                report_based BOOLEAN DEFAULT 0,  -- Flag to indicate if this session uses report-based stats
-                UNIQUE(start_time, sut_id, sut_type, sut_version, sut_env)
-            );
-            CREATE INDEX IF NOT EXISTS idx_sessions_time ON test_sessions(start_time);
-
-            -- Console output table for report-based analysis
-            CREATE TABLE IF NOT EXISTS console_output (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                session_id INTEGER NOT NULL,
-                timestamp TIMESTAMP NOT NULL,
-                line_number INTEGER NOT NULL,
-                content TEXT NOT NULL,
-                line_type TEXT,  -- header, summary, test_result, error, warning, etc.
-                parsed_data TEXT,  -- JSON string of any structured data parsed from this line
-                FOREIGN KEY(session_id) REFERENCES test_sessions(id)
-            );
-            CREATE INDEX IF NOT EXISTS idx_console_session ON console_output(session_id);
-            CREATE INDEX IF NOT EXISTS idx_console_type ON console_output(line_type);
-
-            -- Report-based metrics table
-            CREATE TABLE IF NOT EXISTS report_metrics (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                session_id INTEGER NOT NULL,
-                metric_type TEXT NOT NULL,  -- collected, selected, deselected, passed, failed, etc.
-                metric_value INTEGER NOT NULL,
-                timestamp TIMESTAMP NOT NULL,
-                source_line_id INTEGER,  -- Reference to console line where this was parsed from
-                FOREIGN KEY(session_id) REFERENCES test_sessions(id),
-                FOREIGN KEY(source_line_id) REFERENCES console_output(id)
-            );
-            CREATE INDEX IF NOT EXISTS idx_report_metrics_type ON report_metrics(metric_type);
-            CREATE INDEX IF NOT EXISTS idx_report_metrics_session ON report_metrics(session_id);
-
-            -- Test results table to store individual test outcomes
-            CREATE TABLE IF NOT EXISTS test_results (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                session_id INTEGER NOT NULL,
-                test_id TEXT NOT NULL,
-                outcome TEXT NOT NULL,
-                timestamp TIMESTAMP NOT NULL,
-                duration REAL,
-                error_message TEXT,
-                error_type TEXT,
-                error_traceback TEXT,
-                parameters TEXT,  -- JSON string of test parameters
-                source_line_id INTEGER,  -- NULL for plugin-based, set for report-based
-                FOREIGN KEY(session_id) REFERENCES test_sessions(id),
-                FOREIGN KEY(source_line_id) REFERENCES console_output(id),
-                UNIQUE(session_id, test_id, timestamp)
-            );
-            CREATE INDEX IF NOT EXISTS idx_results_test ON test_results(test_id);
-            CREATE INDEX IF NOT EXISTS idx_results_time ON test_results(timestamp);
-
-            -- Fixtures table to track fixture usage and timing
-            CREATE TABLE IF NOT EXISTS fixtures (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                session_id INTEGER NOT NULL,
-                name TEXT NOT NULL,
-                scope TEXT NOT NULL,  -- session, package, module, class, function
-                timestamp TIMESTAMP NOT NULL,
-                setup_duration REAL,
-                teardown_duration REAL,
-                error_message TEXT,
-                error_type TEXT,
-                error_traceback TEXT,
-                FOREIGN KEY(session_id) REFERENCES test_sessions(id)
-            );
-            CREATE INDEX IF NOT EXISTS idx_fixtures_name ON fixtures(name);
-            CREATE INDEX IF NOT EXISTS idx_fixtures_session ON fixtures(session_id);
-
-            -- Test-Fixture relationships
-            CREATE TABLE IF NOT EXISTS test_fixture_usage (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                test_result_id INTEGER NOT NULL,
-                fixture_id INTEGER NOT NULL,
-                FOREIGN KEY(test_result_id) REFERENCES test_results(id),
-                FOREIGN KEY(fixture_id) REFERENCES fixtures(id),
-                UNIQUE(test_result_id, fixture_id)
-            );
-
-            -- Resource metrics table (Level 3)
-            CREATE TABLE IF NOT EXISTS resource_metrics (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                session_id INTEGER NOT NULL,
-                test_result_id INTEGER,  -- NULL for session-wide metrics
-                fixture_id INTEGER,      -- NULL for test or session metrics
-                timestamp TIMESTAMP NOT NULL,
-                metric_type TEXT NOT NULL,  -- cpu, memory, disk, network, etc.
-                metric_name TEXT NOT NULL,
-                metric_value REAL NOT NULL,
-                metric_unit TEXT,
-                FOREIGN KEY(session_id) REFERENCES test_sessions(id),
-                FOREIGN KEY(test_result_id) REFERENCES test_results(id),
-                FOREIGN KEY(fixture_id) REFERENCES fixtures(id)
-            );
-            CREATE INDEX IF NOT EXISTS idx_metrics_type ON resource_metrics(metric_type);
-            CREATE INDEX IF NOT EXISTS idx_metrics_time ON resource_metrics(timestamp);
-
-            -- Test artifacts table (Level 3)
-            CREATE TABLE IF NOT EXISTS test_artifacts (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                test_result_id INTEGER NOT NULL,
-                artifact_type TEXT NOT NULL,  -- log, screenshot, dump, etc.
-                artifact_path TEXT NOT NULL,
-                timestamp TIMESTAMP NOT NULL,
-                metadata TEXT,  -- JSON string of additional metadata
-                FOREIGN KEY(test_result_id) REFERENCES test_results(id)
-            );
-            CREATE INDEX IF NOT EXISTS idx_artifacts_type ON test_artifacts(artifact_type);
-
-            -- System state snapshots (Level 3)
-            CREATE TABLE IF NOT EXISTS system_state (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                session_id INTEGER NOT NULL,
-                test_result_id INTEGER,  -- NULL for session-wide state
-                timestamp TIMESTAMP NOT NULL,
-                state_type TEXT NOT NULL,  -- env_vars, loaded_modules, open_files, etc.
-                state_data TEXT NOT NULL,  -- JSON string of state information
-                FOREIGN KEY(session_id) REFERENCES test_sessions(id),
-                FOREIGN KEY(test_result_id) REFERENCES test_results(id)
-            );
-            CREATE INDEX IF NOT EXISTS idx_state_type ON system_state(state_type);
-            CREATE INDEX IF NOT EXISTS idx_state_time ON system_state(timestamp);
-        """
+            SELECT name FROM sqlite_master
+            WHERE type='table' AND name='schema_version';
+            """
         )
+        schema_version_exists = c.fetchone() is not None
 
-        conn.commit()
+        if schema_version_exists:
+            # Check current schema version
+            c.execute("SELECT version FROM schema_version ORDER BY id DESC LIMIT 1")
+            row = c.fetchone()
+            current_version = row[0] if row else 0
+        else:
+            current_version = 0
+
+        # Drop all tables if schema version is outdated
+        if current_version < 3:  # Current schema version
+            c.executescript(
+                """
+                DROP TABLE IF EXISTS test_sessions;
+                DROP TABLE IF EXISTS console_output;
+                DROP TABLE IF EXISTS report_metrics;
+                DROP TABLE IF EXISTS test_results;
+                DROP TABLE IF EXISTS fixtures;
+                DROP TABLE IF EXISTS test_fixture_usage;
+                DROP TABLE IF EXISTS resource_metrics;
+                DROP TABLE IF EXISTS test_artifacts;
+                DROP TABLE IF EXISTS system_state;
+                DROP TABLE IF EXISTS schema_version;
+
+                -- Create schema version table and set version
+                CREATE TABLE schema_version (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    version INTEGER NOT NULL,
+                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
+                INSERT INTO schema_version (version, created_at)
+                VALUES (3, CURRENT_TIMESTAMP);
+
+                -- Test sessions table to store metadata about each test run
+                CREATE TABLE test_sessions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    start_time TIMESTAMP NOT NULL,
+                    end_time TIMESTAMP,
+                    duration REAL,  -- Duration in seconds
+                    sut_id TEXT,
+                    sut_type TEXT,
+                    sut_version TEXT,
+                    sut_env TEXT,
+                    python_version TEXT,
+                    os_info TEXT,
+                    pytest_version TEXT,
+                    command_line TEXT,
+                    report_based BOOLEAN DEFAULT 0,  -- Flag to indicate if this session uses report-based stats
+                    num_tests INTEGER,
+                    num_passes INTEGER,
+                    num_failures INTEGER,
+                    num_errors INTEGER,
+                    num_skips INTEGER,
+                    num_xfails INTEGER,
+                    num_xpasses INTEGER,
+                    num_reruns INTEGER,
+                    num_rerun_groups INTEGER,
+                    num_warnings INTEGER,
+                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
+                CREATE INDEX idx_test_sessions_sut_id ON test_sessions(sut_id);
+                CREATE INDEX idx_test_sessions_sut_type ON test_sessions(sut_type);
+                CREATE INDEX idx_test_sessions_start_time ON test_sessions(start_time);
+
+                -- Test results table to store individual test outcomes
+                CREATE TABLE test_results (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    session_id INTEGER NOT NULL,
+                    test_id TEXT NOT NULL,
+                    outcome TEXT NOT NULL,
+                    timestamp TIMESTAMP NOT NULL,
+                    duration REAL,  -- Duration in seconds
+                    error_message TEXT,
+                    error_type TEXT,
+                    error_traceback TEXT,
+                    parameters TEXT,  -- JSON string of test parameters
+                    source_line_id INTEGER,
+                    has_warning BOOLEAN DEFAULT 0,
+                    caplog TEXT,
+                    capstderr TEXT,
+                    capstdout TEXT,
+                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (session_id) REFERENCES test_sessions(id) ON DELETE CASCADE,
+                    FOREIGN KEY (source_line_id) REFERENCES console_output(id) ON DELETE SET NULL
+                );
+                CREATE INDEX idx_test_results_session_id ON test_results(session_id);
+                CREATE INDEX idx_test_results_test_id ON test_results(test_id);
+                CREATE INDEX idx_test_results_outcome ON test_results(outcome);
+                CREATE INDEX idx_test_results_timestamp ON test_results(timestamp);
+
+                -- Console output table to store stdout/stderr lines
+                CREATE TABLE console_output (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    session_id INTEGER NOT NULL,
+                    timestamp TIMESTAMP NOT NULL,
+                    line_number INTEGER NOT NULL,
+                    content TEXT NOT NULL,
+                    line_type TEXT,  -- Type of line (e.g., stdout, stderr, log)
+                    parsed_data TEXT,  -- JSON string of parsed data
+                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (session_id) REFERENCES test_sessions(id) ON DELETE CASCADE
+                );
+                CREATE INDEX idx_console_output_session_id ON console_output(session_id);
+                CREATE INDEX idx_console_output_timestamp ON console_output(timestamp);
+                CREATE INDEX idx_console_output_line_number ON console_output(line_number);
+
+                -- Report metrics table to store report-based statistics
+                CREATE TABLE report_metrics (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    session_id INTEGER NOT NULL,
+                    metric_type TEXT NOT NULL,
+                    metric_value INTEGER NOT NULL,
+                    timestamp TIMESTAMP NOT NULL,
+                    source_line_id INTEGER,
+                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (session_id) REFERENCES test_sessions(id) ON DELETE CASCADE,
+                    FOREIGN KEY (source_line_id) REFERENCES console_output(id) ON DELETE SET NULL
+                );
+                CREATE INDEX idx_report_metrics_session_id ON report_metrics(session_id);
+                CREATE INDEX idx_report_metrics_metric_type ON report_metrics(metric_type);
+                CREATE INDEX idx_report_metrics_timestamp ON report_metrics(timestamp);
+
+                -- Resource metrics table to store resource usage metrics
+                CREATE TABLE resource_metrics (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    session_id INTEGER NOT NULL,
+                    metric_type TEXT NOT NULL,
+                    metric_value REAL NOT NULL,
+                    timestamp TIMESTAMP NOT NULL,
+                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (session_id) REFERENCES test_sessions(id) ON DELETE CASCADE
+                );
+                CREATE INDEX idx_resource_metrics_session_id ON resource_metrics(session_id);
+                CREATE INDEX idx_resource_metrics_metric_type ON resource_metrics(metric_type);
+                CREATE INDEX idx_resource_metrics_timestamp ON resource_metrics(timestamp);
+
+                -- Test artifacts table to store test-related files
+                CREATE TABLE test_artifacts (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    session_id INTEGER NOT NULL,
+                    test_id TEXT NOT NULL,
+                    artifact_type TEXT NOT NULL,
+                    artifact_path TEXT NOT NULL,
+                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (session_id) REFERENCES test_sessions(id) ON DELETE CASCADE
+                );
+                CREATE INDEX idx_test_artifacts_session_id ON test_artifacts(session_id);
+                CREATE INDEX idx_test_artifacts_test_id ON test_artifacts(test_id);
+
+                -- System state table to store system information
+                CREATE TABLE system_state (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    session_id INTEGER NOT NULL,
+                    state_type TEXT NOT NULL,
+                    state_value TEXT NOT NULL,
+                    timestamp TIMESTAMP NOT NULL,
+                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (session_id) REFERENCES test_sessions(id) ON DELETE CASCADE
+                );
+                CREATE INDEX idx_system_state_session_id ON system_state(session_id);
+                CREATE INDEX idx_system_state_state_type ON system_state(state_type);
+                CREATE INDEX idx_system_state_timestamp ON system_state(timestamp);
+
+                -- Fixtures table to store fixture information
+                CREATE TABLE fixtures (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    session_id INTEGER NOT NULL,
+                    fixture_id TEXT NOT NULL,
+                    fixture_type TEXT NOT NULL,
+                    scope TEXT NOT NULL,
+                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (session_id) REFERENCES test_sessions(id) ON DELETE CASCADE
+                );
+                CREATE INDEX idx_fixtures_session_id ON fixtures(session_id);
+                CREATE INDEX idx_fixtures_fixture_id ON fixtures(fixture_id);
+
+                -- Test fixture usage table to store test-fixture relationships
+                CREATE TABLE test_fixture_usage (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    session_id INTEGER NOT NULL,
+                    test_id TEXT NOT NULL,
+                    fixture_id INTEGER NOT NULL,
+                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (session_id) REFERENCES test_sessions(id) ON DELETE CASCADE,
+                    FOREIGN KEY (fixture_id) REFERENCES fixtures(id) ON DELETE CASCADE
+                );
+                CREATE INDEX idx_test_fixture_usage_session_id ON test_fixture_usage(session_id);
+                CREATE INDEX idx_test_fixture_usage_test_id ON test_fixture_usage(test_id);
+                CREATE INDEX idx_test_fixture_usage_fixture_id ON test_fixture_usage(fixture_id);
+                """
+            )
+
+            conn.commit()
 
 
 def add_session(
@@ -177,17 +235,27 @@ def add_session(
     sut_version: str = "",
     sut_env: str = "",
 ) -> int:
-    """Add a new test session and return its ID."""
+    """Add a new test session to the database and return its ID."""
     with db_connection(db_path) as conn:
         c = conn.cursor()
         c.execute(
             """
-            INSERT INTO test_sessions (start_time, sut_id, sut_type, sut_version, sut_env)
-            VALUES (?, ?, ?, ?, ?)
-        """,
-            (start_time, sut_id, sut_type, sut_version, sut_env),
+            INSERT INTO test_sessions (
+                start_time,
+                sut_id,
+                sut_type,
+                sut_version,
+                sut_env
+            ) VALUES (?, ?, ?, ?, ?)
+            """,
+            (
+                start_time,
+                sut_id,
+                sut_type,
+                sut_version,
+                sut_env,
+            ),
         )
-
         session_id = c.lastrowid
         conn.commit()
         return session_id
@@ -203,18 +271,35 @@ def add_test_result(
     error_message: Optional[str] = None,
     error_type: Optional[str] = None,
     error_traceback: Optional[str] = None,
-) -> None:
-    """Add a test result to the database."""
+    parameters: Optional[Dict[str, Any]] = None,
+    source_line_id: Optional[int] = None,
+    has_warning: bool = False,
+    caplog: Optional[str] = None,
+    capstderr: Optional[str] = None,
+    capstdout: Optional[str] = None,
+) -> int:
+    """Add a test result to the database and return its ID."""
     with db_connection(db_path) as conn:
         c = conn.cursor()
         c.execute(
             """
             INSERT INTO test_results (
-                session_id, test_id, outcome, timestamp, duration,
-                error_message, error_type, error_traceback
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        """,
+                session_id,
+                test_id,
+                outcome,
+                timestamp,
+                duration,
+                error_message,
+                error_type,
+                error_traceback,
+                parameters,
+                source_line_id,
+                has_warning,
+                caplog,
+                capstderr,
+                capstdout
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
             (
                 session_id,
                 test_id,
@@ -224,9 +309,17 @@ def add_test_result(
                 error_message,
                 error_type,
                 error_traceback,
+                json.dumps(parameters) if parameters else None,
+                source_line_id,
+                has_warning,
+                caplog,
+                capstderr,
+                capstdout,
             ),
         )
+        test_result_id = c.lastrowid
         conn.commit()
+        return test_result_id
 
 
 def get_test_results(
@@ -336,151 +429,166 @@ def add_report_metric(
 
 def export_results(
     db_path: Path,
-    output_file: Optional[Path] = None,
+    session_id: Optional[int] = None,
     start_time: Optional[datetime] = None,
     end_time: Optional[datetime] = None,
     sut_id: Optional[str] = None,
     sut_type: Optional[str] = None,
     sut_version: Optional[str] = None,
     sut_env: Optional[str] = None,
-    session_id: Optional[int] = None,
-    test_id: Optional[str] = None,
+    output_file: Optional[Path] = None,
     outcome: Optional[str] = None,
-) -> Dict:
-    """Query and export test results with flexible filtering.
-
-    Args:
-        db_path: Path to SQLite database
-        output_file: Optional file to write JSON output to
-        start_time: Filter sessions after this time
-        end_time: Filter sessions before this time
-        sut_id: Filter by System Under Test ID
-        sut_type: Filter by System Under Test type
-        sut_version: Filter by System Under Test version
-        sut_env: Filter by System Under Test environment
-        session_id: Filter by specific session ID
-        test_id: Filter by specific test ID
-        outcome: Filter by test outcome (PASSED, FAILED, etc)
-
-    Returns:
-        Dict containing the query results
-    """
+    test_id: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    """Export test results from the database."""
     with db_connection(db_path) as conn:
-        conn.row_factory = sqlite3.Row
         c = conn.cursor()
 
-        # Build query conditions
-        conditions = []
-        params = []
-
-        if session_id is not None:
-            conditions.append("s.id = ?")
-            params.append(session_id)
-        if start_time is not None:
-            conditions.append("s.start_time >= ?")
-            params.append(start_time)
-        if end_time is not None:
-            conditions.append(
-                "s.start_time <= ?"
-            )  # Changed from end_time to start_time
-            params.append(end_time)
-        if sut_id is not None:
-            conditions.append("s.sut_id = ?")
-            params.append(sut_id)
-        if sut_type is not None:
-            conditions.append("s.sut_type = ?")
-            params.append(sut_type)
-        if sut_version is not None:
-            conditions.append("s.sut_version = ?")
-            params.append(sut_version)
-        if sut_env is not None:
-            conditions.append("s.sut_env = ?")
-            params.append(sut_env)
-        if test_id is not None:
-            conditions.append("r.test_id = ?")
-            params.append(test_id)
-        if outcome is not None:
-            conditions.append("r.outcome = ?")
-            params.append(outcome)
-
-        where_clause = " AND ".join(conditions) if conditions else "1=1"
-
-        # Query that joins test_sessions with test_results
-        query = f"""
-            SELECT
-                s.id as session_id,
-                s.start_time,
-                s.end_time,
-                s.sut_id,
-                s.sut_type,
-                s.sut_version,
-                s.sut_env,
-                r.test_id,
-                r.outcome,
-                r.timestamp,
-                r.duration,
-                r.error_message,
-                r.error_type,
-                r.error_traceback,
-                r.parameters,
-                m.metric_type,
-                m.metric_value
+        # Build the base query for test sessions
+        query = """
+            SELECT DISTINCT s.*
             FROM test_sessions s
-            LEFT JOIN test_results r ON s.id = r.session_id
-            LEFT JOIN report_metrics m ON s.id = m.session_id
-            WHERE {where_clause}
-            ORDER BY s.start_time DESC, r.timestamp ASC
         """
 
+        # Add join with test_results if filtering by outcome or test_id
+        if outcome is not None or test_id is not None:
+            query += " JOIN test_results r ON s.id = r.session_id"
+
+        query += " WHERE 1=1"
+        params = []
+
+        # Add filters
+        if session_id is not None:
+            query += " AND s.id = ?"
+            params.append(session_id)
+        if start_time is not None:
+            query += " AND s.start_time >= ?"
+            params.append(start_time)
+        if end_time is not None:
+            query += " AND s.start_time <= ?"
+            params.append(end_time)
+        if sut_id is not None:
+            query += " AND s.sut_id = ?"
+            params.append(sut_id)
+        if sut_type is not None:
+            query += " AND s.sut_type = ?"
+            params.append(sut_type)
+        if sut_version is not None:
+            query += " AND s.sut_version = ?"
+            params.append(sut_version)
+        if sut_env is not None:
+            query += " AND s.sut_env = ?"
+            params.append(sut_env)
+        if outcome is not None:
+            query += " AND r.outcome = ?"
+            params.append(outcome)
+        if test_id is not None:
+            query += " AND r.test_id = ?"
+            params.append(test_id)
+
+        query += " ORDER BY s.start_time DESC"
         c.execute(query, params)
-        rows = c.fetchall()
+        sessions = c.fetchall()
 
-        # Convert to nested dict structure
-        results = {}
-        for row in rows:
-            row_dict = dict(row)
-            session_id = row_dict["session_id"]
+        results = []
+        for session in sessions:
+            # Get test results for this session
+            test_results_query = """
+                SELECT
+                    test_id,
+                    outcome,
+                    timestamp,
+                    duration,
+                    error_message,
+                    error_type,
+                    error_traceback,
+                    parameters,
+                    has_warning,
+                    caplog,
+                    capstderr,
+                    capstdout
+                FROM test_results
+                WHERE session_id = ?
+            """
+            params = [session[0]]
 
-            if session_id not in results:
-                results[session_id] = {
-                    "session": {
-                        "id": session_id,
-                        "start_time": row_dict["start_time"],
-                        "end_time": row_dict["end_time"],
-                        "sut_id": row_dict["sut_id"],
-                        "sut_type": row_dict["sut_type"],
-                        "sut_version": row_dict["sut_version"],
-                        "sut_env": row_dict["sut_env"],
-                    },
-                    "test_results": [],
-                    "metrics": [],
-                }
+            if outcome is not None:
+                test_results_query += " AND outcome = ?"
+                params.append(outcome)
+            if test_id is not None:
+                test_results_query += " AND test_id = ?"
+                params.append(test_id)
 
-            if row_dict["test_id"]:
-                results[session_id]["test_results"].append(
+            test_results_query += " ORDER BY timestamp"
+            c.execute(test_results_query, params)
+            test_results = c.fetchall()
+
+            # Get metrics for this session
+            c.execute(
+                """
+                SELECT metric_type, metric_value
+                FROM report_metrics
+                WHERE session_id = ?
+                ORDER BY timestamp
+                """,
+                (session[0],),
+            )
+            metrics = c.fetchall()
+
+            # Convert to dictionary
+            session_dict = {
+                "session": {
+                    "session_id": session[0],
+                    "start_time": session[1],
+                    "end_time": session[2],
+                    "duration": session[3],
+                    "sut_id": session[4],
+                    "sut_type": session[5],
+                    "sut_version": session[6],
+                    "sut_env": session[7],
+                    "num_tests": session[8],
+                    "num_passes": session[9],
+                    "num_failures": session[10],
+                    "num_errors": session[11],
+                    "num_skips": session[12],
+                    "num_xfails": session[13],
+                    "num_xpasses": session[14],
+                    "num_reruns": session[15],
+                    "num_rerun_groups": session[16],
+                    "num_warnings": session[17],
+                    "num_warnings_unique": session[18],
+                    "num_deselected": session[19],
+                },
+                "test_results": [
                     {
-                        "test_id": row_dict["test_id"],
-                        "outcome": row_dict["outcome"],
-                        "timestamp": row_dict["timestamp"],
-                        "duration": row_dict["duration"],
-                        "error_message": row_dict["error_message"],
-                        "error_type": row_dict["error_type"],
-                        "error_traceback": row_dict["error_traceback"],
-                        "parameters": row_dict["parameters"],
+                        "test_id": tr[0],
+                        "outcome": tr[1],
+                        "timestamp": tr[2],
+                        "duration": tr[3],
+                        "error_message": tr[4],
+                        "error_type": tr[5],
+                        "error_traceback": tr[6],
+                        "parameters": json.loads(tr[7]) if tr[7] else None,
+                        "has_warning": tr[8],
+                        "caplog": tr[9],
+                        "capstderr": tr[10],
+                        "capstdout": tr[11],
+                        "session_id": session[0],
                     }
-                )
-
-            if row_dict["metric_type"]:
-                results[session_id]["metrics"].append(
-                    {"type": row_dict["metric_type"], "value": row_dict["metric_value"]}
-                )
-
-        # Convert to list and sort by start_time
-        results_list = list(results.values())
-        results_list.sort(key=lambda x: x["session"]["start_time"], reverse=True)
+                    for tr in test_results
+                ],
+                "metrics": [
+                    {
+                        "type": m[0],
+                        "value": m[1],
+                    }
+                    for m in metrics
+                ],
+            }
+            results.append(session_dict)
 
         if output_file:
             with open(output_file, "w") as f:
-                json.dump(results_list, f, indent=2, default=str)
+                json.dump(results, f, indent=2, default=str)
 
-        return results_list
+        return results

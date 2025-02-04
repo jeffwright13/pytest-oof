@@ -374,6 +374,76 @@ class Results:
             rerun_test_groups=test_info.get("oof_rerun_test_groups", []),
         )
 
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "Results":
+        """Convert a dictionary back into a Results object."""
+        # Convert session metadata
+        session_metadata = SessionMetadata(
+            session_id=data["session"]["session_id"],
+            start_time=datetime.fromisoformat(data["session"]["start_time"]),
+            stop_time=datetime.fromisoformat(
+                data["session"].get("stop_time", data["session"]["start_time"])
+            ),
+            duration=timedelta(seconds=data["session"]["duration"]),
+            sut_id=data["session"].get("sut_id", ""),
+            sut_type=data["session"].get("sut_type", ""),
+            sut_version=data["session"].get("sut_version", ""),
+            sut_environment=data["session"].get("sut_environment", ""),
+            sut_metadata=data["session"].get("sut_metadata", {}),
+        )
+
+        # Convert test results
+        test_results = []
+        for tr in data["test_results"]:
+            test_result = TestResult(
+                nodeid=tr["test_id"],
+                outcome=tr["outcome"],
+                start_time=datetime.fromisoformat(tr["timestamp"])
+                if tr.get("timestamp")
+                else None,
+                duration=tr.get("duration", 0.0),
+                has_warning=tr.get("has_warning", False),
+                caplog=tr.get("caplog", ""),
+                capstderr=tr.get("capstderr", ""),
+                capstdout=tr.get("capstdout", ""),
+                longreprtext=tr.get("error_message", ""),
+                longreprtext_stripped=tr.get("error_message", ""),
+            )
+            test_results.append(test_result)
+
+        # Convert stats
+        session_stats = TestSessionStats(
+            num_tests=data["session"].get("num_tests", 0),
+            num_passes=data["session"].get("num_passes", 0),
+            num_failures=data["session"].get("num_failures", 0),
+            num_errors=data["session"].get("num_errors", 0),
+            num_skips=data["session"].get("num_skips", 0),
+            num_xfails=data["session"].get("num_xfails", 0),
+            num_xpasses=data["session"].get("num_xpasses", 0),
+            num_reruns=data["session"].get("num_reruns", 0),
+            num_rerun_groups=data["session"].get("num_rerun_groups", 0),
+            num_warnings=data["session"].get("num_warnings", 0),
+            num_warnings_unique=data["session"].get("num_warnings_unique", 0),
+            num_deselected=data["session"].get("num_deselected", 0),
+        )
+
+        # Create empty output fields for now
+        output_fields = OutputFields()
+
+        # Convert warnings and rerun groups
+        warnings = []
+        rerun_groups = []
+
+        return cls(
+            session_metadata=session_metadata,
+            session_stats=session_stats,
+            report_stats=None,  # Not stored in database
+            test_results=test_results,
+            output_fields=output_fields,
+            warnings=warnings,
+            rerun_test_groups=rerun_groups,
+        )
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert the Results object to a dictionary."""
         return {
@@ -620,29 +690,35 @@ class LongitudinalAnalysis:
             for test in run.test_results:
                 if test.nodeid not in test_history:
                     test_history[test.nodeid] = []
-                test_history[test.nodeid].append(test.outcome)
+                test_history[test.nodeid].append(test.outcome.upper())
 
         # Analyze the latest run for changes
         for test in latest_run.test_results:
             # For new tests that don't have history
             if test.nodeid not in test_history:
-                if test.outcome == "FAILED":
+                if test.outcome.upper() == "FAILED":
                     changes["new_failures"].append(test.nodeid)
                 continue
 
             hist_outcomes = test_history[test.nodeid]
             most_common = max(set(hist_outcomes), key=hist_outcomes.count)
+            current_outcome = test.outcome.upper()
+
+            print(
+                f"Test {test.nodeid}: current={current_outcome}, history={hist_outcomes}, most_common={most_common}"
+            )
 
             # Check for status changes in the latest run
-            if most_common == "PASSED" and test.outcome == "FAILED":
+            if most_common == "PASSED" and current_outcome == "FAILED":
                 changes["new_failures"].append(test.nodeid)
-            elif most_common == "FAILED" and test.outcome == "PASSED":
+            elif most_common == "FAILED" and current_outcome == "PASSED":
                 changes["new_passes"].append(test.nodeid)
 
             # Check for intermittent behavior
             if len(set(hist_outcomes)) > 1:
                 changes["intermittent"].append(test.nodeid)
 
+        print(f"Changes: {changes}")
         return changes
 
     def get_trend_stats(
