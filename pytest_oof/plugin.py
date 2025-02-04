@@ -1,4 +1,3 @@
-import itertools
 import json
 import pickle
 import re
@@ -6,6 +5,7 @@ import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from io import StringIO
+from pathlib import Path
 from types import SimpleNamespace
 from typing import List
 
@@ -18,20 +18,20 @@ from strip_ansi import strip_ansi
 
 from pytest_oof import hooks
 from pytest_oof.utils import (
+    HISTORY_FILE,
     JSON_OUT_FILE,
     RESULTS_FILE,
-    TERMINAL_OUTPUT_FILE,
-    generate_timestamp_uuid,
     OutputField,
     OutputFields,
+    ReportBasedStats,
     RerunTestGroup,
     Results,
+    SessionMetadata,
+    TestHistory,
     TestResult,
     TestResults,
-    SessionMetadata,
     TestSessionStats,
-    TestHistory,
-    HISTORY_FILE,
+    generate_timestamp_uuid,
 )
 
 # regex matching patterns for pytest console output fields/sections
@@ -69,14 +69,24 @@ class ResultsFromConfig(Results):
             start_time=config._oof_session_start_time,
             stop_time=config._oof_session_stop_time,
             duration=config._oof_session_duration,
+            sut_id=getattr(config, "_oof_sut_id", ""),
+            sut_type=getattr(config, "_oof_sut_type", ""),
+            sut_version=getattr(config, "_oof_sut_version", ""),
+            sut_environment=getattr(config, "_oof_sut_environment", ""),
+            sut_metadata=getattr(config, "_oof_sut_metadata", {}),
         )
-        
+
+        if not hasattr(config, "_oof_report_stats"):
+            config._oof_report_stats = ReportBasedStats()
+        # Initialize total test count including deselected
+        config._oof_report_stats.num_tests_total = (
+            config._oof_session_stats.num_tests_total
+        )
+
         return cls(
-            session_id=config._oof_session_id,
+            session_metadata=session_metadata,
             session_stats=config._oof_session_stats,
-            session_start_time=config._oof_session_start_time,
-            session_stop_time=config._oof_session_stop_time,
-            session_duration=config._oof_session_duration,
+            report_stats=config._oof_report_stats,
             test_results=config._oof_test_results.test_results,
             output_fields=config._oof_fields,
             warnings=config._oof_test_results.all_warnings(),
@@ -201,9 +211,9 @@ def pytest_cmdline_main(config: Config) -> None:
     if not hasattr(config, "_oof_metadata"):
         config._oof_metadata = {
             "session_id": config._oof_session_id,
-            "start_time": None,   # Will be set when the session starts
-            "stop_time": None,    # Will be set when the session ends
-            "duration": None      # Will be calculated later
+            "start_time": None,  # Will be set when the session starts
+            "stop_time": None,  # Will be set when the session ends
+            "duration": None,  # Will be calculated later
         }
     if not hasattr(config, "_oof_sessionstart"):
         config._oof_sessionstart = True
@@ -294,6 +304,61 @@ def pytest_report_teststatus(report: TestReport, config: Config) -> None:
                 oof_test_result.longreprtext = report.ansi.val
 
     config._oof_reports.append(report)
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo) -> None:
+    """Collect test outcomes directly from pytest reports."""
+    # Get or create the report-based stats
+    if not hasattr(item.session.config, "_oof_report_stats"):
+        item.session.config._oof_report_stats = ReportBasedStats()
+        # Initialize total test count including deselected
+        item.session.config._oof_report_stats.num_tests_total = (
+            item.session.testscollected
+        )
+
+    report_stats = item.session.config._oof_report_stats
+
+    # Get the report
+    outcome = yield
+    report = outcome.get_result()
+
+    # Only process the call phase for counting test outcomes
+    if report.when == "call":
+        report_stats.num_tests += 1  # Total runs including reruns
+
+        # Handle xfail/xpass cases
+        if hasattr(report, "wasxfail"):
+            if report.outcome in ("passed", "failed"):
+                report_stats.num_xpasses += 1
+            elif report.outcome == "skipped":
+                report_stats.num_xfails += 1
+        # Handle normal outcomes
+        else:
+            if report.outcome == "passed":
+                report_stats.num_passes += 1
+            elif report.outcome == "failed":
+                report_stats.num_failures += 1
+            elif report.outcome == "skipped":
+                report_stats.num_skips += 1
+
+    # Handle setup/teardown errors
+    elif report.when in ("setup", "teardown") and report.outcome == "failed":
+        report_stats.num_errors += 1
+
+
+@pytest.hookimpl(trylast=True)
+def pytest_collection_modifyitems(
+    session: pytest.Session, config: Config, items: List[pytest.Item]
+) -> None:
+    """Initialize test counts after collection."""
+    if not hasattr(config, "_oof_session_stats"):
+        config._oof_session_stats = TestSessionStats()
+
+    # Set initial counts
+    config._oof_session_stats.num_tests_total = session.testscollected
+    config._oof_session_stats.num_tests_without_rerun = len(items)
+    config._oof_session_stats.num_deselected = session.testscollected - len(items)
 
 
 @pytest.hookimpl(trylast=True)
@@ -434,9 +499,11 @@ def pytest_configure(config: Config) -> None:
             # If this is the last line, parse it for deselected tests
             if config._oof_current_field == "lastline":
                 lastline = strip_ansi(s)
-                deselected_match = re.search(r'(\d+) deselected', lastline)
+                deselected_match = re.search(r"(\d+) deselected", lastline)
                 if deselected_match:
-                    config._oof_session_stats.num_deselected = int(deselected_match.group(1))
+                    config._oof_session_stats.num_deselected = int(
+                        deselected_match.group(1)
+                    )
 
             # Write this line's original pytest output text (plus markup) to console.
             # Also write marked up content to this OutputField's 'content' field.
@@ -485,41 +552,46 @@ def populate_rerun_groups(config: Config) -> List[RerunTestGroup]:
         rerun_tests_by_nodeid[test_result.nodeid].append(test_result)
 
     # Get unique nodeids from rerun test summary field
-    rerun_summary = config._oof_fields.rerun_test_summary.content
-    rerun_nodeids = set()
-    for line in rerun_summary.split('\n'):
-        if line.startswith('RERUN '):
-            nodeid = line.replace('RERUN ', '').strip()
-            rerun_nodeids.add(nodeid)
 
-    # Update num_rerun_groups with the number of unique nodeids from summary
-    config._oof_session_stats.num_rerun_groups = len(rerun_nodeids)
+    # Update session stats for reruns
+    config._oof_session_stats.num_reruns = len(rerun_tests)
+    config._oof_session_stats.num_rerun_groups = len(rerun_tests_by_nodeid)
+    config._oof_session_stats.num_tests = len(config._oof_test_results.test_results)
+    config._oof_session_stats.num_tests_without_rerun = (
+        config._oof_session_stats.num_tests - config._oof_session_stats.num_reruns
+    )
 
-    # For each nodeid that had reruns, create a RerunTestGroup object
+    # Build RerunTestGroup objects
     for nodeid, rerun_tests in rerun_tests_by_nodeid.items():
-        # Find the final test result for this nodeid
-        final_test = None
-        for test_result in config._oof_test_results.test_results:
-            if test_result.nodeid == nodeid and test_result.outcome != "RERUN":
-                final_test = test_result
-                break
+        # Get all test results for this nodeid, including the final result
+        all_test_results = [
+            test_result
+            for test_result in config._oof_test_results.test_results
+            if test_result.nodeid == nodeid
+        ]
+
+        # The final test is the last one that's not a RERUN
+        final_test = next(
+            (test for test in reversed(all_test_results) if test.outcome != "RERUN"),
+            None,
+        )
 
         if final_test:
-            rerun_test_group = RerunTestGroup(
-                nodeid=nodeid,
-                final_outcome=final_test.outcome,
-                final_test=final_test,
-                forerunners=rerun_tests,
+            rerun_test_groups.append(
+                RerunTestGroup(
+                    nodeid=nodeid,
+                    final_outcome=final_test.outcome,
+                    final_test=final_test,
+                    forerunners=rerun_tests,
+                    full_test_list=all_test_results,
+                )
             )
-            rerun_test_group.full_test_list = rerun_tests + [final_test]
-            rerun_test_groups.append(rerun_test_group)
 
     return rerun_test_groups
 
 
 def mark_warning_tests(config: Config) -> List[TestResult]:
     """Mark tests that have warnings in the warnings field."""
-    warning_tests = []
     warning_field = strip_ansi(config._oof_fields.warnings_summary.content)
     warning_field_lines = warning_field.split("\n")
 
@@ -565,8 +637,16 @@ def pytest_unconfigure(config: Config) -> None:
     # Save individual results
     with open(RESULTS_FILE, "wb") as f:
         pickle.dump(results, f)
+
+    # Write JSON results to both locations
+    json_results = results.to_dict()
+    # Write to oof directory
     with open(JSON_OUT_FILE, "w") as f:
-        json.dump(results.to_dict(), f, indent=2)
+        json.dump(json_results, f, indent=2)
+    # Write to current working directory
+    cwd_json_file = Path.cwd() / "oof-results.json"
+    with open(cwd_json_file, "w") as f:
+        json.dump(json_results, f, indent=2)
 
     # Update test history
     try:

@@ -1,12 +1,11 @@
-import time
-import random
-import uuid
 import pickle
+import random
+import time
+import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional
-import json
 
 from strip_ansi import strip_ansi
 
@@ -83,7 +82,9 @@ class TestSessionStats:
     'TestSessionStats': cumulative statistics for the entire test session
     """
 
-    num_tests: int = 0
+    num_tests: int = 0  # Total number of test runs including reruns
+    num_tests_without_rerun: int = 0  # Number of unique tests (excluding reruns)
+    num_tests_total: int = 0  # Total number of tests including deselected
     num_passes: int = 0
     num_failures: int = 0
     num_errors: int = 0
@@ -97,20 +98,24 @@ class TestSessionStats:
     num_deselected: int = 0  # Number of tests deselected via pytest's test selection
 
     def to_dict(self) -> Dict[str, int]:
-        return {
-            "num_tests": self.num_tests,
-            "num_passes": self.num_passes,
-            "num_failures": self.num_failures,
-            "num_errors": self.num_errors,
-            "num_skips": self.num_skips,
-            "num_xfails": self.num_xfails,
-            "num_xpasses": self.num_xpasses,
-            "num_reruns": self.num_reruns,
-            "num_rerun_groups": self.num_rerun_groups,
-            "num_warnings": self.num_warnings,
-            "num_warnings_unique": self.num_warnings_unique,
-            "num_deselected": self.num_deselected,
-        }
+        return asdict(self)
+
+
+@dataclass
+class ReportBasedStats:
+    """Stats collected directly from pytest test reports rather than console output."""
+
+    num_tests: int = 0  # Total number of test runs
+    num_tests_total: int = 0  # Total number of tests including deselected
+    num_passes: int = 0
+    num_failures: int = 0
+    num_errors: int = 0
+    num_skips: int = 0
+    num_xfails: int = 0
+    num_xpasses: int = 0
+
+    def to_dict(self) -> Dict[str, int]:
+        return asdict(self)
 
 
 @dataclass
@@ -178,6 +183,7 @@ class TestResults:
     A collection of TestResult objects, with convenience methods for accessing
     subsets of the collection.
     """
+
     session_stats: TestSessionStats = None
     test_results: List[TestResult] = field(default_factory=list)
 
@@ -301,9 +307,9 @@ class OutputFields:
         ]
 
         output_dict = {}
-        for field in fields:
-            output_field = getattr(self, field)
-            output_dict[field] = {
+        for f in fields:
+            output_field = getattr(self, f)
+            output_dict[f] = {
                 "name": output_field.name,
                 "content": output_field.content,
                 "content_stripped": strip_ansi(output_field.content),
@@ -318,11 +324,9 @@ class Results:
     'Results': a collection of all data collected during a test run, made nicely
     consumable by pytest-oof.
 
-    'session_id': unique identifier for the test session (timestamp-based UUID)
+    'session_metadata': metadata about the test session including timing and SUT info
     'session_stats': overall statistics for this test session
-    'session_start_time': datetime object for the start time of the test session
-    'session_stop_time': datetime object for the end time of the test session
-    'session_duration': timedelta object with duration of the test session in μs
+    'report_stats': statistics collected directly from pytest test reports
     'test_results': collection of TestResult objects for all tests in the test session
     'output_fields': collection of OutputField objects for all output fields in the
      test session's console-out
@@ -331,54 +335,56 @@ class Results:
      rerun during the test session
     """
 
-    session_id: str
+    session_metadata: SessionMetadata
     session_stats: TestSessionStats
-    session_start_time: datetime
-    session_stop_time: datetime
-    session_duration: timedelta
+    report_stats: ReportBasedStats
     test_results: List[TestResult]
     output_fields: OutputFields
     warnings: List[TestResult]
     rerun_test_groups: List[RerunTestGroup]
-
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary format."""
-        return {
-            "session_id": self.session_id,
-            "session_stats": self.session_stats.to_dict(),
-            "session_start_time": self.session_start_time.isoformat(),
-            "session_stop_time": self.session_stop_time.isoformat(),
-            "session_duration": self.session_duration.total_seconds(),
-            "test_results": [tr.to_dict() for tr in self.test_results],
-            "output_fields": self.output_fields.to_dict(),
-            "warnings": [w.to_dict() for w in self.warnings],
-            "rerun_test_groups": [g.to_dict() for g in self.rerun_test_groups],
-        }
 
     @classmethod
     def from_file(
         cls,
         results_file_path: Path = RESULTS_FILE,
     ) -> "Results":
-        # Retrieve test run data from 'results.pickle' file
+        """Retrieve test run data from 'results.pickle' file"""
         with open(results_file_path, "rb") as f:
             test_info = pickle.load(f)
-        test_results = test_info["oof_test_results"]
-        output_fields = test_info["oof_fields"]
 
-        # Construct the instance using the data loaded from file
-        return cls(
+        # Create SessionMetadata from the loaded data
+        session_metadata = SessionMetadata(
             session_id=test_info["oof_session_id"],
+            start_time=test_info["oof_session_start_time"],
+            stop_time=test_info["oof_session_stop_time"],
+            duration=test_info["oof_session_duration"],
+            sut_id=test_info.get("oof_sut_id", ""),
+            sut_type=test_info.get("oof_sut_type", ""),
+            sut_version=test_info.get("oof_sut_version", ""),
+            sut_environment=test_info.get("oof_sut_environment", ""),
+            sut_metadata=test_info.get("oof_sut_metadata", {}),
+        )
+
+        return cls(
+            session_metadata=session_metadata,
             session_stats=test_info["oof_session_stats"],
-            last_line_stripped=strip_ansi(output_fields.lastline.content),
-            session_start_time=test_info["oof_session_start_time"],
-            session_stop_time=test_info["oof_session_stop_time"],
-            session_duration=test_info["oof_session_duration"],
-            test_results=test_results,
-            output_fields=output_fields,
+            report_stats=ReportBasedStats(),  # Initialize report_stats with default values
+            test_results=test_info["oof_test_results"],
+            output_fields=test_info["oof_fields"],
             warnings=test_info["oof_warnings"],
             rerun_test_groups=test_info["oof_rerun_test_groups"],
         )
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "session_metadata": self.session_metadata.to_dict(),
+            "session_stats": self.session_stats.to_dict(),
+            "report_stats": self.report_stats.to_dict(),
+            "test_results": [tr.to_dict() for tr in self.test_results],
+            "output_fields": self.output_fields.to_dict(),
+            "warnings": [w.to_dict() for w in self.warnings],
+            "rerun_test_groups": [rtg.to_dict() for rtg in self.rerun_test_groups],
+        }
 
 
 @dataclass
@@ -417,47 +423,48 @@ class TestHistory:
     simply provides the data structure and methods for storing and accessing multiple
     test runs.
     """
+
     results: List[Results] = field(default_factory=list)
 
     def add_run(self, result: Results) -> None:
         """Add a new test run result."""
         self.results.append(result)
 
-    def get_runs(self, start_time: Optional[datetime] = None,
-                end_time: Optional[datetime] = None) -> List[Results]:
+    def get_runs(
+        self, start_time: Optional[datetime] = None, end_time: Optional[datetime] = None
+    ) -> List[Results]:
         """Get test runs within the specified time range."""
         if not (start_time or end_time):
             return self.results
 
         filtered = self.results
         if start_time:
-            filtered = [r for r in filtered
-                       if r.session_start_time >= start_time]
+            filtered = [
+                r for r in filtered if r.session_metadata.start_time >= start_time
+            ]
         if end_time:
-            filtered = [r for r in filtered
-                       if r.session_start_time <= end_time]
+            filtered = [
+                r for r in filtered if r.session_metadata.start_time <= end_time
+            ]
         return filtered
 
     def get_latest_run(self) -> Optional[Results]:
         """Get the most recent test run."""
         if not self.results:
             return None
-        return max(self.results,
-                  key=lambda r: r.session_start_time)
+        return max(self.results, key=lambda r: r.session_metadata.start_time)
 
     def save(self, file_path: Path) -> None:
         """Save test history to a file."""
-        with open(file_path, 'wb') as f:
+        with open(file_path, "wb") as f:
             pickle.dump(self, f)
 
     @classmethod
-    def load(cls, file_path: Path) -> 'TestHistory':
+    def load(cls, file_path: Path) -> "TestHistory":
         """Load test history from a file."""
-        with open(file_path, 'rb') as f:
+        with open(file_path, "rb") as f:
             return pickle.load(f)
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary format."""
-        return {
-            "results": [r.to_dict() for r in self.results]
-        }
+        return {"results": [r.to_dict() for r in self.results]}
