@@ -1,8 +1,12 @@
+import time
+import random
+import uuid
 import pickle
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
+import json
 
 from strip_ansi import strip_ansi
 
@@ -15,24 +19,61 @@ TERMINAL_OUTPUT_FILE = OOF_FILES_DIR / "oof-terminal_output.ansi"
 RESULTS_FILE = OOF_FILES_DIR / "oof-results.pickle"
 JSON_OUT_FILE = OOF_FILES_DIR / "oof-results.json"
 HTML_FILES_DIR = OOF_FILES_DIR / "html"
+HISTORY_FILE = OOF_FILES_DIR / "oof-history.pickle"
+
+
+def generate_timestamp_uuid():
+    # Get the current timestamp in milliseconds
+    timestamp = int(time.time() * 1000)
+    # Generate a random 16-bit integer (to add some randomness to avoid collisions)
+    random_part = random.getrandbits(64)
+    # Combine timestamp and random part
+    combined = (timestamp << 64) | random_part
+    # Convert the combined value to a UUID
+    timestamp_uuid = uuid.UUID(int=combined)
+
+    return str(timestamp_uuid)
 
 
 @dataclass
 class SessionMetadata:
     """
-    'Metadata': metadata about the test run, including the test run's start time,
-    stop time, and duration
+    'Metadata': metadata about the test run, including system under test (SUT) identification
+    and test session timing information.
+
+    Fields:
+        session_id: Unique identifier for the test session
+        sut_id: Unique identifier for the system under test
+        sut_type: Type/category of the system (e.g., "GEMS", "production", "staging")
+        sut_version: Version information about the system
+        sut_environment: Environment details (e.g., "prod", "staging", "dev")
+        sut_metadata: Additional SUT-specific metadata
+        start_time: Start time of the test session
+        stop_time: End time of the test session
+        duration: Duration of the test session
     """
 
+    session_id: str
     start_time: datetime
     stop_time: datetime
     duration: timedelta
+    sut_id: str = ""
+    sut_type: str = ""
+    sut_version: str = ""
+    sut_environment: str = ""
+    sut_metadata: Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
-            "start_time": self.start_time,
-            "stop_time": self.stop_time,
-            "duration": self.duration,
+            "session_id": self.session_id,
+            "sut_id": self.sut_id,
+            "sut_type": self.sut_type,
+            "sut_version": self.sut_version,
+            "sut_environment": self.sut_environment,
+            "sut_metadata": self.sut_metadata,
+            "start_time": self.start_time.isoformat(),
+            "stop_time": self.stop_time.isoformat(),
+            "duration": self.duration.total_seconds(),
         }
 
 
@@ -75,6 +116,17 @@ class TestResult:
     """
     'TestResult': a single test result, which is a single test run of a single test
 
+    => Why not use Pytest's TestReport object?
+    Pytest has the concept of a TestReport, which is an object that holds information about
+    a single phase of a single test (setup, call, teardown). A TestReport by itself is
+    not a good indication of the overall outcome of a test, which is probably what you are
+    interested in as a tester. In order to determine the actual outcome of a test, you have
+    to take into account all TestReport objects for that test, and run their individual
+    outcomes through an algorithm internal to Pyttest. Instead of doing that, this plugin
+    collects information from the console output of pytest (which I would argue is definitive).
+    It then constructs a TestResult object that holds all the information you need about a
+    single test:
+
     'nodeid': pytest 'node_id' (formerly fully-qualified test name, or 'fqtn')
     'outcome': outcome of the test (PASSED, FAILED, SKIPPED, etc.)
     'start_time': datetime object for the start time of the test
@@ -87,19 +139,24 @@ class TestResult:
     'has_warning': whether the test resulted in a warning
     """
 
+    sut_id: str = ""
+    sut_metadata: Dict[str, Any] = field(default_factory=dict)
+
     nodeid: str = ""
     outcome: str = ""
     start_time: datetime = None
     duration: float = 0.0
-    has_warning: bool = False
     caplog: str = ""
     capstderr: str = ""
     capstdout: str = ""
     longreprtext: str = ""
     longreprtext_stripped: str = ""
+    has_warning: bool = False
 
     def to_dict(self) -> Dict[str, Any]:
         return {
+            "sut_id": self.sut_id,
+            "sut_metadata": self.sut_metadata,
             "nodeid": self.nodeid,
             "outcome": self.outcome,
             "start_time": self.start_time,
@@ -119,128 +176,44 @@ class TestResults:
     A collection of TestResult objects, with convenience methods for accessing
     subsets of the collection.
     """
-
-    session_metadata: SessionMetadata = None
     session_stats: TestSessionStats = None
     test_results: List[TestResult] = field(default_factory=list)
 
     def all_tests(self) -> List[TestResult]:
-        return list(self.test_results)
+        return self.test_results
 
     def all_failures(self) -> List[TestResult]:
-        return [
-            test_result
-            for test_result in self.test_results
-            if test_result.outcome == "FAILED"
-        ]
+        return [tr for tr in self.test_results if tr.outcome == "FAILED"]
 
     def all_passes(self) -> List[TestResult]:
-        return [
-            test_result
-            for test_result in self.test_results
-            if test_result.outcome == "PASSED"
-        ]
+        return [tr for tr in self.test_results if tr.outcome == "PASSED"]
 
     def all_skips(self) -> List[TestResult]:
-        return [
-            test_result
-            for test_result in self.test_results
-            if test_result.outcome == "SKIPPED"
-        ]
+        return [tr for tr in self.test_results if tr.outcome == "SKIPPED"]
 
     def all_xfails(self) -> List[TestResult]:
-        return [
-            test_result
-            for test_result in self.test_results
-            if test_result.outcome == "XFAIL"
-        ]
+        return [tr for tr in self.test_results if tr.outcome == "XFAIL"]
 
     def all_xpasses(self) -> List[TestResult]:
-        return [
-            test_result
-            for test_result in self.test_results
-            if test_result.outcome == "XPASS"
-        ]
+        return [tr for tr in self.test_results if tr.outcome == "XPASS"]
 
     def all_errors(self) -> List[TestResult]:
-        return [
-            test_result
-            for test_result in self.test_results
-            if test_result.outcome == "ERROR"
-        ]
+        return [tr for tr in self.test_results if tr.outcome == "ERROR"]
 
     def all_reruns(self) -> List[TestResult]:
-        return [
-            test_result
-            for test_result in self.test_results
-            if test_result.outcome == "RERUN"
-        ]
+        return [tr for tr in self.test_results if tr.outcome == "RERUN"]
 
     def all_warnings(self) -> List[TestResult]:
-        return [
-            test_result for test_result in self.test_results if test_result.has_warning
-        ]
+        return [tr for tr in self.test_results if tr.has_warning]
 
     def all_warnings_unique(self) -> List[TestResult]:
-        # Get a list of TestResult objects with warnings
-        warnings = self.all_warnings()
+        return list(set(self.all_warnings()))
 
-        # Use a set to track unique nodeids
-        unique_nodeids = set()
-
-        # Initialize a list for unique TestResult objects
-        unique_results = []
-
-        # Iterate through the warnings
-        for warning in warnings:
-            # Check if the nodeid is unique
-            if warning.nodeid not in unique_nodeids:
-                # Add the TestResult to the list of unique results
-                unique_results.append(warning)
-
-                # Mark the nodeid as seen
-                unique_nodeids.add(warning.nodeid)
-
-        return unique_results
-
-    # def all_warnings_unique(self) -> List[TestResult]:
-    #     # Get a list of TestResult objects with warnings
-    #     warnings = self.all_warnings()
-
-    #     # Use a set to track unique nodeids
-    #     unique_nodeids = set()
-
-    #     # Initialize a list for unique TestResult objects
-    #     unique_results = []
-
-    #     # Iterate through the warnings
-    #     for warning in warnings:
-    #         # Check if the nodeid is unique
-    #         if warning.nodeid not in unique_nodeids:
-    #             # Add the TestResult to the list of unique results
-    #             unique_results.append(warning)
-
-    #             # Mark the nodeid as seen
-    #             unique_nodeids.add(warning.nodeid)
-
-    #     return unique_results
-
-    # def all_warnings_unique(
-    #     self,
-    # ) -> List[TestResult]:
-    #     # Uniquify the list of TestResult objects that have 'has_warning' attr
-
-    #     uniques = []
-    #     for warning in self.all_warnings():
-    #         if warning.nodeid not in [unique.nodeid for unique in uniques]:
-    #             uniques.append(warning)
-    #     return uniques
-
-    def as_list(self) -> List[TestResult]:
-        return list(self.test_results)
+    def as_list(self) -> List[Dict[str, Any]]:
+        return [tr.to_dict() for tr in self.test_results]
 
     def to_list(self) -> List[Dict[str, Any]]:
-        return [test_result.to_dict() for test_result in self.test_results]
+        return self.as_list()
 
 
 @dataclass
@@ -304,14 +277,14 @@ class OutputFields:
     'lastline': the ninth output field, which contains the last line of terminal output
     """
 
-    test_session_starts: OutputField
-    errors: OutputField
-    failures: OutputField
-    passes: OutputField
-    warnings_summary: OutputField
-    rerun_test_summary: OutputField
-    short_test_summary: OutputField
-    lastline: OutputField
+    test_session_starts: OutputField = field(default_factory=OutputField)
+    errors: OutputField = field(default_factory=OutputField)
+    failures: OutputField = field(default_factory=OutputField)
+    passes: OutputField = field(default_factory=OutputField)
+    warnings_summary: OutputField = field(default_factory=OutputField)
+    rerun_test_summary: OutputField = field(default_factory=OutputField)
+    short_test_summary: OutputField = field(default_factory=OutputField)
+    lastline: OutputField = field(default_factory=OutputField)
 
     def to_dict(self) -> Dict[str, Any]:
         fields = [
@@ -336,62 +309,6 @@ class OutputFields:
 
         return output_dict
 
-    # def to_dict(self) -> Dict[str, Any]:
-    #     output_dict = {}
-    #     for field_name, output_field in self.__dict__.items():
-    #         if not field_name.startswith('_') and isinstance(output_field, OutputField):
-    #             output_dict[field_name] = {
-    #                 "name": output_field.name,
-    #                 "content": output_field.content,
-    #                 "content_stripped": strip_ansi(output_field.content),
-    #             }
-
-    #     return output_dict
-
-    # def to_dict(self) -> Dict[str, Any]:
-    #     return {
-    #         "test_session_starts": {
-    #             "name": self.test_session_starts.name,
-    #             "content": self.test_session_starts.content,
-    #             "content_stripped": strip_ansi(self.content),
-    #         },
-    #         "errors": {
-    #             "name": self.errors.name,
-    #             "content": self.errors.content,
-    #             "content_stripped": strip_ansi(self.errors.content),
-    #         },
-    #         "failures": {
-    #             "name": self.failures.name,
-    #             "content": self.failures.content,
-    #             "content_stripped": strip_ansi(self.failures.content),
-    #         },
-    #         "passes": {
-    #             "name": self.passes.name,
-    #             "content": self.passes.content,
-    #             "content_stripped": strip_ansi(self.passes.content),
-    #         },
-    #         "warnings_summary": {
-    #             "name": self.warnings_summary.name,
-    #             "content": self.warnings_summary.content,
-    #             "content_stripped": strip_ansi(self.warnings_summary.content),
-    #         },
-    #         "rerun_test_summary": {
-    #             "name": self.rerun_test_summary.name,
-    #             "content": self.rerun_test_summary.content,
-    #             "content_stripped": strip_ansi(self.rerun_test_summary.content),
-    #         },
-    #         "short_test_summary": {
-    #             "name": self.short_test_summary.name,
-    #             "content": self.short_test_summary.content,
-    #             "content_stripped": strip_ansi(self.short_test_summary.content),
-    #         },
-    #         "lastline": {
-    #             "name": self.lastline.name,
-    #             "content": self.lastline.content,
-    #             "content_stripped": strip_ansi(self.lastline.content),
-    #         },
-    #     }
-
 
 @dataclass
 class Results:
@@ -399,6 +316,7 @@ class Results:
     'Results': a collection of all data collected during a test run, made nicely
     consumable by pytest-oof.
 
+    'session_id': unique identifier for the test session (timestamp-based UUID)
     'session_stats': overall statistics for this test session
     'session_start_time': datetime object for the start time of the test session
     'session_stop_time': datetime object for the end time of the test session
@@ -411,6 +329,7 @@ class Results:
      rerun during the test session
     """
 
+    session_id: str
     session_stats: TestSessionStats
     session_start_time: datetime
     session_stop_time: datetime
@@ -419,6 +338,20 @@ class Results:
     output_fields: OutputFields
     warnings: List[TestResult]
     rerun_test_groups: List[RerunTestGroup]
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary format."""
+        return {
+            "session_id": self.session_id,
+            "session_stats": self.session_stats.to_dict(),
+            "session_start_time": self.session_start_time.isoformat(),
+            "session_stop_time": self.session_stop_time.isoformat(),
+            "session_duration": self.session_duration.total_seconds(),
+            "test_results": [tr.to_dict() for tr in self.test_results],
+            "output_fields": self.output_fields.to_dict(),
+            "warnings": [w.to_dict() for w in self.warnings],
+            "rerun_test_groups": [g.to_dict() for g in self.rerun_test_groups],
+        }
 
     @classmethod
     def from_file(
@@ -433,6 +366,7 @@ class Results:
 
         # Construct the instance using the data loaded from file
         return cls(
+            session_id=test_info["oof_session_id"],
             session_stats=test_info["oof_session_stats"],
             last_line_stripped=strip_ansi(output_fields.lastline.content),
             session_start_time=test_info["oof_session_start_time"],
@@ -469,3 +403,59 @@ class TerminalOutput:
             output_ansi=output_ansi,
             output=output,
         )
+
+
+@dataclass
+class TestHistory:
+    """
+    TestHistory maintains a collection of Results objects from multiple test runs,
+    typically associated with a single SUT over time.
+
+    The actual SUT identification and filtering is left to client applications - this class
+    simply provides the data structure and methods for storing and accessing multiple
+    test runs.
+    """
+    results: List[Results] = field(default_factory=list)
+
+    def add_run(self, result: Results) -> None:
+        """Add a new test run result."""
+        self.results.append(result)
+
+    def get_runs(self, start_time: Optional[datetime] = None,
+                end_time: Optional[datetime] = None) -> List[Results]:
+        """Get test runs within the specified time range."""
+        if not (start_time or end_time):
+            return self.results
+
+        filtered = self.results
+        if start_time:
+            filtered = [r for r in filtered
+                       if r.session_start_time >= start_time]
+        if end_time:
+            filtered = [r for r in filtered
+                       if r.session_start_time <= end_time]
+        return filtered
+
+    def get_latest_run(self) -> Optional[Results]:
+        """Get the most recent test run."""
+        if not self.results:
+            return None
+        return max(self.results,
+                  key=lambda r: r.session_start_time)
+
+    def save(self, file_path: Path) -> None:
+        """Save test history to a file."""
+        with open(file_path, 'wb') as f:
+            pickle.dump(self, f)
+
+    @classmethod
+    def load(cls, file_path: Path) -> 'TestHistory':
+        """Load test history from a file."""
+        with open(file_path, 'rb') as f:
+            return pickle.load(f)
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary format."""
+        return {
+            "results": [r.to_dict() for r in self.results]
+        }

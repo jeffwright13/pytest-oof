@@ -21,13 +21,17 @@ from pytest_oof.utils import (
     JSON_OUT_FILE,
     RESULTS_FILE,
     TERMINAL_OUTPUT_FILE,
+    generate_timestamp_uuid,
     OutputField,
     OutputFields,
     RerunTestGroup,
     Results,
     TestResult,
     TestResults,
+    SessionMetadata,
     TestSessionStats,
+    TestHistory,
+    HISTORY_FILE,
 )
 
 # regex matching patterns for pytest console output fields/sections
@@ -59,12 +63,21 @@ class ResultsFromConfig(Results):
     def from_config(
         cls, config: Config
     ):  # 'config' refers to global pytest Config object
+        # Create SessionMetadata with SUT information
+        session_metadata = SessionMetadata(
+            session_id=config._oof_session_id,
+            start_time=config._oof_session_start_time,
+            stop_time=config._oof_session_stop_time,
+            duration=config._oof_session_duration,
+        )
+        
         return cls(
+            session_id=config._oof_session_id,
             session_stats=config._oof_session_stats,
             session_start_time=config._oof_session_start_time,
             session_stop_time=config._oof_session_stop_time,
             session_duration=config._oof_session_duration,
-            test_results=config._oof_test_results,
+            test_results=config._oof_test_results.test_results,
             output_fields=config._oof_fields,
             warnings=config._oof_test_results.all_warnings(),
             rerun_test_groups=config._oof_rerun_test_groups,
@@ -79,6 +92,41 @@ def pytest_addoption(parser: Parser) -> None:
         dest="_oof",
         default=None,
         help=("Enable the pytest-oof plugin."),
+    )
+    group.addoption(
+        "--sut-id",
+        action="store",
+        dest="_sut_id",
+        default="",
+        help="Unique identifier for the system under test",
+    )
+    group.addoption(
+        "--sut-type",
+        action="store",
+        dest="_sut_type",
+        default="",
+        help="Type/category of the system (e.g., 'GEMS', 'production', 'staging')",
+    )
+    group.addoption(
+        "--sut-version",
+        action="store",
+        dest="_sut_version",
+        default="",
+        help="Version information about the system under test",
+    )
+    group.addoption(
+        "--sut-env",
+        action="store",
+        dest="_sut_environment",
+        default="",
+        help="Environment details (e.g., 'prod', 'staging', 'dev')",
+    )
+    group.addoption(
+        "--sut-metadata",
+        action="store",
+        dest="_sut_metadata",
+        default="{}",
+        help="JSON string containing additional SUT-specific metadata",
     )
     parser.addini(
         "oof",
@@ -146,7 +194,17 @@ def pytest_cmdline_main(config: Config) -> None:
     # Using global Config object to store OOF-specific attributes.
     # TODO: port to Stash in future; but that will break backwards compatibility
     # for pytest < 7.0.
-    config._oof_session_start_time = datetime.now(timezone.utc)
+    if not hasattr(config, "_oof_session_start_time"):
+        config._oof_session_start_time = datetime.now(timezone.utc)
+    if not hasattr(config, "_oof_session_id"):
+        config._oof_session_id = generate_timestamp_uuid()
+    if not hasattr(config, "_oof_metadata"):
+        config._oof_metadata = {
+            "session_id": config._oof_session_id,
+            "start_time": None,   # Will be set when the session starts
+            "stop_time": None,    # Will be set when the session ends
+            "duration": None      # Will be calculated later
+        }
     if not hasattr(config, "_oof_sessionstart"):
         config._oof_sessionstart = True
     if not hasattr(config, "_oof_sessionstart_test_outcome_next"):
@@ -240,10 +298,46 @@ def pytest_report_teststatus(report: TestReport, config: Config) -> None:
 
 @pytest.hookimpl(trylast=True)
 def pytest_configure(config: Config) -> None:
-    if not hasattr(config.option, "_oof"):
+    """
+    Configure pytest-oof plugin, including setting up hooks and initializing data structures.
+    """
+    # Check if plugin is enabled via command line option or ini file
+    enabled = config.getoption("_oof")
+    if enabled is None:
+        enabled = config.getini("oof")
+    if not enabled:
         return
-    if not config.option._oof:
-        return
+
+    # Get SUT-related options
+    sut_id = config.getoption("_sut_id")
+    sut_type = config.getoption("_sut_type")
+    sut_version = config.getoption("_sut_version")
+    sut_environment = config.getoption("_sut_environment")
+    try:
+        sut_metadata = json.loads(config.getoption("_sut_metadata"))
+    except json.JSONDecodeError:
+        sut_metadata = {}
+
+    # Initialize session data
+    session_id = generate_timestamp_uuid()
+    session_start_time = datetime.now(timezone.utc)
+    config._oof_session_id = session_id
+    config._oof_session_start_time = session_start_time
+    config._oof_session_stop_time = None
+    config._oof_session_duration = None
+
+    # Store SUT information
+    config._oof_sut_id = sut_id
+    config._oof_sut_type = sut_type
+    config._oof_sut_version = sut_version
+    config._oof_sut_environment = sut_environment
+    config._oof_sut_metadata = sut_metadata
+
+    # Initialize other session data
+    config._oof_session_stats = TestSessionStats()
+    config._oof_test_results = TestResults()
+    config._oof_fields = OutputFields()
+    config._oof_rerun_test_groups = []
 
     # Examine Pytest terminal output to mark different fields of the output.
     # This code is based on pytest's 'pastebin.py'.
@@ -288,6 +382,22 @@ def pytest_configure(config: Config) -> None:
                 if config._oof_sessionstart_test_outcome_next:
                     outcome = s.strip()
                     config._oof_test_results.test_results[-1].outcome = outcome
+                    # Update session stats based on the outcome
+                    if outcome == "PASSED":
+                        config._oof_session_stats.num_passes += 1
+                    elif outcome == "FAILED":
+                        config._oof_session_stats.num_failures += 1
+                    elif outcome == "SKIPPED":
+                        config._oof_session_stats.num_skips += 1
+                    elif outcome == "XFAIL":
+                        config._oof_session_stats.num_xfails += 1
+                    elif outcome == "XPASS":
+                        config._oof_session_stats.num_xpasses += 1
+                    elif outcome == "ERROR":
+                        config._oof_session_stats.num_errors += 1
+                    elif outcome == "RERUN":
+                        config._oof_session_stats.num_reruns += 1
+                    config._oof_session_stats.num_tests += 1
                     config._oof_sessionstart_test_outcome_next = False
 
                 search = re.search(test_session_starts_test_matcher, s, re.MULTILINE)
@@ -354,6 +464,8 @@ def populate_rerun_groups(config: Config) -> List[RerunTestGroup]:
                     nodeid=test_result.nodeid, forerunners=[test_result]
                 )
                 rerun_test_groups.append(oof_test_run_group)
+                # Update unique rerun count when creating a new group
+                config._oof_session_stats.num_reruns_unique += 1
             else:
                 for group in rerun_test_groups:
                     if group.nodeid == test_result.nodeid:
@@ -383,6 +495,10 @@ def mark_warning_tests(config: Config) -> List[TestResult]:
         if re.search(warnings_summary_test_matcher, line):
             warning_nodeids.append(line)
 
+    # Update warning counts
+    config._oof_session_stats.num_warnings = len(warning_nodeids)
+    config._oof_session_stats.num_warnings_unique = len(set(warning_nodeids))
+
     for test_result in config._oof_test_results.test_results:
         for warning_nodeid in warning_nodeids:
             if test_result.nodeid == warning_nodeid:
@@ -392,118 +508,36 @@ def mark_warning_tests(config: Config) -> List[TestResult]:
 
 
 def pytest_unconfigure(config: Config) -> None:
-    if not hasattr(config.option, "_oof"):
-        return
-    if not config.option._oof:
+    """
+    Called before test process is exited.
+    """
+    if not hasattr(config, "_oof_session_id"):
         return
 
-    config._oof_rerun_test_groups = populate_rerun_groups(config)
-    config._oof_tests_w_warnings = mark_warning_tests(config)
-    config._oof_tests_w_warnings_unique = list(set(config._oof_tests_w_warnings))
+    # Calculate session duration
     config._oof_session_stop_time = datetime.now(timezone.utc)
     config._oof_session_duration = (
         config._oof_session_stop_time - config._oof_session_start_time
     )
-    config._oof_session_stats = TestSessionStats(
-        num_tests=len(config._oof_test_results.all_tests()),
-        num_passes=len(config._oof_test_results.all_passes()),
-        num_failures=len(config._oof_test_results.all_failures()),
-        num_errors=len(config._oof_test_results.all_errors()),
-        num_skips=len(config._oof_test_results.all_skips()),
-        num_xfails=len(config._oof_test_results.all_xfails()),
-        num_xpasses=len(config._oof_test_results.all_xpasses()),
-        num_reruns=len(config._oof_test_results.all_reruns()),
-        num_reruns_unique=len(
-            set([rerun.nodeid for rerun in config._oof_test_results.all_reruns()])
-        ),
-        num_warnings=len(config._oof_test_results.all_warnings()),
-        num_warnings_unique=len(config._oof_tests_w_warnings_unique),
-    )
 
-    # Populate test result objects with total durations, summing each test's TestReport objects.
-    for oof_test_result, test_report in itertools.product(
-        config._oof_test_results.test_results, config._oof_reports
-    ):
-        if test_report.nodeid == oof_test_result.nodeid:
-            oof_test_result.duration += test_report.duration
+    # Process rerun groups and warnings
+    config._oof_rerun_test_groups = populate_rerun_groups(config)
+    mark_warning_tests(config)
 
-    # Assume any test that was not categorized earlier with an outcome is a Skipped test.
-    # JUSTIFICATION:
-    # Pytest displays Skipped tests in a different format than all other test categories in the
-    # "== short test summary info ==" field, truncating their nodeids and appending a line number
-    # instead of specifying their test names. This plugin identifies all other test categories
-    # (passed, failed, errors, etc.) and populates their nodeids and outcomes with the appropriate
-    # values, leaving open one other possibility (Skipped).
-    for oof_test_result in config._oof_test_results.test_results:
-        if oof_test_result.outcome == "":
-            oof_test_result.outcome = "SKIPPED"
-
-    # Tag any test whose nodeid is in the warning field with the 'has_warning' attribute.
-    all_nodeids = {result.nodeid for result in config._oof_test_results.test_results}
-    warning_field = strip_ansi(config._oof_fields.warnings_summary.content)
-    warning_field_lines = warning_field.split("\n")
-    warning_nodeids = []
-    for line in warning_field_lines:
-        if re.search(warnings_summary_test_matcher, line):
-            warning_nodeids.append(line)
-
-    warning_nodeids_unique = set(warning_nodeids)
-    for test_result in config._oof_test_results.test_results:
-        for warning_nodeid in warning_nodeids_unique:
-            if test_result.nodeid is warning_nodeid:
-                test_result.has_warning = True
-
-    # Rewind the temp file containing all the raw ANSI lines sent to the terminal;
-    # read its contents;  then close it. Then, write info to file.
-    config._oof_terminal_out.seek(0)
-    terminal_out = config._oof_terminal_out.read()
-    config._oof_terminal_out.close()
-    with open(TERMINAL_OUTPUT_FILE, "wb") as file:
-        file.write(terminal_out)
-
-    # Write the test results to a pickle file so we can access them as Python objects later.
-    with open(RESULTS_FILE, "wb") as file:
-        pickle.dump(
-            {
-                "oof_session_stats": config._oof_session_stats.to_dict(),
-                # "oof_lastline": config._oof_fields.lastline.content,
-                # "oof_lastline_stripped": strip_ansi(
-                #     config._oof_fields.lastline.content
-                # ),
-                "oof_session_start_time": config._oof_session_start_time,
-                "oof_session_stop_time": config._oof_session_stop_time,
-                "oof_session_duration": config._oof_session_duration,
-                "oof_test_results": config._oof_test_results,
-                "oof_rerun_test_groups": config._oof_rerun_test_groups,
-                "oof_fields": config._oof_fields,
-            },
-            file,
-        )
-
-    # We can't pickle dataclassses, so we'll write the test results to a JSON file as well.
-    with open(JSON_OUT_FILE, "w", encoding="utf-8") as outfile:
-        json.dump(
-            {
-                "oof_session_stats": config._oof_session_stats.to_dict(),
-                # "oof_lastline": config._oof_fields.lastline.content,
-                # "oof_lastline_stripped": strip_ansi(
-                #     config._oof_fields.lastline.content
-                # ),
-                "oof_session_start_time": config._oof_session_start_time.isoformat(),
-                "oof_session_stop_time": config._oof_session_stop_time.isoformat(),
-                "oof_session_duration": config._oof_session_duration.total_seconds(),
-                "oof_test_results": config._oof_test_results.to_list(),
-                "oof_rerun_test_groups": [
-                    group.to_dict() for group in config._oof_rerun_test_groups
-                ],
-                "oof_fields": config._oof_fields.to_dict(),
-            },
-            outfile,
-            ensure_ascii=False,
-            indent=4,
-        )
-
-    # define the pytest-oof hook
+    # Create Results object
     results = ResultsFromConfig.from_config(config)
-    config.hook.pytest_oof_results(results=results, _pytest=True)
-    print()
+
+    # Save individual results
+    with open(RESULTS_FILE, "wb") as f:
+        pickle.dump(results, f)
+    with open(JSON_OUT_FILE, "w") as f:
+        json.dump(results.to_dict(), f, indent=2)
+
+    # Update test history
+    try:
+        history = TestHistory.load(HISTORY_FILE)
+    except (FileNotFoundError, EOFError, pickle.UnpicklingError):
+        history = TestHistory()
+
+    history.add_run(results)
+    history.save(HISTORY_FILE)
