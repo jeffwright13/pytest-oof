@@ -42,7 +42,7 @@ def init_db(db_path: Path) -> None:
             current_version = 0
 
         # Drop all tables if schema version is outdated
-        if current_version < 3:  # Current schema version
+        if current_version < 4:  # Current schema version
             c.executescript(
                 """
                 DROP TABLE IF EXISTS test_sessions;
@@ -63,7 +63,7 @@ def init_db(db_path: Path) -> None:
                     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
                 );
                 INSERT INTO schema_version (version, created_at)
-                VALUES (3, CURRENT_TIMESTAMP);
+                VALUES (4, CURRENT_TIMESTAMP);
 
                 -- Test sessions table to store metadata about each test run
                 CREATE TABLE test_sessions (
@@ -115,7 +115,8 @@ def init_db(db_path: Path) -> None:
                     capstdout TEXT,
                     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     FOREIGN KEY (session_id) REFERENCES test_sessions(id) ON DELETE CASCADE,
-                    FOREIGN KEY (source_line_id) REFERENCES console_output(id) ON DELETE SET NULL
+                    FOREIGN KEY (source_line_id) REFERENCES console_output(id) ON DELETE SET NULL,
+                    UNIQUE (session_id, test_id, timestamp)
                 );
                 CREATE INDEX idx_test_results_session_id ON test_results(session_id);
                 CREATE INDEX idx_test_results_test_id ON test_results(test_id);

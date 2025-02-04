@@ -26,13 +26,13 @@ def parse_args() -> str:
         "-r",
         "--results-file",
         type=str,
-        help="Path to the results file (results.pickle)",
+        help="Path to the results file (oof-results.pickle)",
     )
     parser.add_argument(
         "-t",
         "--terminal-output-file",
         type=str,
-        help="Path to the terminal output file (terminal_output.ansi)",
+        help="Path to the terminal output file (oof-terminal_output.ansi)",
     )
     parser.add_argument(
         "-s",
