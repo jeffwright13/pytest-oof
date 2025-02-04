@@ -438,6 +438,7 @@ def export_results(
     sut_version: Optional[str] = None,
     sut_env: Optional[str] = None,
     output_file: Optional[Path] = None,
+    output_format: str = "json",  # Can be "json" or "jsonl"
     outcome: Optional[str] = None,
     test_id: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
@@ -590,6 +591,82 @@ def export_results(
 
         if output_file:
             with open(output_file, "w") as f:
-                json.dump(results, f, indent=2, default=str)
+                if output_format == "jsonl":
+                    for result in results:
+                        f.write(json.dumps(result, default=str) + "\n")
+                else:  # json
+                    json.dump(results, f, indent=2, default=str)
 
         return results
+
+
+def delete_results(
+    db_path: Path,
+    *,
+    all_results: bool = False,
+    last_n_sessions: Optional[int] = None,
+    start_time: Optional[datetime] = None,
+    end_time: Optional[datetime] = None,
+    sut_id: Optional[str] = None,
+    sut_type: Optional[str] = None,
+) -> int:
+    """Delete test results from the database based on specified criteria.
+
+    Args:
+        db_path: Path to the SQLite database file
+        all_results: If True, delete all results (overrides other filters)
+        last_n_sessions: Delete the last N sessions
+        start_time: Delete sessions starting from this time
+        end_time: Delete sessions up to this time
+        sut_id: Delete sessions for this SUT ID
+        sut_type: Delete sessions for this SUT type
+
+    Returns:
+        Number of sessions deleted
+    """
+    with db_connection(db_path) as conn:
+        cursor = conn.cursor()
+
+        # Build WHERE clause based on filters
+        where_clauses = []
+        params = []
+
+        if not all_results:
+            if start_time:
+                where_clauses.append("start_time >= ?")
+                params.append(start_time)
+            if end_time:
+                where_clauses.append("start_time <= ?")
+                params.append(end_time)
+            if sut_id:
+                where_clauses.append("sut_id = ?")
+                params.append(sut_id)
+            if sut_type:
+                where_clauses.append("sut_type = ?")
+                params.append(sut_type)
+
+        # For last N sessions, we need to get the session IDs first
+        if last_n_sessions:
+            cursor.execute(
+                """
+                SELECT id FROM test_sessions
+                ORDER BY start_time DESC
+                LIMIT ?
+                """,
+                (last_n_sessions,),
+            )
+            session_ids = [row[0] for row in cursor.fetchall()]
+            if session_ids:
+                where_clauses.append(f"id IN ({','.join('?' * len(session_ids))})")
+                params.extend(session_ids)
+
+        # Build and execute the DELETE query
+        query = "DELETE FROM test_sessions"
+        if where_clauses:
+            query += " WHERE " + " AND ".join(where_clauses)
+
+        cursor.execute(query, params)
+        deleted_count = cursor.rowcount
+        conn.commit()
+
+        return deleted_count

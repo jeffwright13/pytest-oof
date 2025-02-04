@@ -2,6 +2,7 @@ import json
 import pickle
 import re
 import tempfile
+import warnings
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from io import StringIO
@@ -430,9 +431,9 @@ def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo) -> None:
 
         # Handle xfail/xpass cases
         if hasattr(report, "wasxfail"):
-            if report.outcome in ("passed", "failed"):
+            if report.outcome == "passed":
                 report_stats.num_xpasses += 1
-            elif report.outcome == "skipped":
+            else:  # report.outcome == "skipped"
                 report_stats.num_xfails += 1
         # Handle normal outcomes
         else:

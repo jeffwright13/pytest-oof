@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
-from pytest_oof.db import export_results, init_db
+from pytest_oof.db import delete_results, export_results, init_db
 from pytest_oof.utils import LongitudinalAnalysis, Results, TestHistory
 
 
@@ -30,6 +30,7 @@ def analyze_results(
     min_duration_seconds: float = 0,
     show_reruns: bool = False,
     compare_sessions: Optional[tuple[str, str]] = None,
+    export_file: Optional[Path] = None,
 ):
     """Analyze test results using various methods."""
 
@@ -58,6 +59,8 @@ def analyze_results(
             sut_type=sut_type,
             sut_version=sut_version,
             sut_env=sut_env,
+            output_file=export_file,
+            output_format="jsonl" if export_file and export_file.suffix == ".jsonl" else "json",
         )
 
         if not results_data:
@@ -85,6 +88,63 @@ def analyze_results(
             sut_version=sut_version,
             sut_environment=sut_env,
         )
+
+        # Print SUT summary table
+        print("\n=== SUT Summary ===")
+        sut_stats = {}
+        for result_data in results_data:
+            session = result_data["session"]
+            sut_id = session.get("sut_id", "unknown")
+            if sut_id not in sut_stats:
+                sut_stats[sut_id] = {
+                    "sut_type": session.get("sut_type", "unknown"),
+                    "sut_version": session.get("sut_version", "unknown"),
+                    "sut_env": session.get("sut_env", "unknown"),
+                    "num_sessions": 0,
+                    "num_tests": 0,
+                    "num_passes": 0,
+                    "num_failures": 0,
+                    "num_errors": 0,
+                    "num_skips": 0,
+                    "num_xfails": 0,
+                    "num_xpasses": 0,
+                    "num_reruns": 0,
+                }
+            stats = sut_stats[sut_id]
+            stats["num_sessions"] += 1
+            for test_result in result_data["test_results"]:
+                stats["num_tests"] += 1
+                outcome = test_result.get("outcome", "unknown").upper()
+                if outcome == "PASSED":
+                    stats["num_passes"] += 1
+                elif outcome == "FAILED":
+                    stats["num_failures"] += 1
+                elif outcome == "ERROR":
+                    stats["num_errors"] += 1
+                elif outcome == "SKIPPED":
+                    stats["num_skips"] += 1
+                elif outcome == "XFAIL":
+                    stats["num_xfails"] += 1
+                elif outcome == "XPASS":
+                    stats["num_xpasses"] += 1
+                elif outcome == "RERUN":
+                    stats["num_reruns"] += 1
+
+        for sut_id, stats in sorted(sut_stats.items()):
+            total_tests = stats["num_tests"] or 1  # Avoid division by zero
+            print(f"\nSUT ID: {sut_id}")
+            print(f"  Type: {stats['sut_type']}")
+            print(f"  Version: {stats['sut_version']}")
+            print(f"  Environment: {stats['sut_env']}")
+            print(f"  Total Sessions: {stats['num_sessions']}")
+            print(f"  Total Tests: {stats['num_tests']}")
+            print(f"  Passes: {stats['num_passes']} ({stats['num_passes']/total_tests:.1%})")
+            print(f"  Failures: {stats['num_failures']} ({stats['num_failures']/total_tests:.1%})")
+            print(f"  Errors: {stats['num_errors']} ({stats['num_errors']/total_tests:.1%})")
+            print(f"  Skips: {stats['num_skips']} ({stats['num_skips']/total_tests:.1%})")
+            print(f"  Expected Failures: {stats['num_xfails']} ({stats['num_xfails']/total_tests:.1%})")
+            print(f"  Unexpected Passes: {stats['num_xpasses']} ({stats['num_xpasses']/total_tests:.1%})")
+            print(f"  Reruns: {stats['num_reruns']} ({stats['num_reruns']/total_tests:.1%})")
 
         # Get test status changes
         print("\n=== Test Status Changes ===")
@@ -185,20 +245,15 @@ def analyze_results(
         print("\n=== Trend Statistics ===")
         stats = analyzer.get_trend_stats(window_size=timedelta(days=window_size_days))
         for stat in stats:
-            total_tests = stat["num_tests"]
-            if total_tests > 0:
-                # Calculate rates for all test outcomes
-                pass_rate = stat.get("num_passes", 0) / total_tests
-                failure_rate = stat.get("num_failures", 0) / total_tests
-                error_rate = stat.get("num_errors", 0) / total_tests
-                skip_rate = stat.get("num_skips", 0) / total_tests
-                xfail_rate = stat.get("num_xfails", 0) / total_tests
-                xpass_rate = stat.get("num_xpasses", 0) / total_tests
-                rerun_rate = stat.get("num_reruns", 0) / total_tests
-            else:
-                pass_rate = (
-                    failure_rate
-                ) = error_rate = skip_rate = xfail_rate = xpass_rate = rerun_rate = 0
+            total_tests = stat.get("num_tests", 0) or 1  # Use 1 if num_tests is 0 or None
+            # Calculate rates for all test outcomes
+            pass_rate = stat.get("num_passes", 0) / total_tests
+            failure_rate = stat.get("num_failures", 0) / total_tests
+            error_rate = stat.get("num_errors", 0) / total_tests
+            skip_rate = stat.get("num_skips", 0) / total_tests
+            xfail_rate = stat.get("num_xfails", 0) / total_tests
+            xpass_rate = stat.get("num_xpasses", 0) / total_tests
+            rerun_rate = stat.get("num_reruns", 0) / total_tests
 
             print(f"\nWindow ending {stat['window_end']}:")
             print(f"  Tests run: {total_tests}")
@@ -263,7 +318,7 @@ def main():
     parser.add_argument(
         "db_path",
         type=Path,
-        help="Path to database file",
+        help="Path to database file (default: ./oof/oof-results.db)",
         default=Path("oof/oof-results.db"),
         nargs="?",
     )
@@ -299,10 +354,73 @@ def main():
         metavar=("SESSION1", "SESSION2"),
         help="Compare two specific sessions",
     )
+    parser.add_argument(
+        "--export",
+        type=Path,
+        help="Export results to file (use .json for JSON format or .jsonl for JSON Lines format)",
+    )
+
+    # Add delete options
+    delete_group = parser.add_argument_group("delete options")
+    delete_group.add_argument(
+        "--delete-all",
+        action="store_true",
+        help="Delete all test results",
+    )
+    delete_group.add_argument(
+        "--delete-last",
+        type=int,
+        metavar="N",
+        help="Delete the last N test sessions",
+    )
+    delete_group.add_argument(
+        "--delete-before",
+        type=lambda s: datetime.fromisoformat(s),
+        metavar="TIMESTAMP",
+        help="Delete test sessions before this timestamp (ISO format)",
+    )
+    delete_group.add_argument(
+        "--delete-after",
+        type=lambda s: datetime.fromisoformat(s),
+        metavar="TIMESTAMP",
+        help="Delete test sessions after this timestamp (ISO format)",
+    )
+    delete_group.add_argument(
+        "--delete-sut-id",
+        help="Delete test sessions for this SUT ID",
+    )
+    delete_group.add_argument(
+        "--delete-sut-type",
+        help="Delete test sessions for this SUT type",
+    )
 
     args = parser.parse_args()
 
-    try:
+    # Check if any delete options are specified
+    delete_options = [
+        args.delete_all,
+        args.delete_last,
+        args.delete_before,
+        args.delete_after,
+        args.delete_sut_id,
+        args.delete_sut_type,
+    ]
+    if any(x is not None and x != False for x in delete_options):
+        deleted = delete_results(
+            db_path=args.db_path,
+            all_results=args.delete_all,
+            last_n_sessions=args.delete_last,
+            start_time=args.delete_after,
+            end_time=args.delete_before,
+            sut_id=args.delete_sut_id,
+            sut_type=args.delete_sut_type,
+        )
+        print(f"Deleted {deleted} test sessions")
+        if not args.analyze:
+            return
+
+    # Continue with analysis if requested
+    if args.analyze:
         analyze_results(
             db_path=args.db_path,
             sut_id=args.sut_id or "",
@@ -316,10 +434,8 @@ def main():
             min_duration_seconds=args.min_duration,
             show_reruns=args.show_reruns,
             compare_sessions=tuple(args.compare) if args.compare else None,
+            export_file=args.export,
         )
-    except KeyboardInterrupt:
-        print("\nAnalysis interrupted by user")
-        return
 
 
 if __name__ == "__main__":

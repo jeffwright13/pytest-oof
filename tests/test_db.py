@@ -1,6 +1,7 @@
 """Tests for database functionality."""
 import json
 import sqlite3
+import os
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -150,18 +151,35 @@ def test_export_results_to_file(db_path, mock_datetime, tmp_path):
         mock_datetime,
     )
 
-    # Export to file
-    output_file = tmp_path / "results.json"
-    export_results(db_path, output_file=output_file)
+    # Test JSON format
+    json_file = tmp_path / "results.json"
+    export_results(db_path, output_file=json_file, output_format="json")
 
     # Read and verify JSON
-    with open(output_file) as f:
+    with open(json_file) as f:
         data = json.load(f)
 
     assert len(data) == 1
     assert len(data[0]["test_results"]) == 1
     assert data[0]["test_results"][0]["test_id"] == "test1"
     assert data[0]["test_results"][0]["timestamp"] == "2025-01-01 12:00:00+00:00"
+
+    # Test JSONL format
+    jsonl_file = tmp_path / "results.jsonl"
+    export_results(db_path, output_file=jsonl_file, output_format="jsonl")
+
+    # Read and verify JSONL
+    with open(jsonl_file) as f:
+        lines = f.readlines()
+        data = [json.loads(line) for line in lines]
+
+    assert len(data) == 1
+    assert len(data[0]["test_results"]) == 1
+    assert data[0]["test_results"][0]["test_id"] == "test1"
+    assert data[0]["test_results"][0]["timestamp"] == "2025-01-01 12:00:00+00:00"
+
+    # Verify JSONL is more compact than JSON
+    assert os.path.getsize(jsonl_file) < os.path.getsize(json_file)
 
 
 def test_time_based_filtering(db_path, mock_datetime):

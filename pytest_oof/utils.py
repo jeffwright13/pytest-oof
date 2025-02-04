@@ -670,55 +670,52 @@ class LongitudinalAnalysis:
         A test is considered changed if its outcome differs from its most common outcome
         in previous sessions.
         """
-        runs = self._get_filtered_runs()
-        if not runs or last_n_sessions < 1:
-            return {}
-
-        sorted_runs = sorted(runs, key=lambda r: r.session_metadata.start_time)
-        if len(sorted_runs) < last_n_sessions + 1:  # Need at least one previous session
-            return {}
-
-        # Get the most recent session and all previous sessions
-        latest_run = sorted_runs[-1]
-        previous_runs = sorted_runs[:-1]
-
         changes = {"new_failures": [], "new_passes": [], "intermittent": []}
 
-        # Build historical outcome frequencies for each test
+        # Get recent test runs
+        runs = self._get_filtered_runs()
+        if not runs:
+            return changes
+
+        # Sort runs by time and get the latest N sessions
+        sorted_runs = sorted(runs, key=lambda r: r.session_metadata.start_time)
+        latest_runs = sorted_runs[-last_n_sessions:]
+
+        # Build test history
         test_history = {}
-        for run in previous_runs:
+        for run in sorted_runs[:-last_n_sessions]:  # Exclude latest N sessions
             for test in run.test_results:
                 if test.nodeid not in test_history:
                     test_history[test.nodeid] = []
                 test_history[test.nodeid].append(test.outcome.upper())
 
-        # Analyze the latest run for changes
-        for test in latest_run.test_results:
-            # For new tests that don't have history
-            if test.nodeid not in test_history:
-                if test.outcome.upper() == "FAILED":
+        # Check for changes in latest runs
+        for run in latest_runs:
+            for test in run.test_results:
+                if test.nodeid not in test_history:
+                    # Skip tests that only appear in recent runs
+                    continue
+
+                hist_outcomes = test_history[test.nodeid]
+                most_common = max(set(hist_outcomes), key=hist_outcomes.count)
+                current_outcome = test.outcome.upper()
+
+                # Only show debug info if there's a status change
+                if current_outcome != most_common:
+                    print(
+                        f"Test {test.nodeid}: current={current_outcome}, history={hist_outcomes}, most_common={most_common}"
+                    )
+
+                # Check for status changes in the latest run
+                if most_common == "PASSED" and current_outcome == "FAILED":
                     changes["new_failures"].append(test.nodeid)
-                continue
+                elif most_common == "FAILED" and current_outcome == "PASSED":
+                    changes["new_passes"].append(test.nodeid)
 
-            hist_outcomes = test_history[test.nodeid]
-            most_common = max(set(hist_outcomes), key=hist_outcomes.count)
-            current_outcome = test.outcome.upper()
+                # Check for intermittent behavior
+                if len(set(hist_outcomes)) > 1:
+                    changes["intermittent"].append(test.nodeid)
 
-            print(
-                f"Test {test.nodeid}: current={current_outcome}, history={hist_outcomes}, most_common={most_common}"
-            )
-
-            # Check for status changes in the latest run
-            if most_common == "PASSED" and current_outcome == "FAILED":
-                changes["new_failures"].append(test.nodeid)
-            elif most_common == "FAILED" and current_outcome == "PASSED":
-                changes["new_passes"].append(test.nodeid)
-
-            # Check for intermittent behavior
-            if len(set(hist_outcomes)) > 1:
-                changes["intermittent"].append(test.nodeid)
-
-        print(f"Changes: {changes}")
         return changes
 
     def get_trend_stats(
@@ -748,22 +745,22 @@ class LongitudinalAnalysis:
             ]
 
             if window_runs:
+                # Helper function to safely sum stats that might be None
+                def safe_sum(attr: str) -> int:
+                    return sum(getattr(r.session_stats, attr, 0) or 0 for r in window_runs)
+
                 stats = {
                     "window_start": window_start,
                     "window_end": window_end,
                     "num_runs": len(window_runs),
-                    "num_tests": sum(r.session_stats.num_tests for r in window_runs),
-                    "num_passes": sum(r.session_stats.num_passes for r in window_runs),
-                    "num_failures": sum(
-                        r.session_stats.num_failures for r in window_runs
-                    ),
-                    "num_errors": sum(r.session_stats.num_errors for r in window_runs),
-                    "num_skips": sum(r.session_stats.num_skips for r in window_runs),
-                    "num_xfails": sum(r.session_stats.num_xfails for r in window_runs),
-                    "num_xpasses": sum(
-                        r.session_stats.num_xpasses for r in window_runs
-                    ),
-                    "num_reruns": sum(r.session_stats.num_reruns for r in window_runs),
+                    "num_tests": safe_sum("num_tests"),
+                    "num_passes": safe_sum("num_passes"),
+                    "num_failures": safe_sum("num_failures"),
+                    "num_errors": safe_sum("num_errors"),
+                    "num_skips": safe_sum("num_skips"),
+                    "num_xfails": safe_sum("num_xfails"),
+                    "num_xpasses": safe_sum("num_xpasses"),
+                    "num_reruns": safe_sum("num_reruns"),
                 }
                 windows.append(stats)
 

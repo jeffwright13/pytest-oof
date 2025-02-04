@@ -71,8 +71,15 @@ First, run your pytest campaign with the `--oof` option:
 `$ pytest --oof`
 
 This generates two files in the `/oof` directory:
-- oof/results.pickle: a pickled collection of dataclasses representing all results in an easy-to-consume format
-- oof/terminal_output.ansi: a copy of the entire terminal output from your test session, encoded in ANSI escape codes
+- oof/oof-results.db: a SQLite database containing test results
+- oof/oof-terminal_output.ansi: a copy of the entire terminal output from your test session, encoded in ANSI escape codes
+- oof/oof-results.pickle: a pickled collection of dataclasses representing all results in an easy-to-consume format
+- oof/oof-results.json: JSON format test results
+   - Human-readable format of test results
+   - Suitable for external tools and integrations
+   - Available in two formats:
+     - `json`: Pretty-printed JSON with indentation (default)
+     - `jsonl`: JSON Lines format, one result per line, more compact and streamable
 
 Now run the included console script `oofda`:
 
@@ -98,10 +105,10 @@ Now use as you wish:
 from pytest_oof.utils import Results, TerminalOutput
 
 results = Results.from_file(
-    results_file_path="oof/results.pickle",
+    results_file_path="oof/oof-results.pickle",
 
 terminal_output = TerminalOutput.from_file(
-    terminal_output_file_path="oof/terminal_output.ansi",
+    terminal_output_file_path="oof/oof-terminal_output.ansi",
 )
 ```
 
@@ -401,6 +408,60 @@ Output field content:
 [33m2 warnings[0m, [31m[1m1 error[0m, [33m4 rerun[0m[31m in 0.23s[0m[31m ========[0m
 ```
 
+# Files and Databases
+
+When running tests with pytest-oof, several files are created in the `/oof` directory:
+
+1. `oof/oof-results.db` - SQLite database containing:
+   - Test session metadata (timing, SUT info)
+   - Test results (outcomes, durations, error messages)
+   - Console output sections
+   - Historical test data for trend analysis
+
+2. `oof/oof-terminal_output.ansi` - Raw terminal output with ANSI escape codes
+   - Complete console output from the test session
+   - Used for detailed debugging and output field analysis
+
+3. `oof/oof-results.pickle` - Serialized Results object
+   - Contains structured test results and metadata
+   - Used by analysis tools and scripts
+
+4. `oof/oof-results.json` - JSON format test results
+   - Human-readable format of test results
+   - Suitable for external tools and integrations
+   - Available in two formats:
+     - `json`: Pretty-printed JSON with indentation (default)
+     - `jsonl`: JSON Lines format, one result per line, more compact and streamable
+
+5. `oof/html/` - Directory containing HTML reports
+   - Generated when using `--html` option
+   - Interactive visualization of test results
+
+The SQLite database (`oof-results.db`) is particularly useful for:
+- Long-term storage of test results
+- Historical trend analysis
+- Complex querying of test outcomes
+- Integration with external analysis tools
+
+Use the `analyze_results.py` script to query and analyze the database:
+```bash
+# Show recent test changes
+python scripts/analyze_results.py --last-n 5
+
+# Analyze specific time period
+python scripts/analyze_results.py --start-time "2024-01-01" --end-time "2024-12-31"
+
+# Filter by SUT (System Under Test)
+python scripts/analyze_results.py --sut-id "my-app" --sut-version "1.0.0"
+
+# Use a different database path
+python scripts/analyze_results.py --db-path "/path/to/oof-results.db"
+
+# Export results to file
+python scripts/analyze_results.py --export results.json   # Pretty-printed JSON
+python scripts/analyze_results.py --export results.jsonl  # Compact JSON Lines format
+```
+
 # Format
 
 `pytest-oof` provides a structured Python object representation of the results of a pytest test run. Esentially, it is a collection of dataclasses, each representing a single test result. The dataclasses are organized into lists/dictionaries, and are pickled to a file for later consumption.
@@ -496,9 +557,6 @@ any fields that are available are included in the output.
 | `forerunners` | list | a list of TestResult objects that were rerun |
 | `full_test_list` | list | a chronological list of all TestResult objects in the test group |
 
-
-
-
 # Limitations and Disclaimer
 
 `pytest-oof` uses pytest's console output in order to generate its results. This means that if pytest changes its output format, `pytest-oof` may break. I will do my best to keep up with changes to pytest, but I make no guarantees. So far the same algorithm has held up for 2+ years, but who knows what the pytest devs will do next?
@@ -516,3 +574,55 @@ If you have any problems or questions with pytest-oof, open an issue. I'll do my
 
 
 I also have code that outputs JSON-formatted results in real-time (part of [pytest-tally](https://github.com/jeffwright13/pytest-tally)). This code does *not* rely on the console output, intead getting its information from internal TestReport ojects as they are populated during a test run. In that respect, they are less fragile than pytest-oof. This method gets close to providing a complete representation of a test run's information, but does not include fields/sections, nor does it correectly handle all ways of skipping tests. However, that code is embedded in the tally library and is not prductized. I may do so and include it here in the future if there is any demand.
+
+```bash
+analyze_results [db_path] [options]
+
+Options:
+  --sut-id ID            Filter by SUT ID
+  --sut-type TYPE        Filter by SUT type
+  --sut-version VERSION  Filter by SUT version
+  --sut-env ENV          Filter by SUT environment
+  --start-time TIME      Start time (ISO format or YYYY-MM-DD)
+  --end-time TIME        End time (ISO format or YYYY-MM-DD)
+  --window-size DAYS     Window size in days for trend analysis
+  --last-n N            Number of recent sessions to analyze
+  --min-duration SECS   Minimum duration in seconds between test status changes
+  --show-reruns         Show rerun attempts in addition to final outcomes
+  --compare S1 S2       Compare two specific sessions
+  --export PATH         Export results to file (.json for JSON, .jsonl for JSON Lines)
+
+```
+
+# Command Line Tools
+
+After installing pytest-oof, you'll have access to the following command-line tools:
+
+1. `oofda` - Main command line interface for viewing test results
+2. `oof-console` - Generate console output from test results
+3. `oof-html` - Generate HTML reports from test results
+4. `oof-tui` - Terminal UI for viewing test results
+5. `analyze-results` - Analyze test results and export them in various formats (see below):
+
+## analyze-results
+
+The `analyze-results` command provides powerful analysis and export capabilities for your test results:
+
+```bash
+# Basic usage
+analyze-results
+
+# Use a different database path
+analyze-results --db-path "/path/to/oof-results.db"
+
+# Export results to file
+analyze-results --export results.json   # Pretty-printed JSON
+analyze-results --export results.jsonl  # Compact JSON Lines format
+
+# Filter results
+analyze-results --sut-id my-app --start-time 2025-01-01
+```
+
+For a complete list of options, run `analyze-results --help`.
+
+## oofda
