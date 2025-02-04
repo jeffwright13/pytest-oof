@@ -94,6 +94,7 @@ class TestSessionStats:
     num_rerun_groups: int = 0  # Number of distinct test groups that had reruns
     num_warnings: int = 0
     num_warnings_unique: int = 0
+    num_deselected: int = 0  # Number of tests deselected via pytest's test selection
 
     def to_dict(self) -> Dict[str, int]:
         return {
@@ -108,6 +109,7 @@ class TestSessionStats:
             "num_rerun_groups": self.num_rerun_groups,
             "num_warnings": self.num_warnings,
             "num_warnings_unique": self.num_warnings_unique,
+            "num_deselected": self.num_deselected,
         }
 
 

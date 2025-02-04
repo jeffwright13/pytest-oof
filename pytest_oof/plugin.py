@@ -431,6 +431,13 @@ def pytest_configure(config: Config) -> None:
                         oof_test_result.outcome = outcome
                         break
 
+            # If this is the last line, parse it for deselected tests
+            if config._oof_current_field == "lastline":
+                lastline = strip_ansi(s)
+                deselected_match = re.search(r'(\d+) deselected', lastline)
+                if deselected_match:
+                    config._oof_session_stats.num_deselected = int(deselected_match.group(1))
+
             # Write this line's original pytest output text (plus markup) to console.
             # Also write marked up content to this OutputField's 'content' field.
             # Markup is done w/ TerminalWriter's 'markup' method.
