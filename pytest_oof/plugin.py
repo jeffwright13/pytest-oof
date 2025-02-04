@@ -698,25 +698,25 @@ def pytest_unconfigure(config: Config) -> None:
     # Load and update JSON history
     json_history_file = Path("oof/oof-results.json")
     existing_results = []
-    
+
     if json_history_file.exists():
         try:
             with open(json_history_file) as f:
                 existing_results = json.load(f)
         except json.JSONDecodeError:
             existing_results = []
-    
+
     if not isinstance(existing_results, list):
         existing_results = []
-    
+
     existing_results.append(json_results)
-    
+
     # Apply history size limit if configured
     max_history = config.getoption("oof_max_history")
     if max_history > 0 and len(existing_results) > max_history:
         # Keep only the most recent runs up to max_history
         existing_results = existing_results[-max_history:]
-    
+
     # Save JSON history
     with open(json_history_file, "w") as f:
         json.dump(existing_results, f, indent=2)
@@ -728,9 +728,9 @@ def pytest_unconfigure(config: Config) -> None:
         history = TestHistory()
 
     history.add_run(results)
-    
+
     # Apply same limit to TestHistory
     if max_history > 0:
         history.limit_runs(max_history)
-    
+
     history.save(HISTORY_FILE)

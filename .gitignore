@@ -1,9 +1,9 @@
 # This repo (pytest-oof)
-.oof/
-oof/
+# .oof/
+# oof/
 
 # JSON
-*.json
+# *.json
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

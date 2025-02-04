@@ -441,17 +441,17 @@ class TestHistory:
 
     def get_sut_runs(self, sut_id: str = "", sut_type: str = "", sut_version: str = "", sut_environment: str = "") -> List[Results]:
         """Get test runs for a specific SUT configuration.
-        
+
         All specified parameters are combined with AND logic. For example:
             get_sut_runs(sut_id="my-app", sut_version="1.0.0")
         will only return results where sut_id is "my-app" AND sut_version is "1.0.0".
-        
+
         Args:
             sut_id: Filter by specific SUT identifier
             sut_type: Filter by SUT type/category
             sut_version: Filter by specific SUT version
             sut_environment: Filter by specific environment
-            
+
         Returns:
             List of Results objects matching ALL specified criteria.
             If no parameters are specified, returns all results.
