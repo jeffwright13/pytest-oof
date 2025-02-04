@@ -430,16 +430,28 @@ class TestHistory:
         if len(self.results) > max_runs:
             self.results = self.results[-max_runs:]
 
-    def get_runs(self, start_time: Optional[datetime] = None, end_time: Optional[datetime] = None) -> List[Results]:
+    def get_runs(
+        self, start_time: Optional[datetime] = None, end_time: Optional[datetime] = None
+    ) -> List[Results]:
         """Get test runs within the specified time range."""
         filtered = self.results
         if start_time:
-            filtered = [r for r in filtered if r.session_metadata.start_time >= start_time]
+            filtered = [
+                r for r in filtered if r.session_metadata.start_time >= start_time
+            ]
         if end_time:
-            filtered = [r for r in filtered if r.session_metadata.start_time <= end_time]
+            filtered = [
+                r for r in filtered if r.session_metadata.start_time <= end_time
+            ]
         return filtered
 
-    def get_sut_runs(self, sut_id: str = "", sut_type: str = "", sut_version: str = "", sut_environment: str = "") -> List[Results]:
+    def get_sut_runs(
+        self,
+        sut_id: str = "",
+        sut_type: str = "",
+        sut_version: str = "",
+        sut_environment: str = "",
+    ) -> List[Results]:
         """Get test runs for a specific SUT configuration.
 
         All specified parameters are combined with AND logic. For example:
@@ -462,9 +474,15 @@ class TestHistory:
         if sut_type:
             filtered = [r for r in filtered if r.session_metadata.sut_type == sut_type]
         if sut_version:
-            filtered = [r for r in filtered if r.session_metadata.sut_version == sut_version]
+            filtered = [
+                r for r in filtered if r.session_metadata.sut_version == sut_version
+            ]
         if sut_environment:
-            filtered = [r for r in filtered if r.session_metadata.sut_environment == sut_environment]
+            filtered = [
+                r
+                for r in filtered
+                if r.session_metadata.sut_environment == sut_environment
+            ]
         return filtered
 
     def get_latest_run(self) -> Optional[Results]:
@@ -505,13 +523,15 @@ class LongitudinalAnalysis:
     sut_version: str = ""
     sut_environment: str = ""
 
-    def _get_filtered_runs(self, start_time: Optional[datetime] = None, end_time: Optional[datetime] = None) -> List[Results]:
+    def _get_filtered_runs(
+        self, start_time: Optional[datetime] = None, end_time: Optional[datetime] = None
+    ) -> List[Results]:
         """Get test runs filtered by SUT and time range."""
         runs = self.history.get_sut_runs(
             sut_id=self.sut_id,
             sut_type=self.sut_type,
             sut_version=self.sut_version,
-            sut_environment=self.sut_environment
+            sut_environment=self.sut_environment,
         )
         if start_time:
             runs = [r for r in runs if r.session_metadata.start_time >= start_time]
@@ -535,11 +555,13 @@ class LongitudinalAnalysis:
             for test in run.test_results:
                 if test.nodeid not in test_history:
                     test_history[test.nodeid] = []
-                test_history[test.nodeid].append({
-                    'time': run.session_metadata.start_time,
-                    'outcome': test.outcome,
-                    'duration': test.duration
-                })
+                test_history[test.nodeid].append(
+                    {
+                        "time": run.session_metadata.start_time,
+                        "outcome": test.outcome,
+                        "duration": test.duration,
+                    }
+                )
 
         return test_history
 
@@ -553,19 +575,23 @@ class LongitudinalAnalysis:
         - Tests common to both sessions
         """
         runs = self._get_filtered_runs()
-        run1 = next((r for r in runs if r.session_metadata.session_id == session_id1), None)
-        run2 = next((r for r in runs if r.session_metadata.session_id == session_id2), None)
+        run1 = next(
+            (r for r in runs if r.session_metadata.session_id == session_id1), None
+        )
+        run2 = next(
+            (r for r in runs if r.session_metadata.session_id == session_id2), None
+        )
 
         if not run1 or not run2:
-            return {'error': ['One or both session IDs not found in the specified SUT']}
+            return {"error": ["One or both session IDs not found in the specified SUT"]}
 
         tests1 = {t.nodeid for t in run1.test_results}
         tests2 = {t.nodeid for t in run2.test_results}
 
         return {
-            'unique_to_session1': sorted(list(tests1 - tests2)),
-            'unique_to_session2': sorted(list(tests2 - tests1)),
-            'common': sorted(list(tests1 & tests2))
+            "unique_to_session1": sorted(list(tests1 - tests2)),
+            "unique_to_session2": sorted(list(tests2 - tests1)),
+            "common": sorted(list(tests1 & tests2)),
         }
 
     def find_test_changes(self, last_n_sessions: int = 1) -> Dict[str, List[str]]:
@@ -586,11 +612,7 @@ class LongitudinalAnalysis:
         latest_run = sorted_runs[-1]
         previous_runs = sorted_runs[:-1]
 
-        changes = {
-            'new_failures': [],
-            'new_passes': [],
-            'intermittent': []
-        }
+        changes = {"new_failures": [], "new_passes": [], "intermittent": []}
 
         # Build historical outcome frequencies for each test
         test_history = {}
@@ -604,22 +626,22 @@ class LongitudinalAnalysis:
         for test in latest_run.test_results:
             # For new tests that don't have history
             if test.nodeid not in test_history:
-                if test.outcome == 'FAILED':
-                    changes['new_failures'].append(test.nodeid)
+                if test.outcome == "FAILED":
+                    changes["new_failures"].append(test.nodeid)
                 continue
 
             hist_outcomes = test_history[test.nodeid]
             most_common = max(set(hist_outcomes), key=hist_outcomes.count)
 
             # Check for status changes in the latest run
-            if most_common == 'PASSED' and test.outcome == 'FAILED':
-                changes['new_failures'].append(test.nodeid)
-            elif most_common == 'FAILED' and test.outcome == 'PASSED':
-                changes['new_passes'].append(test.nodeid)
+            if most_common == "PASSED" and test.outcome == "FAILED":
+                changes["new_failures"].append(test.nodeid)
+            elif most_common == "FAILED" and test.outcome == "PASSED":
+                changes["new_passes"].append(test.nodeid)
 
             # Check for intermittent behavior
             if len(set(hist_outcomes)) > 1:
-                changes['intermittent'].append(test.nodeid)
+                changes["intermittent"].append(test.nodeid)
 
         return changes
 
@@ -644,20 +666,28 @@ class LongitudinalAnalysis:
         while window_start <= end_time:
             window_end = window_start + window_size
             window_runs = [
-                r for r in sorted_runs
+                r
+                for r in sorted_runs
                 if window_start <= r.session_metadata.start_time < window_end
             ]
 
             if window_runs:
                 stats = {
-                    'window_start': window_start,
-                    'window_end': window_end,
-                    'num_runs': len(window_runs),
-                    'num_tests': sum(r.session_stats.num_tests for r in window_runs),
-                    'num_passes': sum(r.session_stats.num_passes for r in window_runs),
-                    'num_failures': sum(r.session_stats.num_failures for r in window_runs),
-                    'num_errors': sum(r.session_stats.num_errors for r in window_runs),
-                    'num_skips': sum(r.session_stats.num_skips for r in window_runs),
+                    "window_start": window_start,
+                    "window_end": window_end,
+                    "num_runs": len(window_runs),
+                    "num_tests": sum(r.session_stats.num_tests for r in window_runs),
+                    "num_passes": sum(r.session_stats.num_passes for r in window_runs),
+                    "num_failures": sum(
+                        r.session_stats.num_failures for r in window_runs
+                    ),
+                    "num_errors": sum(r.session_stats.num_errors for r in window_runs),
+                    "num_skips": sum(r.session_stats.num_skips for r in window_runs),
+                    "num_xfails": sum(r.session_stats.num_xfails for r in window_runs),
+                    "num_xpasses": sum(
+                        r.session_stats.num_xpasses for r in window_runs
+                    ),
+                    "num_reruns": sum(r.session_stats.num_reruns for r in window_runs),
                 }
                 windows.append(stats)
 

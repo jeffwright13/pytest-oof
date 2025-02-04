@@ -6,7 +6,7 @@ flake8
 isort
 pre-commit
 pyflakes
-pytest-mock
+pytest-mock<3.0.0
 pytest-rerunfailures
 twine
 wheel

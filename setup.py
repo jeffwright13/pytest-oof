@@ -14,7 +14,7 @@ def read(fname):
 
 setup(
     name="pytest-oof",
-    version="2.0.0",
+    version="2.1.0",
     author="Jeff Wright",
     author_email="jeff.washcloth@gmail.com",
     license="MIT",
@@ -37,6 +37,14 @@ setup(
     ],
     setup_requires=["setuptools_scm"],
     include_package_data=True,
+    extras_require={
+        "dev": [
+            "black",
+            "ruff",
+            "mypy",
+            "pytest-mock",
+        ],
+    },
     classifiers=[
         "Framework :: Pytest",
         "Development Status :: 4 - Beta",

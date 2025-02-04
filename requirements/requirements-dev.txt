@@ -4,104 +4,120 @@
 #
 #    pip-compile --no-emit-index-url requirements/requirements-dev.in
 #
-black==23.10.1
+attrs==25.1.0
+    # via
+    #   -c requirements/requirements.txt
+    #   pytest
+black==25.1.0
     # via -r requirements/requirements-dev.in
-certifi==2023.7.22
+certifi==2025.1.31
     # via requests
 cfgv==3.4.0
     # via pre-commit
-charset-normalizer==3.3.2
+charset-normalizer==3.4.1
     # via requests
-click==8.1.7
-    # via black
+click==8.1.8
+    # via
+    #   -c requirements/requirements.txt
+    #   black
 commonmark==0.9.1
     # via
     #   -c requirements/requirements.txt
     #   rich
-distlib==0.3.7
+distlib==0.3.9
     # via virtualenv
-docutils==0.20.1
+docutils==0.21.2
     # via readme-renderer
-faker==19.13.0
+faker==35.2.0
     # via -r requirements/requirements-dev.in
-filelock==3.13.1
+filelock==3.17.0
     # via virtualenv
-flake8==6.1.0
+flake8==7.1.1
     # via -r requirements/requirements-dev.in
-identify==2.5.31
-    # via pre-commit
-idna==3.4
-    # via requests
-importlib-metadata==6.8.0
+id==1.5.0
     # via twine
+identify==2.6.6
+    # via pre-commit
+idna==3.10
+    # via requests
 iniconfig==2.0.0
     # via
     #   -c requirements/requirements.txt
     #   pytest
-isort==5.12.0
+isort==6.0.0
     # via -r requirements/requirements-dev.in
-jaraco-classes==3.3.0
+jaraco-classes==3.4.0
     # via keyring
-keyring==24.2.0
+jaraco-context==6.0.1
+    # via keyring
+jaraco-functools==4.1.0
+    # via keyring
+keyring==25.6.0
     # via twine
 mccabe==0.7.0
     # via flake8
-more-itertools==10.1.0
-    # via jaraco-classes
+more-itertools==10.6.0
+    # via
+    #   jaraco-classes
+    #   jaraco-functools
 mypy-extensions==1.0.0
     # via black
-nh3==0.2.14
+nh3==0.2.20
     # via readme-renderer
-nodeenv==1.8.0
+nodeenv==1.9.1
     # via pre-commit
-packaging==23.2
+packaging==24.2
     # via
     #   -c requirements/requirements.txt
     #   black
     #   pytest
     #   pytest-rerunfailures
-pathspec==0.11.2
+    #   twine
+pathspec==0.12.1
     # via black
-pkginfo==1.9.6
-    # via twine
-platformdirs==3.11.0
+platformdirs==4.3.6
     # via
     #   black
     #   virtualenv
-pluggy==1.3.0
+pluggy==1.5.0
     # via
     #   -c requirements/requirements.txt
     #   pytest
-pre-commit==3.5.0
+pre-commit==4.1.0
     # via -r requirements/requirements-dev.in
-pycodestyle==2.11.1
+py==1.11.0
+    # via
+    #   -c requirements/requirements.txt
+    #   pytest
+pycodestyle==2.12.1
     # via flake8
-pyflakes==3.1.0
+pyflakes==3.2.0
     # via
     #   -r requirements/requirements-dev.in
     #   flake8
-pygments==2.16.1
+pygments==2.19.1
     # via
     #   -c requirements/requirements.txt
     #   readme-renderer
     #   rich
-pytest==7.4.3
+pytest==6.2.5
     # via
     #   -c requirements/requirements.txt
     #   pytest-mock
     #   pytest-rerunfailures
-pytest-mock==3.14.0
+pytest-mock==2.0.0
     # via -r requirements/requirements-dev.in
 pytest-rerunfailures==12.0
     # via -r requirements/requirements-dev.in
-python-dateutil==2.8.2
+python-dateutil==3.9.0
     # via faker
-pyyaml==6.0.1
+pyyaml==6.0.2
     # via pre-commit
-readme-renderer==42.0
+readme-renderer==44.0
     # via twine
-requests==2.31.0
+requests==2.32.3
     # via
+    #   id
     #   requests-toolbelt
     #   twine
 requests-toolbelt==1.0.0
@@ -112,20 +128,23 @@ rich==12.6.0
     # via
     #   -c requirements/requirements.txt
     #   twine
-six==1.16.0
+six==1.17.0
     # via python-dateutil
-twine==4.0.2
+toml==0.10.2
+    # via
+    #   -c requirements/requirements.txt
+    #   pytest
+twine==6.1.0
     # via -r requirements/requirements-dev.in
-urllib3==2.0.7
+typing-extensions==4.12.2
+    # via
+    #   -c requirements/requirements.txt
+    #   faker
+urllib3==2.3.0
     # via
     #   requests
     #   twine
-virtualenv==20.24.6
+virtualenv==20.29.1
     # via pre-commit
-wheel==0.41.3
+wheel==0.45.1
     # via -r requirements/requirements-dev.in
-zipp==3.17.0
-    # via importlib-metadata
-
-# The following packages are considered to be unsafe in a requirements file:
-# setuptools

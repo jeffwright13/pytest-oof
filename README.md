@@ -26,6 +26,14 @@
 - short_test_summary
 - lastline
 
+### SQLite Database Integration:
+- Persistent storage of test results in SQLite database
+- Comprehensive schema for test sessions, results, metrics, and more
+- Advanced querying capabilities with flexible filtering options
+- Support for time-based analysis and historical trends
+- Built-in foreign key constraints for data integrity
+- Efficient indexing for fast queries
+
 ## Target Audience:
 - Pytest plugin developers and others who need access to pytest's results after a test run has completed
 - Testers who want a summary of their test run *as reported by pytest on the console* (doesn't get more authoritative than that), without having to parse pytest's complex console output

@@ -47,10 +47,15 @@ RELEASE_INSTRUCTIONS
 
 - Verify basic functionality with plugin:
     $ pytest --oof --version
-    $ TBD
+    $ pytest --oof demo-tests/  # Verify test results are captured
+    $ pytest --oof --json-outfile=results.json demo-tests/  # Verify JSON output
+    $ pytest --oof --db-path=oof/test.db demo-tests/  # Verify SQLite database output
 
-- Publish to Pypi:
-    $ deactivate
-    $ cd ~/coding/dev-dir
-    $ source venv/bin/activate
+- Run unit tests:
+    $ pytest tests/  # Run all unit tests
+    $ pytest tests/test_db.py -v  # Test database functionality
+    $ pytest tests/test_plugin.py -v  # Test plugin functionality
+    $ pytest tests/test_utils.py -v  # Test utility functions
+
+- Now proceed with publishing:
     $ python -m twine upload dist/*

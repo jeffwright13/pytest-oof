@@ -8,7 +8,25 @@ and this project tries to adhere to [Semantic Versioning](https://semver.org/spe
 ## UNRELEASED
 - N/A
 
-## [[2.0.0] 2024-12-09
+## [2.1.0] 2025-02-04
+### Added
+- SQLite database integration for persistent storage of test results
+- Comprehensive database schema with support for:
+  - Test sessions and results
+  - Console output and metrics
+  - Resource metrics and system state
+  - Test artifacts and fixtures
+- Advanced querying capabilities with flexible filtering
+- Time-based analysis and historical trending
+- Foreign key constraints for data integrity
+- Efficient indexing for performance
+- Context manager for proper database connection handling
+
+### Changed
+- Updated dependencies to ensure compatibility with SQLite features
+- Enhanced documentation with SQLite database usage examples
+
+## [2.0.0] 2024-12-09
 - Created new JSON out file.
 - Revamped stats.
 
