@@ -388,61 +388,69 @@ def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo) -> None:
 
     # Only process the call phase for counting test outcomes
     if report.when == "call":
-        report_stats.num_tests += 1  # Total runs including reruns
-
         # Create a TestResult object
         test_result = TestResult(
             nodeid=report.nodeid,
-            outcome=report.outcome,
-            duration=report.duration,
-            longreprtext=report.longrepr if hasattr(report, "longrepr") else None,
-            capstdout=report.capstdout if hasattr(report, "capstdout") else "",
-            capstderr=report.capstderr if hasattr(report, "capstderr") else "",
-            caplog=report.caplog if hasattr(report, "caplog") else "",
-            has_warning=False,
+            outcome=report.outcome.upper(),  # Convert to uppercase
             start_time=datetime.now(timezone.utc),
-            longreprtext_stripped=strip_ansi(str(report.longrepr))
-            if hasattr(report, "longrepr")
-            else None,
+            duration=report.duration,
+            longreprtext=report.longreprtext if hasattr(report, "longreprtext") else None,
         )
+
+        # Set the correct outcome for xfail/xpass cases
+        if hasattr(report, "wasxfail"):
+            if report.outcome == "passed":
+                test_result.outcome = "XPASS"
+                item.session.config._oof_session_stats.num_xpasses += 1
+                item.session.config._oof_session_stats.num_tests += 1
+            else:  # report.outcome == "skipped"
+                test_result.outcome = "XFAIL"
+                item.session.config._oof_session_stats.num_xfails += 1
+                item.session.config._oof_session_stats.num_tests += 1
+        else:
+            # Update session stats based on outcome
+            if report.outcome == "passed":
+                item.session.config._oof_session_stats.num_passes += 1
+                item.session.config._oof_session_stats.num_tests += 1
+            elif report.outcome == "failed":
+                item.session.config._oof_session_stats.num_failures += 1
+                item.session.config._oof_session_stats.num_tests += 1
+            elif report.outcome == "skipped":
+                item.session.config._oof_session_stats.num_skips += 1
+                item.session.config._oof_session_stats.num_tests += 1
+            elif report.outcome == "error":
+                item.session.config._oof_session_stats.num_errors += 1
+                item.session.config._oof_session_stats.num_tests += 1
+
         test_results.test_results.append(test_result)
 
         # Write test result to database
         if hasattr(item.session.config, "_oof_db_session_id"):
             db_path = Path(item.session.config.getoption("oof_db_path"))
+
+            # Determine the actual outcome
+            outcome = report.outcome
+            if hasattr(report, "wasxfail"):
+                if report.outcome == "passed":
+                    outcome = "xpass"
+                else:  # report.outcome == "skipped"
+                    outcome = "xfail"
+
             add_test_result(
                 db_path=db_path,
                 session_id=item.session.config._oof_db_session_id,
                 test_id=report.nodeid,
-                outcome=report.outcome,
-                timestamp=test_result.start_time,
+                outcome=outcome.upper(),  # Convert to uppercase
+                timestamp=datetime.now(timezone.utc),
                 duration=report.duration,
-                error_message=str(report.longrepr)
-                if hasattr(report, "longrepr")
-                else None,
-                error_type=None,  # TODO: Extract error type from longrepr
-                error_traceback=None,  # TODO: Extract traceback from longrepr
-                parameters=None,  # TODO: Extract parameters from item
-                has_warning=False,
+                error_message=str(report.longrepr) if hasattr(report, "longrepr") else None,
+                error_type=report.outcome,
+                error_traceback=str(report.longrepr) if hasattr(report, "longrepr") else None,
+                has_warning=test_result.has_warning,
                 caplog=test_result.caplog,
                 capstderr=test_result.capstderr,
                 capstdout=test_result.capstdout,
             )
-
-        # Handle xfail/xpass cases
-        if hasattr(report, "wasxfail"):
-            if report.outcome == "passed":
-                report_stats.num_xpasses += 1
-            else:  # report.outcome == "skipped"
-                report_stats.num_xfails += 1
-        # Handle normal outcomes
-        else:
-            if report.outcome == "passed":
-                report_stats.num_passes += 1
-            elif report.outcome == "failed":
-                report_stats.num_failures += 1
-            elif report.outcome == "skipped":
-                report_stats.num_skips += 1
 
     # Handle setup/teardown errors
     elif report.when in ("setup", "teardown") and report.outcome == "failed":
@@ -478,21 +486,18 @@ def pytest_configure(config: Config) -> None:
     # Create output directory
     Path("oof").mkdir(exist_ok=True)
 
-    # Initialize database
+    # Initialize database and add session
     db_path = Path(config.getoption("oof_db_path"))
-    if not db_path.parent.exists():
-        db_path.parent.mkdir(parents=True)
-    if not db_path.exists():
-        init_db(db_path)
+    db_path.parent.mkdir(exist_ok=True)
+    init_db(db_path)
 
-    # Create database session
     config._oof_db_session_id = add_session(
         db_path=db_path,
-        start_time=datetime.now(timezone.utc),
+        start_time=config._oof_session_start_time,
         sut_id=config.getoption("oof_sut_id"),
         sut_type=config.getoption("oof_sut_type"),
-        sut_version=config.getoption("oof_sut_version", ""),
-        sut_env=config.getoption("oof_sut_env", ""),
+        sut_version=config.getoption("oof_sut_version"),
+        sut_env=config.getoption("oof_sut_env"),
     )
 
     # Add hooks used by pytest-oof
@@ -517,13 +522,10 @@ def pytest_configure(config: Config) -> None:
     config._oof_sut_environment = config.getoption("oof_sut_env")
     config._oof_sut_metadata = sut_metadata
 
-    # Initialize test results tracking
+    # Initialize test results
     config._oof_test_results = TestResults()
-    config._oof_rerun_test_groups = []
-
-    # Initialize test session stats
-    config._oof_stats = TestSessionStats()
-    config._oof_warnings = []
+    config._oof_session_stats = TestSessionStats()
+    config._oof_session_start_time = datetime.now(timezone.utc)
 
     # Initialize output fields
     config._oof_fields = OutputFields()
@@ -656,7 +658,6 @@ def pytest_configure(config: Config) -> None:
 
         # Write to both terminal/console and tempfiles
         tr._tw.write = tee_write
-        print()
 
 
 def populate_rerun_groups(config: Config) -> List[RerunTestGroup]:
@@ -752,43 +753,72 @@ def pytest_unconfigure(config: Config) -> None:
     if not config.getoption("_oof"):
         return
 
-    # Update session end time and duration
-    db_path = Path(config.getoption("oof_db_path"))
-    if db_path.exists():
-        with db_connection(db_path) as conn:
-            c = conn.cursor()
-            c.execute(
-                """
-                UPDATE test_sessions
-                SET end_time = ?,
-                    duration = ?,
-                    num_tests = ?,
-                    num_passes = ?,
-                    num_failures = ?,
-                    num_errors = ?,
-                    num_skips = ?,
-                    num_xfails = ?,
-                    num_xpasses = ?,
-                    num_warnings = ?
-                WHERE id = ?
-                """,
-                (
-                    datetime.now(timezone.utc),
+    # Calculate final stats from test results
+    if hasattr(config, "_oof_test_results"):
+        stats = TestSessionStats()
+        for result in config._oof_test_results.test_results:
+            stats.num_tests += 1
+            if result.outcome == "PASSED":
+                stats.num_passes += 1
+            elif result.outcome == "FAILED":
+                stats.num_failures += 1
+            elif result.outcome == "SKIPPED":
+                stats.num_skips += 1
+            elif result.outcome == "ERROR":
+                stats.num_errors += 1
+            elif result.outcome == "XFAIL":
+                stats.num_xfails += 1
+            elif result.outcome == "XPASS":
+                stats.num_xpasses += 1
+            if result.has_warning:
+                stats.num_warnings += 1
+
+        # Update config session stats with final values
+        config._oof_session_stats = stats
+
+        # Update session end time and duration
+        db_path = Path(config.getoption("oof_db_path"))
+        if db_path.exists():
+            with db_connection(db_path) as conn:
+                c = conn.cursor()
+                c.execute(
+                    """
+                    UPDATE test_sessions
+                    SET end_time = ?,
+                        duration = ?,
+                        num_tests = ?,
+                        num_passes = ?,
+                        num_failures = ?,
+                        num_errors = ?,
+                        num_skips = ?,
+                        num_xfails = ?,
+                        num_xpasses = ?,
+                        num_warnings = ?,
+                        num_reruns = ?,
+                        num_rerun_groups = ?,
+                        num_deselected = ?
+                    WHERE id = ?
+                    """,
                     (
-                        datetime.now(timezone.utc) - config._oof_session_start_time
-                    ).total_seconds(),
-                    config._oof_stats.num_tests,
-                    config._oof_stats.num_passes,
-                    config._oof_stats.num_failures,
-                    config._oof_stats.num_errors,
-                    config._oof_stats.num_skips,
-                    config._oof_stats.num_xfails,
-                    config._oof_stats.num_xpasses,
-                    config._oof_stats.num_warnings,
-                    config._oof_db_session_id,
-                ),
-            )
-            conn.commit()
+                        datetime.now(timezone.utc),
+                        (
+                            datetime.now(timezone.utc) - config._oof_session_start_time
+                        ).total_seconds(),
+                        config._oof_session_stats.num_tests,
+                        config._oof_session_stats.num_passes,
+                        config._oof_session_stats.num_failures,
+                        config._oof_session_stats.num_errors,
+                        config._oof_session_stats.num_skips,
+                        config._oof_session_stats.num_xfails,
+                        config._oof_session_stats.num_xpasses,
+                        config._oof_session_stats.num_warnings,
+                        config._oof_session_stats.num_reruns,
+                        config._oof_session_stats.num_rerun_groups,
+                        config._oof_session_stats.num_deselected,
+                        config._oof_db_session_id,
+                    ),
+                )
+                conn.commit()
 
     # Clean up temporary files
     if hasattr(config, "_oof_terminal_out"):

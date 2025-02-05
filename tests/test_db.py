@@ -14,6 +14,7 @@ from pytest_oof.db import (
     add_test_result,
     export_results,
     init_db,
+    update_session_stats,
 )
 
 
@@ -246,13 +247,109 @@ def test_metrics_and_console_output(db_path, mock_datetime):
     # Query and verify
     results = export_results(db_path, session_id=session_id)
     assert len(results) == 1
-    session = results[0]
+    result = results[0]
 
     # Verify metrics
-    metrics = {m["type"]: m["value"] for m in session["metrics"]}
+    metrics = {m["type"]: m["value"] for m in result["metrics"]}
     assert metrics["collected"] == 10
     assert metrics["passed"] == 8
     assert metrics["failed"] == 2
+
+
+def test_xfail_xpass_outcomes(db_path, mock_datetime):
+    """Test storing and retrieving xfail/xpass test outcomes."""
+    # Create session
+    session_id = add_session(db_path, mock_datetime)
+
+    # Add test results with different outcomes
+    test_results = [
+        ("test_expected_failure", "xfail", "This test is expected to fail"),
+        ("test_unexpected_pass", "xpass", None),
+        ("test_normal_pass", "passed", None),
+        ("test_normal_fail", "failed", "Normal failure"),
+    ]
+
+    for test_id, outcome, error_message in test_results:
+        add_test_result(
+            db_path,
+            session_id=session_id,
+            test_id=test_id,
+            outcome=outcome,
+            timestamp=mock_datetime,
+            duration=0.1,
+            error_message=error_message,
+        )
+
+    # Update session stats
+    update_session_stats(db_path, session_id)
+
+    # Query and verify individual test results
+    results = export_results(db_path, session_id=session_id)
+    assert len(results) == 1
+    session_results = results[0]["test_results"]
+    assert len(session_results) == 4
+
+    # Verify each test outcome
+    for test_result in session_results:
+        test_id = test_result["test_id"]
+        expected_outcome = next(o for t, o, _ in test_results if t == test_id)
+        assert test_result["outcome"] == expected_outcome
+
+    # Verify session stats
+    session = results[0]["session"]
+    assert session["num_tests"] == 4
+    assert session["num_passes"] == 1
+    assert session["num_failures"] == 1
+    assert session["num_xfails"] == 1
+    assert session["num_xpasses"] == 1
+    assert session["num_skips"] == 0
+    assert session["num_errors"] == 0
+
+
+def test_session_stats_update(db_path, mock_datetime):
+    """Test that session stats are updated correctly."""
+    # Create session
+    session_id = add_session(db_path, mock_datetime)
+
+    # Add test results one by one and verify stats
+    test_results = [
+        ("test_1", "passed", None),
+        ("test_2", "failed", "Error message"),
+        ("test_3", "skipped", None),
+        ("test_4", "error", "Error occurred"),
+        ("test_5", "xfail", "Expected failure"),
+        ("test_6", "xpass", None),
+    ]
+
+    for i, (test_id, outcome, error_message) in enumerate(test_results, 1):
+        # Add test result
+        add_test_result(
+            db_path,
+            session_id=session_id,
+            test_id=test_id,
+            outcome=outcome,
+            timestamp=mock_datetime,
+            duration=0.1,
+            error_message=error_message,
+        )
+
+        # Update and verify session stats
+        update_session_stats(db_path, session_id)
+        results = export_results(db_path, session_id=session_id)
+        assert len(results) == 1
+        session = results[0]["session"]
+
+        # Verify total test count
+        assert session["num_tests"] == i
+
+        # Count outcomes up to this point
+        outcomes = [r[1] for r in test_results[:i]]
+        assert session["num_passes"] == outcomes.count("passed")
+        assert session["num_failures"] == outcomes.count("failed")
+        assert session["num_skips"] == outcomes.count("skipped")
+        assert session["num_errors"] == outcomes.count("error")
+        assert session["num_xfails"] == outcomes.count("xfail")
+        assert session["num_xpasses"] == outcomes.count("xpass")
 
 
 def test_edge_cases(db_path, mock_datetime):
@@ -289,3 +386,196 @@ def test_edge_cases(db_path, mock_datetime):
             "failed",  # Different outcome but same session, test_id, timestamp
             mock_datetime,
         )
+
+
+def test_console_output(db_path, mock_datetime):
+    """Test storing and retrieving console output."""
+    # Create session
+    session_id = add_session(db_path, mock_datetime)
+
+    # Add console lines with different types
+    console_lines = [
+        (1, "Starting test run...", "stdout", None),
+        (2, "DEBUG: Test setup", "log", json.dumps({"level": "DEBUG"})),
+        (3, "Error: something went wrong", "stderr", None),
+        (4, "Test completed", "stdout", None),
+    ]
+
+    for line_num, content, line_type, parsed_data in console_lines:
+        add_console_line(
+            db_path,
+            session_id=session_id,
+            timestamp=mock_datetime,
+            line_number=line_num,
+            content=content,
+            line_type=line_type,
+            parsed_data=parsed_data,
+        )
+
+    # Query and verify
+    results = export_results(db_path, session_id=session_id)
+    assert len(results) == 1
+
+    # Add a test result referencing a console line
+    add_test_result(
+        db_path,
+        session_id=session_id,
+        test_id="test_with_output",
+        outcome="failed",
+        timestamp=mock_datetime,
+        error_message="Test failed",
+        source_line_id=3,  # Reference the error line
+    )
+
+    # Verify the test result references the correct console line
+    results = export_results(db_path, session_id=session_id)
+    assert len(results) == 1
+    test_results = results[0]["test_results"]
+    assert len(test_results) == 1
+    assert test_results[0]["test_id"] == "test_with_output"
+
+
+def test_report_metrics(db_path, mock_datetime):
+    """Test storing and retrieving report-based metrics."""
+    # Create session
+    session_id = add_session(db_path, mock_datetime)
+
+    # Add various types of metrics
+    metrics = [
+        ("total_tests", 10),
+        ("passed", 7),
+        ("failed", 2),
+        ("skipped", 1),
+    ]
+
+    for metric_type, value in metrics:
+        add_report_metric(
+            db_path,
+            session_id=session_id,
+            metric_type=metric_type,
+            metric_value=value,
+            timestamp=mock_datetime,
+        )
+
+    # Query and verify
+    results = export_results(db_path, session_id=session_id)
+    assert len(results) == 1
+    session_metrics = results[0]["metrics"]
+    assert len(session_metrics) == len(metrics)
+
+    # Verify each metric
+    for metric in session_metrics:
+        metric_type = metric["type"]
+        expected_value = next(v for t, v in metrics if t == metric_type)
+        assert metric["value"] == expected_value
+
+    # Add a console line first
+    add_console_line(
+        db_path,
+        session_id=session_id,
+        timestamp=mock_datetime,
+        line_number=1,
+        content="Error: Test failed",
+        line_type="stderr",
+    )
+
+    # Now add a metric with source line reference
+    add_report_metric(
+        db_path,
+        session_id=session_id,
+        metric_type="error_count",
+        metric_value=1,
+        timestamp=mock_datetime,
+        source_line_id=1,
+    )
+
+    # Verify the new metric
+    results = export_results(db_path, session_id=session_id)
+    assert len(results) == 1
+    session_metrics = results[0]["metrics"]
+    assert len(session_metrics) == len(metrics) + 1
+    error_metric = next(m for m in session_metrics if m["type"] == "error_count")
+    assert error_metric["value"] == 1
+
+
+def test_database_constraints(db_path, mock_datetime):
+    """Test database constraints and error handling."""
+    # Test foreign key constraint
+    with pytest.raises(sqlite3.IntegrityError):
+        add_test_result(
+            db_path,
+            session_id=999,  # Non-existent session
+            test_id="test_1",
+            outcome="passed",
+            timestamp=mock_datetime,
+        )
+
+    # Test unique constraint
+    session_id = add_session(db_path, mock_datetime)
+    add_test_result(
+        db_path,
+        session_id=session_id,
+        test_id="test_1",
+        outcome="passed",
+        timestamp=mock_datetime,
+    )
+
+    # Attempt to add duplicate test result
+    with pytest.raises(sqlite3.IntegrityError):
+        add_test_result(
+            db_path,
+            session_id=session_id,
+            test_id="test_1",
+            outcome="failed",
+            timestamp=mock_datetime,
+        )
+
+    # Add test result with invalid outcome
+    # Note: The database doesn't enforce outcome values through constraints
+    add_test_result(
+        db_path,
+        session_id=session_id,
+        test_id="test_2",
+        outcome="invalid_outcome",  # This is allowed by the database
+        timestamp=mock_datetime,
+    )
+
+    # Verify the test result was added
+    results = export_results(db_path, session_id=session_id)
+    assert len(results) == 1
+    test_results = results[0]["test_results"]
+    invalid_result = next(r for r in test_results if r["test_id"] == "test_2")
+    assert invalid_result["outcome"] == "invalid_outcome"
+
+
+def test_concurrent_access(db_path, mock_datetime):
+    """Test concurrent access to the database."""
+    # Create initial session
+    session_id = add_session(db_path, mock_datetime)
+
+    # Add test results and update stats in a transaction-like manner
+    test_results = [
+        ("test_1", "passed"),
+        ("test_2", "failed"),
+    ]
+
+    # Simulate concurrent access by interleaving operations
+    for test_id, outcome in test_results:
+        # First connection adds test result
+        add_test_result(
+            db_path,
+            session_id=session_id,
+            test_id=test_id,
+            outcome=outcome,
+            timestamp=mock_datetime,
+        )
+
+        # Second connection updates stats
+        update_session_stats(db_path, session_id)
+
+        # Third connection reads results
+        results = export_results(db_path, session_id=session_id)
+        assert len(results) == 1
+        session = results[0]["session"]
+        test_count = len([r for r in test_results if r[0] <= test_id])
+        assert session["num_tests"] == test_count

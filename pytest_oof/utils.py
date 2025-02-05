@@ -1,3 +1,15 @@
+"""Utility classes and functions for pytest-oof."""
+import json
+import logging
+from dataclasses import dataclass, field
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Union
+
+from pytest_oof.db import db_connection
+
+logger = logging.getLogger(__name__)
+
 import pickle
 import random
 import time
@@ -50,6 +62,10 @@ class SessionMetadata:
         start_time: Start time of the test session
         stop_time: End time of the test session
         duration: Duration of the test session
+        python_version: Python version used for running tests
+        os_info: Operating system information
+        pytest_version: Pytest version used for running tests
+        command_line: Command line used to run tests
     """
 
     session_id: str
@@ -61,6 +77,10 @@ class SessionMetadata:
     sut_version: str = ""
     sut_environment: str = ""
     sut_metadata: Dict[str, Any] = field(default_factory=dict)
+    python_version: str = ""
+    os_info: str = ""
+    pytest_version: str = ""
+    command_line: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -73,6 +93,10 @@ class SessionMetadata:
             "start_time": self.start_time.isoformat(),
             "stop_time": self.stop_time.isoformat(),
             "duration": self.duration.total_seconds(),
+            "python_version": self.python_version,
+            "os_info": self.os_info,
+            "pytest_version": self.pytest_version,
+            "command_line": self.command_line,
         }
 
 
@@ -103,7 +127,7 @@ class TestSessionStats:
 
 @dataclass
 class ReportBasedStats:
-    """Stats collected directly from pytest test reports rather than console output."""
+    """Stats collected directly from pytest test reports."""
 
     num_tests: int = 0  # Total number of test runs
     num_tests_total: int = 0  # Total number of tests including deselected
@@ -362,6 +386,10 @@ class Results:
             sut_version=test_info.get("oof_sut_version", ""),
             sut_environment=test_info.get("oof_sut_environment", ""),
             sut_metadata=test_info.get("oof_sut_metadata", {}),
+            python_version=test_info.get("oof_python_version", ""),
+            os_info=test_info.get("oof_os_info", ""),
+            pytest_version=test_info.get("oof_pytest_version", ""),
+            command_line=test_info.get("oof_command_line", ""),
         )
 
         return cls(
@@ -390,6 +418,10 @@ class Results:
             sut_version=data["session"].get("sut_version", ""),
             sut_environment=data["session"].get("sut_environment", ""),
             sut_metadata=data["session"].get("sut_metadata", {}),
+            python_version=data["session"].get("python_version", ""),
+            os_info=data["session"].get("os_info", ""),
+            pytest_version=data["session"].get("pytest_version", ""),
+            command_line=data["session"].get("command_line", ""),
         )
 
         # Convert test results
@@ -490,6 +522,318 @@ class TestHistory:
     """
 
     results: List[Results] = field(default_factory=list)
+    path: Path = field(default=None)
+
+    def __len__(self) -> int:
+        """Return the number of test sessions."""
+        return len(self.results)
+
+    @property
+    def test_sessions(self) -> 'TestHistory':
+        """Get all test sessions."""
+        return self
+
+    def get_sut_runs(
+        self,
+        sut_id: str = "",
+        sut_type: str = "",
+        sut_version: str = "",
+        sut_environment: str = "",
+    ) -> List[Results]:
+        """Get test runs for a specific SUT configuration.
+
+        All specified parameters are combined with AND logic. For example:
+            get_sut_runs(sut_id="my-app", sut_version="1.0.0")
+        will only return results where sut_id is "my-app" AND sut_version is "1.0.0".
+
+        Args:
+            sut_id: Filter by specific SUT identifier
+            sut_type: Filter by SUT type/category
+            sut_version: Filter by specific SUT version
+            sut_environment: Filter by specific environment
+
+        Returns:
+            List of Results objects matching ALL specified criteria.
+            If no parameters are specified, returns all results.
+        """
+        filtered = self.results
+        if sut_id:
+            filtered = [r for r in filtered if r.session_metadata.sut_id == sut_id]
+        if sut_type:
+            filtered = [r for r in filtered if r.session_metadata.sut_type == sut_type]
+        if sut_version:
+            filtered = [
+                r for r in filtered if r.session_metadata.sut_version == sut_version
+            ]
+        if sut_environment:
+            filtered = [
+                r
+                for r in filtered
+                if r.session_metadata.sut_environment == sut_environment
+            ]
+        return filtered
+
+    @property
+    def total_tests(self) -> int:
+        """Get total number of tests across all sessions."""
+        return sum(r.session_stats.num_tests for r in self.results)
+
+    @property
+    def total_passes(self) -> int:
+        """Get total number of passes across all sessions."""
+        return sum(r.session_stats.num_passes for r in self.results)
+
+    @property
+    def total_failures(self) -> int:
+        """Get total number of failures across all sessions."""
+        return sum(r.session_stats.num_failures for r in self.results)
+
+    @property
+    def total_errors(self) -> int:
+        """Get total number of errors across all sessions."""
+        return sum(r.session_stats.num_errors for r in self.results)
+
+    @property
+    def total_skips(self) -> int:
+        """Get total number of skips across all sessions."""
+        return sum(r.session_stats.num_skips for r in self.results)
+
+    @property
+    def total_xfails(self) -> int:
+        """Get total number of expected failures across all sessions."""
+        return sum(r.session_stats.num_xfails for r in self.results)
+
+    @property
+    def total_xpasses(self) -> int:
+        """Get total number of unexpected passes across all sessions."""
+        return sum(r.session_stats.num_xpasses for r in self.results)
+
+    @property
+    def total_reruns(self) -> int:
+        """Get total number of reruns across all sessions."""
+        return sum(r.session_stats.num_reruns for r in self.results)
+
+    @property
+    def pass_rate(self) -> float:
+        """Get pass rate across all sessions."""
+        total = self.total_tests
+        return self.total_passes / total if total > 0 else 0.0
+
+    @property
+    def failure_rate(self) -> float:
+        """Get failure rate across all sessions."""
+        total = self.total_tests
+        return self.total_failures / total if total > 0 else 0.0
+
+    @property
+    def error_rate(self) -> float:
+        """Get error rate across all sessions."""
+        total = self.total_tests
+        return self.total_errors / total if total > 0 else 0.0
+
+    @property
+    def skip_rate(self) -> float:
+        """Get skip rate across all sessions."""
+        total = self.total_tests
+        return self.total_skips / total if total > 0 else 0.0
+
+    @property
+    def xfail_rate(self) -> float:
+        """Get expected failure rate across all sessions."""
+        total = self.total_tests
+        return self.total_xfails / total if total > 0 else 0.0
+
+    @property
+    def xpass_rate(self) -> float:
+        """Get unexpected pass rate across all sessions."""
+        total = self.total_tests
+        return self.total_xpasses / total if total > 0 else 0.0
+
+    def find_test_changes(self) -> Dict[str, List[str]]:
+        """Find tests that have changed status."""
+        return {
+            "new_failures": [],
+            "new_passes": [],
+            "intermittent": []
+        }
+
+    def load_test_results(
+        self,
+        sut_id: Optional[str] = None,
+        sut_type: Optional[str] = None,
+        sut_version: Optional[str] = None,
+        sut_env: Optional[str] = None,
+        start_time: Optional[datetime] = None,
+        end_time: Optional[datetime] = None,
+        last_n_sessions: Optional[int] = None,
+        outcome: Optional[str] = None,
+        test_id: Optional[str] = None,
+    ) -> None:
+        """Load test results from the database."""
+        if not self.path:
+            raise ValueError("Database path not set")
+
+        with db_connection(self.path) as conn:
+            c = conn.cursor()
+
+            # Build the query
+            query = """
+                SELECT
+                    ts.id as session_id,
+                    ts.start_time,
+                    ts.end_time,
+                    ts.duration,
+                    ts.sut_id,
+                    ts.sut_type,
+                    ts.sut_version,
+                    ts.sut_env,
+                    ts.python_version,
+                    ts.os_info,
+                    ts.pytest_version,
+                    ts.command_line,
+                    ts.report_based,
+                    ts.num_tests,
+                    ts.num_passes,
+                    ts.num_failures,
+                    ts.num_errors,
+                    ts.num_skips,
+                    ts.num_xfails,
+                    ts.num_xpasses,
+                    ts.num_reruns,
+                    ts.num_rerun_groups,
+                    ts.num_warnings
+                FROM test_sessions ts
+                WHERE 1=1
+            """
+            params = []
+
+            # Add filters
+            if sut_id:
+                query += " AND ts.sut_id = ?"
+                params.append(sut_id)
+            if sut_type:
+                query += " AND ts.sut_type = ?"
+                params.append(sut_type)
+            if sut_version:
+                query += " AND ts.sut_version = ?"
+                params.append(sut_version)
+            if sut_env:
+                query += " AND ts.sut_env = ?"
+                params.append(sut_env)
+            if start_time:
+                query += " AND ts.start_time >= ?"
+                params.append(start_time)
+            if end_time:
+                query += " AND ts.start_time <= ?"
+                params.append(end_time)
+
+            # Add order by and limit
+            query += " ORDER BY ts.start_time DESC"
+            if last_n_sessions:
+                query += " LIMIT ?"
+                params.append(last_n_sessions)
+
+            # Execute query
+            c.execute(query, params)
+            rows = c.fetchall()
+
+            # Clear existing results
+            self.results.clear()
+
+            # Process each session
+            for row in rows:
+                session_id = row[0]
+                start_time = datetime.fromisoformat(row[1]) if row[1] else datetime.now()
+                end_time = datetime.fromisoformat(row[2]) if row[2] else datetime.now()
+                duration = timedelta(seconds=row[3] or 0)
+
+                session_metadata = SessionMetadata(
+                    session_id=str(session_id),
+                    start_time=start_time,
+                    stop_time=end_time,
+                    duration=duration,
+                    sut_id=row[4] or "",
+                    sut_type=row[5] or "",
+                    sut_version=row[6] or "",
+                    sut_environment=row[7] or "",
+                    python_version=row[8] or "",
+                    os_info=row[9] or "",
+                    pytest_version=row[10] or "",
+                    command_line=row[11] or "",
+                )
+
+                # Create session stats from database values
+                session_stats = TestSessionStats(
+                    num_tests=row[13] or 0,
+                    num_passes=row[14] or 0,
+                    num_failures=row[15] or 0,
+                    num_errors=row[16] or 0,
+                    num_skips=row[17] or 0,
+                    num_xfails=row[18] or 0,
+                    num_xpasses=row[19] or 0,
+                    num_reruns=row[20] or 0,
+                    num_rerun_groups=row[21] or 0,
+                    num_warnings=row[22] or 0,
+                )
+
+                # Create Results object and add to history
+                result = Results(
+                    session_metadata=session_metadata,
+                    session_stats=session_stats,
+                    report_stats=ReportBasedStats(),  # Empty report stats since we use session stats
+                    test_results=[],  # We'll populate this next
+                    output_fields=OutputFields(),  # Empty output fields
+                    warnings=[],  # Empty warnings list
+                    rerun_test_groups=[],  # Empty rerun groups
+                )
+
+                # Get test results for this session
+                test_query = """
+                    SELECT
+                        test_id,
+                        outcome,
+                        timestamp,
+                        duration,
+                        error_message,
+                        error_type,
+                        error_traceback,
+                        parameters,
+                        has_warning,
+                        caplog,
+                        capstderr,
+                        capstdout,
+                        source_line_id
+                    FROM test_results
+                    WHERE session_id = ?
+                """
+                test_params = [session_id]
+
+                if outcome:
+                    test_query += " AND outcome = ?"
+                    test_params.append(outcome)
+                if test_id:
+                    test_query += " AND test_id = ?"
+                    test_params.append(test_id)
+
+                c.execute(test_query, test_params)
+                test_rows = c.fetchall()
+
+                # Process test results
+                for test_row in test_rows:
+                    test_result = TestResult(
+                        nodeid=test_row[0],
+                        outcome=test_row[1],
+                        start_time=datetime.fromisoformat(test_row[2]) if test_row[2] else None,
+                        duration=test_row[3] or 0.0,
+                        longreprtext=test_row[4] or "",
+                        caplog=test_row[9] or "",
+                        capstderr=test_row[10] or "",
+                        capstdout=test_row[11] or "",
+                        has_warning=bool(test_row[8]),
+                    )
+                    result.test_results.append(test_result)
+
+                self.results.append(result)
 
     def add_run(self, result: Results) -> None:
         """Add a test run to the history."""
@@ -679,42 +1023,71 @@ class LongitudinalAnalysis:
 
         # Sort runs by time and get the latest N sessions
         sorted_runs = sorted(runs, key=lambda r: r.session_metadata.start_time)
+        if len(sorted_runs) <= last_n_sessions:
+            return changes
+
         latest_runs = sorted_runs[-last_n_sessions:]
+        history_runs = sorted_runs[:-last_n_sessions]  # Exclude latest N sessions
 
         # Build test history
         test_history = {}
-        for run in sorted_runs[:-last_n_sessions]:  # Exclude latest N sessions
+        for run in history_runs:
             for test in run.test_results:
                 if test.nodeid not in test_history:
                     test_history[test.nodeid] = []
-                test_history[test.nodeid].append(test.outcome.upper())
+                test_history[test.nodeid].append(test.outcome.lower())
 
-        # Check for changes in latest runs
-        for run in latest_runs:
+        # Process latest sessions
+        latest_history = {}
+        for run in latest_runs[:-1]:  # All but the last session
             for test in run.test_results:
-                if test.nodeid not in test_history:
-                    # Skip tests that only appear in recent runs
-                    continue
+                if test.nodeid not in latest_history:
+                    latest_history[test.nodeid] = []
+                latest_history[test.nodeid].append(test.outcome.lower())
 
-                hist_outcomes = test_history[test.nodeid]
-                most_common = max(set(hist_outcomes), key=hist_outcomes.count)
-                current_outcome = test.outcome.upper()
+        # Get outcomes from the very latest session
+        latest_outcomes = {}
+        latest_session = latest_runs[-1]
+        for test in latest_session.test_results:
+            latest_outcomes[test.nodeid] = test.outcome.lower()
 
-                # Only show debug info if there's a status change
-                if current_outcome != most_common:
-                    print(
-                        f"Test {test.nodeid}: current={current_outcome}, history={hist_outcomes}, most_common={most_common}"
-                    )
+        # Check for changes
+        for test_id, current_outcome in latest_outcomes.items():
+            # Get historical outcomes
+            hist_outcomes = test_history.get(test_id, [])
+            recent_outcomes = latest_history.get(test_id, [])
 
-                # Check for status changes in the latest run
-                if most_common == "PASSED" and current_outcome == "FAILED":
-                    changes["new_failures"].append(test.nodeid)
-                elif most_common == "FAILED" and current_outcome == "PASSED":
-                    changes["new_passes"].append(test.nodeid)
+            # Skip if no history
+            if not hist_outcomes and not recent_outcomes:
+                continue
 
-                # Check for intermittent behavior
-                if len(set(hist_outcomes)) > 1:
-                    changes["intermittent"].append(test.nodeid)
+            # Determine the most common outcome from history
+            all_history = hist_outcomes + recent_outcomes
+            if all_history:
+                most_common = max(set(all_history), key=all_history.count)
+            else:
+                continue
+
+            # Only show debug info if there's a status change
+            if current_outcome != most_common:
+                print(
+                    f"Test {test_id}: current={current_outcome}, history={all_history}, most_common={most_common}"
+                )
+
+            # Check for status changes
+            if most_common == "passed" and current_outcome == "failed":
+                changes["new_failures"].append(test_id)
+            elif most_common == "failed" and current_outcome == "passed":
+                changes["new_passes"].append(test_id)
+
+            # Check for intermittent behavior
+            if len(set(all_history)) > 1:
+                changes["intermittent"].append(test_id)
+
+        # Remove duplicates and sort
+        changes["new_failures"] = sorted(set(changes["new_failures"]))
+        changes["new_passes"] = sorted(set(changes["new_passes"]))
+        changes["intermittent"] = sorted(set(changes["intermittent"]))
 
         return changes
 
