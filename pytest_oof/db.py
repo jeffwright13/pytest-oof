@@ -75,6 +75,7 @@ def init_db(db_path: Path) -> None:
                 error_type TEXT,
                 error_traceback TEXT,
                 has_warning BOOLEAN DEFAULT 0,
+                longreprtext TEXT,
                 FOREIGN KEY (session_id) REFERENCES test_sessions (id)
             )
             """
@@ -87,7 +88,7 @@ def init_db(db_path: Path) -> None:
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 version INTEGER NOT NULL,
                 created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-            );
+            )
             """
         )
 
@@ -97,21 +98,16 @@ def init_db(db_path: Path) -> None:
         current_version = row[0] if row else 0
 
         # Update schema version if needed
-        if current_version < 5:  # Increment version for report_based column
-            # Add report_based column if it doesn't exist
-            try:
-                c.execute("ALTER TABLE test_sessions ADD COLUMN report_based BOOLEAN DEFAULT 1")
-            except sqlite3.OperationalError:
-                # Column might already exist
-                pass
-
+        if current_version < 6:  # Increment version for longreprtext column
             c.execute(
                 """
-                INSERT INTO schema_version (version, created_at)
-                VALUES (5, CURRENT_TIMESTAMP)
-                """
+                INSERT INTO schema_version (version) VALUES (?)
+                """,
+                (6,),
             )
-            conn.commit()
+
+        # Commit all changes
+        conn.commit()
 
 
 def add_session(
@@ -174,10 +170,12 @@ def add_test_result(
     error_type: Optional[str] = None,
     error_traceback: Optional[str] = None,
     has_warning: bool = False,
+    longreprtext: Optional[str] = None,
 ) -> int:
     """Add a test result to the database and return its ID."""
     with db_connection(db_path) as conn:
         c = conn.cursor()
+
         c.execute(
             """
             INSERT INTO test_results (
@@ -189,8 +187,10 @@ def add_test_result(
                 error_message,
                 error_type,
                 error_traceback,
-                has_warning
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                has_warning,
+                longreprtext
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 session_id,
@@ -202,11 +202,14 @@ def add_test_result(
                 error_type,
                 error_traceback,
                 has_warning,
+                longreprtext,
             ),
         )
-        test_result_id = c.lastrowid
+
+        result_id = c.lastrowid
         conn.commit()
-        return test_result_id
+
+        return result_id
 
 
 def get_test_results(
@@ -340,7 +343,8 @@ def export_results(
                     error_message,
                     error_type,
                     error_traceback,
-                    has_warning
+                    has_warning,
+                    longreprtext
                 FROM test_results
                 WHERE session_id = ?
             """
@@ -360,30 +364,32 @@ def export_results(
             # Convert to dictionary
             session_dict = {
                 "session": {
-                    "session_id": session[0],
-                    "start_time": session[1],
-                    "end_time": session[2],
-                    "duration": session[3],
-                    "sut_id": session[4],
-                    "sut_type": session[5],
-                    "sut_version": session[6],
-                    "sut_env": session[7],
-                    "python_version": session[8],
-                    "os_info": session[9],
-                    "pytest_version": session[10],
-                    "command_line": session[11],
-                    "report_based": session[12],
-                    "num_tests": session[13],
-                    "num_passes": session[14],
-                    "num_failures": session[15],
-                    "num_errors": session[16],
-                    "num_skips": session[17],
-                    "num_xfails": session[18],
-                    "num_xpasses": session[19],
-                    "num_reruns": session[20],
-                    "num_rerun_groups": session[21],
-                    "num_warnings": session[22],
-                    "num_deselected": session[23],
+                    "id": session[0],  # database id
+                    "session_id": session[1],  # uuid
+                    "start_time": session[2],
+                    "end_time": session[3],
+                    "duration": session[4],
+                    "sut_id": session[5],
+                    "sut_type": session[6],
+                    "sut_version": session[7],
+                    "sut_env": session[8],
+                    "sut_metadata": json.loads(session[9]) if session[9] else None,
+                    "python_version": session[10],
+                    "os_info": session[11],
+                    "pytest_version": session[12],
+                    "command_line": session[13],
+                    "report_based": bool(session[14]),
+                    "num_tests": session[15],
+                    "num_passes": session[16],
+                    "num_failures": session[17],
+                    "num_errors": session[18],
+                    "num_skips": session[19],
+                    "num_xfails": session[20],
+                    "num_xpasses": session[21],
+                    "num_reruns": session[22],
+                    "num_rerun_groups": session[23],
+                    "num_warnings": session[24],
+                    "num_deselected": session[25],
                 },
                 "test_results": [
                     {
@@ -395,6 +401,7 @@ def export_results(
                         "error_type": tr[5],
                         "error_traceback": tr[6],
                         "has_warning": tr[7],
+                        "longreprtext": tr[8],
                         "session_id": session[0],
                     }
                     for tr in test_results
@@ -493,7 +500,7 @@ def update_session_stats(db_path: Path, session_id: int) -> None:
         # Get all test results for this session
         c.execute(
             """
-            SELECT outcome
+            SELECT outcome, has_warning
             FROM test_results
             WHERE session_id = ?
             """,
@@ -503,12 +510,28 @@ def update_session_stats(db_path: Path, session_id: int) -> None:
 
         # Calculate stats
         num_tests = len(test_results)
-        num_passes = sum(1 for (outcome,) in test_results if outcome == "PASSED")
-        num_failures = sum(1 for (outcome,) in test_results if outcome == "FAILED")
-        num_skips = sum(1 for (outcome,) in test_results if outcome == "SKIPPED")
-        num_errors = sum(1 for (outcome,) in test_results if outcome == "ERROR")
-        num_xfails = sum(1 for (outcome,) in test_results if outcome == "XFAIL")
-        num_xpasses = sum(1 for (outcome,) in test_results if outcome == "XPASS")
+        num_passes = sum(1 for (outcome, _) in test_results if outcome == "PASSED")
+        num_failures = sum(1 for (outcome, _) in test_results if outcome == "FAILED")
+        num_skips = sum(1 for (outcome, _) in test_results if outcome == "SKIPPED")
+        num_errors = sum(1 for (outcome, _) in test_results if outcome == "ERROR")
+        num_xfails = sum(1 for (outcome, _) in test_results if outcome == "XFAIL")
+        num_xpasses = sum(1 for (outcome, _) in test_results if outcome == "XPASS")
+        num_reruns = sum(1 for (outcome, _) in test_results if outcome == "RERUN")
+        num_warnings = sum(1 for (_, has_warning) in test_results if has_warning)
+
+        # Get unique test IDs to calculate rerun groups
+        c.execute(
+            """
+            SELECT test_id, COUNT(*) as run_count
+            FROM test_results
+            WHERE session_id = ?
+            GROUP BY test_id
+            HAVING run_count > 1
+            """,
+            (session_id,),
+        )
+        rerun_groups = c.fetchall()
+        num_rerun_groups = len(rerun_groups)
 
         # Update session stats
         c.execute(
@@ -520,7 +543,10 @@ def update_session_stats(db_path: Path, session_id: int) -> None:
                 num_errors = ?,
                 num_skips = ?,
                 num_xfails = ?,
-                num_xpasses = ?
+                num_xpasses = ?,
+                num_reruns = ?,
+                num_rerun_groups = ?,
+                num_warnings = ?
             WHERE id = ?
             """,
             (
@@ -531,7 +557,24 @@ def update_session_stats(db_path: Path, session_id: int) -> None:
                 num_skips,
                 num_xfails,
                 num_xpasses,
+                num_reruns,
+                num_rerun_groups,
+                num_warnings,
                 session_id,
             ),
         )
         conn.commit()
+
+
+def get_db_id_from_session_id(db_path: Path, session_id: str) -> Optional[int]:
+    """Get the database ID for a session given its session_id."""
+    with db_connection(db_path) as conn:
+        c = conn.cursor()
+        c.execute(
+            """
+            SELECT id FROM test_sessions WHERE session_id = ?
+            """,
+            (session_id,),
+        )
+        row = c.fetchone()
+        return row[0] if row else None

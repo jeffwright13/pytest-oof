@@ -1,15 +1,13 @@
 """Tests for database functionality."""
 import json
-import sqlite3
 import os
+import sqlite3
 from datetime import datetime, timedelta, timezone
 
 import pytest
 from pytest_mock import MockerFixture
 
 from pytest_oof.db import (
-    add_console_line,
-    add_report_metric,
     add_session,
     add_test_result,
     export_results,
@@ -41,6 +39,7 @@ def test_add_session(db_path, mock_datetime):
     session_id = add_session(
         db_path,
         start_time=mock_datetime,
+        session_id="test-session-1",
         sut_id="test-sut",
         sut_type="unit-test",
         sut_version="1.0.0",
@@ -61,7 +60,11 @@ def test_add_session(db_path, mock_datetime):
 def test_add_test_results(db_path, mock_datetime):
     """Test adding test results."""
     # Create session
-    session_id = add_session(db_path, mock_datetime)
+    session_id = add_session(
+        db_path,
+        start_time=mock_datetime,
+        session_id="test-session-2",
+    )
 
     # Add some test results
     add_test_result(

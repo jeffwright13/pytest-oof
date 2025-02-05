@@ -10,9 +10,9 @@ from pytest_oof.db import db_connection
 
 logger = logging.getLogger(__name__)
 
-import uuid
 import random
 import time
+import uuid
 
 from pytest_oof import _project_root
 
@@ -163,6 +163,7 @@ class TestResult:
     'error_type': type of error if test failed
     'error_traceback': error traceback if test failed
     'has_warning': whether the test resulted in a warning
+    'longreprtext': full representation of test failure or error
     """
 
     sut_id: str = ""
@@ -175,6 +176,7 @@ class TestResult:
     error_type: str = ""
     error_traceback: str = ""
     has_warning: bool = False
+    longreprtext: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -188,6 +190,7 @@ class TestResult:
             "error_type": self.error_type,
             "error_traceback": self.error_traceback,
             "has_warning": self.has_warning,
+            "longreprtext": self.longreprtext,
         }
 
 
@@ -200,131 +203,83 @@ class TestResults:
 
     session_stats: TestSessionStats = None
     test_results: List[TestResult] = field(default_factory=list)
+    warnings: List[str] = field(default_factory=list)
+    rerun_test_groups: List[str] = field(default_factory=list)
 
-    def all_tests(self) -> List[TestResult]:
-        return self.test_results
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "session_stats": self.session_stats.to_dict()
+            if self.session_stats
+            else None,
+            "test_results": [r.to_dict() for r in self.test_results],
+            "warnings": self.warnings,
+            "rerun_test_groups": self.rerun_test_groups,
+        }
 
-    def all_failures(self) -> List[TestResult]:
-        return [tr for tr in self.test_results if tr.outcome == "FAILED"]
-
-    def all_passes(self) -> List[TestResult]:
-        return [tr for tr in self.test_results if tr.outcome == "PASSED"]
-
-    def all_skips(self) -> List[TestResult]:
-        return [tr for tr in self.test_results if tr.outcome == "SKIPPED"]
-
-    def all_xfails(self) -> List[TestResult]:
-        return [tr for tr in self.test_results if tr.outcome == "XFAIL"]
-
-    def all_xpasses(self) -> List[TestResult]:
-        return [tr for tr in self.test_results if tr.outcome == "XPASS"]
-
-    def all_errors(self) -> List[TestResult]:
-        return [tr for tr in self.test_results if tr.outcome == "ERROR"]
-
-    def all_reruns(self) -> List[TestResult]:
-        return [tr for tr in self.test_results if tr.outcome == "RERUN"]
-
-    def all_warnings(self) -> List[TestResult]:
-        return [tr for tr in self.test_results if tr.has_warning]
-
-    def all_warnings_unique(self) -> List[TestResult]:
-        return list(set(self.all_warnings()))
-
-    def as_list(self) -> List[Dict[str, Any]]:
-        return [tr.to_dict() for tr in self.test_results]
-
-    def to_list(self) -> List[Dict[str, Any]]:
-        return self.as_list()
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "TestResults":
+        session_stats = (
+            TestSessionStats(**data["session_stats"])
+            if data.get("session_stats")
+            else None
+        )
+        test_results = [TestResult(**r) for r in data["test_results"]]
+        warnings = data.get("warnings", [])
+        rerun_test_groups = data.get("rerun_test_groups", [])
+        return cls(
+            session_stats=session_stats,
+            test_results=test_results,
+            warnings=warnings,
+            rerun_test_groups=rerun_test_groups,
+        )
 
 
 @dataclass
 class Results:
-    """
-    'Results': a collection of all data collected during a test run, made nicely
+    """'Results': a collection of all data collected during a test run, made nicely
     consumable by pytest-oof.
 
     'session_metadata': metadata about the test session including timing and SUT info
     'session_stats': overall statistics for this test session
     'report_stats': statistics collected directly from pytest test reports
     'test_results': collection of TestResult objects for all tests in the test session
+    'warnings': list of warning messages
+    'rerun_test_groups': list of test groups that were rerun
     """
 
     session_metadata: SessionMetadata
     session_stats: TestSessionStats
     report_stats: ReportBasedStats
     test_results: List[TestResult]
-
-    @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "Results":
-        """Convert a dictionary back into a Results object."""
-        # Convert session metadata
-        session_metadata = SessionMetadata(
-            session_id=data["session"]["session_id"],
-            start_time=datetime.fromisoformat(data["session"]["start_time"]),
-            stop_time=datetime.fromisoformat(
-                data["session"].get("stop_time", data["session"]["start_time"])
-            ),
-            duration=timedelta(seconds=data["session"]["duration"]),
-            sut_id=data["session"].get("sut_id", ""),
-            sut_type=data["session"].get("sut_type", ""),
-            sut_version=data["session"].get("sut_version", ""),
-            sut_environment=data["session"].get("sut_environment", ""),
-            sut_metadata=data["session"].get("sut_metadata", {}),
-            python_version=data["session"].get("python_version", ""),
-            os_info=data["session"].get("os_info", ""),
-            pytest_version=data["session"].get("pytest_version", ""),
-            command_line=data["session"].get("command_line", ""),
-        )
-
-        # Convert test results
-        test_results = []
-        for tr in data["test_results"]:
-            test_result = TestResult(
-                nodeid=tr["test_id"],
-                outcome=tr["outcome"],
-                start_time=datetime.fromisoformat(tr["timestamp"])
-                if tr.get("timestamp")
-                else None,
-                duration=tr.get("duration", 0.0),
-                error_message=tr.get("error_message", ""),
-                error_type=tr.get("error_type", ""),
-                error_traceback=tr.get("error_traceback", ""),
-                has_warning=tr.get("has_warning", False),
-            )
-            test_results.append(test_result)
-
-        # Convert stats
-        session_stats = TestSessionStats(
-            num_tests=data["session"].get("num_tests", 0),
-            num_passes=data["session"].get("num_passes", 0),
-            num_failures=data["session"].get("num_failures", 0),
-            num_errors=data["session"].get("num_errors", 0),
-            num_skips=data["session"].get("num_skips", 0),
-            num_xfails=data["session"].get("num_xfails", 0),
-            num_xpasses=data["session"].get("num_xpasses", 0),
-            num_reruns=data["session"].get("num_reruns", 0),
-            num_rerun_groups=data["session"].get("num_rerun_groups", 0),
-            num_warnings=data["session"].get("num_warnings", 0),
-            num_warnings_unique=data["session"].get("num_warnings_unique", 0),
-            num_deselected=data["session"].get("num_deselected", 0),
-        )
-
-        return cls(
-            session_metadata=session_metadata,
-            session_stats=session_stats,
-            report_stats=ReportBasedStats(),  # Not stored in database
-            test_results=test_results,
-        )
+    warnings: List[str] = field(default_factory=list)
+    rerun_test_groups: List[str] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
-        """Convert the Results object to a dictionary."""
         return {
             "session_metadata": self.session_metadata.to_dict(),
             "session_stats": self.session_stats.to_dict(),
             "report_stats": self.report_stats.to_dict(),
-            "test_results": [tr.to_dict() for tr in self.test_results],
+            "test_results": [r.to_dict() for r in self.test_results],
+            "warnings": self.warnings,
+            "rerun_test_groups": self.rerun_test_groups,
         }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "Results":
+        session_metadata = SessionMetadata(**data["session_metadata"])
+        session_stats = TestSessionStats(**data["session_stats"])
+        report_stats = ReportBasedStats(**data["report_stats"])
+        test_results = [TestResult(**r) for r in data["test_results"]]
+        warnings = data.get("warnings", [])
+        rerun_test_groups = data.get("rerun_test_groups", [])
+        return cls(
+            session_metadata=session_metadata,
+            session_stats=session_stats,
+            report_stats=report_stats,
+            test_results=test_results,
+            warnings=warnings,
+            rerun_test_groups=rerun_test_groups,
+        )
 
 
 @dataclass
@@ -341,7 +296,7 @@ class TestHistory:
         return len(self.results)
 
     @property
-    def test_sessions(self) -> 'TestHistory':
+    def test_sessions(self) -> "TestHistory":
         """Get all test sessions."""
         return self
 
@@ -463,11 +418,7 @@ class TestHistory:
 
     def find_test_changes(self) -> Dict[str, List[str]]:
         """Find tests that have changed status."""
-        return {
-            "new_failures": [],
-            "new_passes": [],
-            "intermittent": []
-        }
+        return {"new_failures": [], "new_passes": [], "intermittent": []}
 
     def load_test_results(
         self,
@@ -554,7 +505,9 @@ class TestHistory:
             # Process each session
             for row in rows:
                 session_id = row[0]
-                start_time = datetime.fromisoformat(row[1]) if row[1] else datetime.now()
+                start_time = (
+                    datetime.fromisoformat(row[1]) if row[1] else datetime.now()
+                )
                 end_time = datetime.fromisoformat(row[2]) if row[2] else datetime.now()
                 duration = timedelta(seconds=row[3] or 0)
 
@@ -605,7 +558,8 @@ class TestHistory:
                         error_message,
                         error_type,
                         error_traceback,
-                        has_warning
+                        has_warning,
+                        longreprtext
                     FROM test_results
                     WHERE session_id = ?
                 """
@@ -626,12 +580,15 @@ class TestHistory:
                     test_result = TestResult(
                         nodeid=test_row[0],
                         outcome=test_row[1],
-                        start_time=datetime.fromisoformat(test_row[2]) if test_row[2] else None,
+                        start_time=datetime.fromisoformat(test_row[2])
+                        if test_row[2]
+                        else None,
                         duration=test_row[3] or 0.0,
                         error_message=test_row[4] or "",
                         error_type=test_row[5] or "",
                         error_traceback=test_row[6] or "",
-                        has_warning=bool(test_row[7])
+                        has_warning=bool(test_row[7]),
+                        longreprtext=test_row[8] or "",
                     )
                     result.test_results.append(test_result)
 
@@ -922,7 +879,9 @@ class LongitudinalAnalysis:
             if window_runs:
                 # Helper function to safely sum stats that might be None
                 def safe_sum(attr: str) -> int:
-                    return sum(getattr(r.session_stats, attr, 0) or 0 for r in window_runs)
+                    return sum(
+                        getattr(r.session_stats, attr, 0) or 0 for r in window_runs
+                    )
 
                 stats = {
                     "window_start": window_start,

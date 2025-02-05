@@ -8,7 +8,6 @@ from pytest_mock import MockerFixture
 
 from pytest_oof.utils import (
     LongitudinalAnalysis,
-    OutputFields,
     ReportBasedStats,
     Results,
     SessionMetadata,
@@ -63,7 +62,6 @@ def mock_results(
         session_stats=TestSessionStats(),
         report_stats=ReportBasedStats(),
         test_results=[mock_test_result],
-        output_fields=OutputFields(),
         warnings=[],
         rerun_test_groups=[],
     )
@@ -154,7 +152,6 @@ def create_test_results():
             test_results=test_results_collection.test_results,
             session_stats=test_results_collection.session_stats,
             report_stats=ReportBasedStats(),
-            output_fields=OutputFields(),
             warnings=[],
             rerun_test_groups=[],
         )
@@ -208,7 +205,6 @@ def test_get_test_status_changes(mocker: MockerFixture):
             session_stats=TestSessionStats(),
             report_stats=ReportBasedStats(),
             test_results=test_results,
-            output_fields=OutputFields(),
             warnings=[],
             rerun_test_groups=[],
         )
@@ -266,7 +262,6 @@ def test_compare_sessions(mocker: MockerFixture):
         session_stats=TestSessionStats(),
         report_stats=ReportBasedStats(),
         test_results=session1_results,
-        output_fields=OutputFields(),
         warnings=[],
         rerun_test_groups=[],
     )
@@ -304,7 +299,6 @@ def test_compare_sessions(mocker: MockerFixture):
         session_stats=TestSessionStats(),
         report_stats=ReportBasedStats(),
         test_results=session2_results,
-        output_fields=OutputFields(),
         warnings=[],
         rerun_test_groups=[],
     )
@@ -378,7 +372,6 @@ def test_get_test_trends(mocker: MockerFixture):
             session_stats=session_stats,
             report_stats=report_stats,
             test_results=test_results,
-            output_fields=OutputFields(),
             warnings=[],
             rerun_test_groups=[],
         )
@@ -479,7 +472,6 @@ def test_find_test_changes(mocker: MockerFixture):
             session_stats=session_stats,
             report_stats=report_stats,
             test_results=test_results,
-            output_fields=OutputFields(),
             warnings=[],
             rerun_test_groups=[],
         )
