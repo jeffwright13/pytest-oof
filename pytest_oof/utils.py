@@ -2,7 +2,7 @@
 import json
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
@@ -10,27 +10,11 @@ from pytest_oof.db import db_connection
 
 logger = logging.getLogger(__name__)
 
-import pickle
+import uuid
 import random
 import time
-import uuid
-from dataclasses import asdict, dataclass, field
-from datetime import datetime, timedelta
-from pathlib import Path
-from typing import Any, Dict, List, Optional
-
-from strip_ansi import strip_ansi
 
 from pytest_oof import _project_root
-
-# OOF_FILES_DIR = Path.cwd().resolve() / "oof"
-OOF_FILES_DIR = Path(_project_root) / "oof"
-OOF_FILES_DIR.mkdir(exist_ok=True)
-TERMINAL_OUTPUT_FILE = OOF_FILES_DIR / "oof-terminal_output.ansi"
-RESULTS_FILE = OOF_FILES_DIR / "oof-results.pickle"
-JSON_OUT_FILE = OOF_FILES_DIR / "oof-results.json"
-HTML_FILES_DIR = OOF_FILES_DIR / "html"
-HISTORY_FILE = OOF_FILES_DIR / "oof-history.pickle"
 
 
 def generate_timestamp_uuid():
@@ -122,7 +106,22 @@ class TestSessionStats:
     num_deselected: int = 0  # Number of tests deselected via pytest's test selection
 
     def to_dict(self) -> Dict[str, int]:
-        return asdict(self)
+        return {
+            "num_tests": self.num_tests,
+            "num_tests_without_rerun": self.num_tests_without_rerun,
+            "num_tests_total": self.num_tests_total,
+            "num_passes": self.num_passes,
+            "num_failures": self.num_failures,
+            "num_errors": self.num_errors,
+            "num_skips": self.num_skips,
+            "num_xfails": self.num_xfails,
+            "num_xpasses": self.num_xpasses,
+            "num_reruns": self.num_reruns,
+            "num_rerun_groups": self.num_rerun_groups,
+            "num_warnings": self.num_warnings,
+            "num_warnings_unique": self.num_warnings_unique,
+            "num_deselected": self.num_deselected,
+        }
 
 
 @dataclass
@@ -139,49 +138,42 @@ class ReportBasedStats:
     num_xpasses: int = 0
 
     def to_dict(self) -> Dict[str, int]:
-        return asdict(self)
+        return {
+            "num_tests": self.num_tests,
+            "num_tests_total": self.num_tests_total,
+            "num_passes": self.num_passes,
+            "num_failures": self.num_failures,
+            "num_errors": self.num_errors,
+            "num_skips": self.num_skips,
+            "num_xfails": self.num_xfails,
+            "num_xpasses": self.num_xpasses,
+        }
 
 
 @dataclass
 class TestResult:
-    """
-    'TestResult': a single test result, which is a single test run of a single test
+    """'TestResult': a single test result, which is a single test run of a single test.
 
-    => Why not use Pytest's TestReport object?
-    Pytest has the concept of a TestReport, which is an object that holds information about
-    a single phase of a single test (setup, call, teardown). A TestReport by itself is
-    not a good indication of the overall outcome of a test, which is probably what you are
-    interested in as a tester. In order to determine the actual outcome of a test, you have
-    to take into account all TestReport objects for that test, and run their individual
-    outcomes through an algorithm internal to Pyttest. Instead of doing that, this plugin
-    collects information from the console output of pytest (which I would argue is definitive).
-    It then constructs a TestResult object that holds all the information you need about a
-    single test:
-
-    'nodeid': pytest 'node_id' (formerly fully-qualified test name, or 'fqtn')
+    Fields:
+    'nodeid': pytest 'node_id' (test identifier)
     'outcome': outcome of the test (PASSED, FAILED, SKIPPED, etc.)
     'start_time': datetime object for the start time of the test
     'duration': duration of the test in microseconds
-    'caplog': captured log output
-    'capstderr': captured stderr output
-    'capstdout': captured stdout output
-    'longreprtext': any supplementary text output by the test
-    'longreprtext_stripped': the longreprtext from above, un-ANSI-encoded
+    'error_message': error message if test failed
+    'error_type': type of error if test failed
+    'error_traceback': error traceback if test failed
     'has_warning': whether the test resulted in a warning
     """
 
     sut_id: str = ""
     sut_metadata: Dict[str, Any] = field(default_factory=dict)
-
     nodeid: str = ""
     outcome: str = ""
     start_time: datetime = None
     duration: float = 0.0
-    caplog: str = ""
-    capstderr: str = ""
-    capstdout: str = ""
-    longreprtext: str = ""
-    longreprtext_stripped: str = ""
+    error_message: str = ""
+    error_type: str = ""
+    error_traceback: str = ""
     has_warning: bool = False
 
     def to_dict(self) -> Dict[str, Any]:
@@ -192,11 +184,9 @@ class TestResult:
             "outcome": self.outcome,
             "start_time": self.start_time.isoformat() if self.start_time else None,
             "duration": self.duration,
-            "caplog": self.caplog,
-            "capstderr": self.capstderr,
-            "capstdout": self.capstdout,
-            "longreprtext": self.longreprtext,
-            "longreprtext_stripped": self.longreprtext_stripped,
+            "error_message": self.error_message,
+            "error_type": self.error_type,
+            "error_traceback": self.error_traceback,
             "has_warning": self.has_warning,
         }
 
@@ -249,100 +239,6 @@ class TestResults:
 
 
 @dataclass
-class RerunTestGroup:
-    """
-    'RerunTestGroup': a single test that has been run multiple times using
-     the 'pytest-rerunfailures' plugin
-
-    'nodeid': fully-qualified test name (same for all tests in a RerunTestGroup)
-    'final_outcome': final outcome of the test
-    'final_test' TestResult object for the last test run in the group (outcome != RERUN)
-    'forerunners': list of TestResult objects for all test that preceded final outcome
-    """
-
-    nodeid: str = ""
-    final_outcome: str = ""
-    final_test: TestResult = None
-    forerunners: List[TestResult] = field(default_factory=list)
-    full_test_list: List[TestResult] = field(default_factory=list)
-
-    def to_dict(self) -> Dict[str, Any]:
-        return {
-            "nodeid": self.nodeid,
-            "final_outcome": self.final_outcome,
-            "final_test": self.final_test.to_dict() if self.final_test else None,
-            "forerunners": [test_result.to_dict() for test_result in self.forerunners],
-            "full_test_list": [
-                test_result.to_dict() for test_result in self.full_test_list
-            ],
-        }
-
-
-@dataclass
-class OutputField:
-    """
-    An 'output field' (aka a 'section') is a block of text that is displayed in the terminal
-    output during a pytest run. It provides additional information about the test run:
-    warnings, errors, etc.
-    """
-
-    name: str = ""
-    content: str = ""
-    content_stripped: str = ""
-
-
-@dataclass
-class OutputFields:
-    """
-    A collection of all available types of OutputField objects. Not all fields will
-    be present in every test run. It depends on the plugins that are installed and
-    which "-r" flags are specified. This plugin forces the use of "-r RA" to ensure
-    any fields that are available are included in the output.
-
-    'test_session_starts': the second output field, which contains the start time of each test
-    'errors': the third output field, which contains the error output of each test
-    'failures': the fourth output field, which contains the failure output of each test
-    'passes': the fifth output field, which contains the pass output of each test
-    'warnings_summary': the sixth output field, which contains a summary of warnings
-    'rerun_test_summary': the seventh output field, which contains a summary of rerun tests
-    'short_test_summary': the eighth output field, which contains a summary of test outcomes
-    'lastline': the ninth output field, which contains the last line of terminal output
-    """
-
-    test_session_starts: OutputField = field(default_factory=OutputField)
-    errors: OutputField = field(default_factory=OutputField)
-    failures: OutputField = field(default_factory=OutputField)
-    passes: OutputField = field(default_factory=OutputField)
-    warnings_summary: OutputField = field(default_factory=OutputField)
-    rerun_test_summary: OutputField = field(default_factory=OutputField)
-    short_test_summary: OutputField = field(default_factory=OutputField)
-    lastline: OutputField = field(default_factory=OutputField)
-
-    def to_dict(self) -> Dict[str, Any]:
-        fields = [
-            "test_session_starts",
-            "errors",
-            "failures",
-            "passes",
-            "warnings_summary",
-            "rerun_test_summary",
-            "short_test_summary",
-            "lastline",
-        ]
-
-        output_dict = {}
-        for f in fields:
-            output_field = getattr(self, f)
-            output_dict[f] = {
-                "name": output_field.name,
-                "content": output_field.content,
-                "content_stripped": strip_ansi(output_field.content),
-            }
-
-        return output_dict
-
-
-@dataclass
 class Results:
     """
     'Results': a collection of all data collected during a test run, made nicely
@@ -352,55 +248,12 @@ class Results:
     'session_stats': overall statistics for this test session
     'report_stats': statistics collected directly from pytest test reports
     'test_results': collection of TestResult objects for all tests in the test session
-    'output_fields': collection of OutputField objects for all output fields in the
-     test session's console-out
-    'warnings': collection of TestResult objects for all tests that resulted in warnings
-    'rerun_test_groups': collection of RerunTestGroup objects for all tests that were
-     rerun during the test session
     """
 
     session_metadata: SessionMetadata
     session_stats: TestSessionStats
     report_stats: ReportBasedStats
     test_results: List[TestResult]
-    output_fields: OutputFields
-    warnings: List[TestResult]
-    rerun_test_groups: List[RerunTestGroup]
-
-    @classmethod
-    def from_file(cls, results_file_path: Path = RESULTS_FILE) -> "Results":
-        """Retrieve test run data from a results file."""
-        try:
-            with open(results_file_path, "rb") as f:
-                test_info = pickle.load(f)
-        except (FileNotFoundError, pickle.UnpicklingError) as e:
-            raise ValueError(f"Failed to load results file {results_file_path}: {e}")
-
-        session_metadata = SessionMetadata(
-            session_id=test_info.get("oof_session_id", ""),
-            start_time=test_info.get("oof_session_start_time", 0),
-            stop_time=test_info.get("oof_session_stop_time", 0),
-            duration=test_info.get("oof_session_duration", 0),
-            sut_id=test_info.get("oof_sut_id", ""),
-            sut_type=test_info.get("oof_sut_type", ""),
-            sut_version=test_info.get("oof_sut_version", ""),
-            sut_environment=test_info.get("oof_sut_environment", ""),
-            sut_metadata=test_info.get("oof_sut_metadata", {}),
-            python_version=test_info.get("oof_python_version", ""),
-            os_info=test_info.get("oof_os_info", ""),
-            pytest_version=test_info.get("oof_pytest_version", ""),
-            command_line=test_info.get("oof_command_line", ""),
-        )
-
-        return cls(
-            session_metadata=session_metadata,
-            session_stats=test_info.get("oof_session_stats", TestSessionStats()),
-            report_stats=test_info.get("oof_report_stats", ReportBasedStats()),
-            test_results=test_info.get("oof_test_results", []),
-            output_fields=test_info.get("oof_fields", OutputFields()),
-            warnings=test_info.get("oof_warnings", []),
-            rerun_test_groups=test_info.get("oof_rerun_test_groups", []),
-        )
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "Results":
@@ -434,12 +287,10 @@ class Results:
                 if tr.get("timestamp")
                 else None,
                 duration=tr.get("duration", 0.0),
+                error_message=tr.get("error_message", ""),
+                error_type=tr.get("error_type", ""),
+                error_traceback=tr.get("error_traceback", ""),
                 has_warning=tr.get("has_warning", False),
-                caplog=tr.get("caplog", ""),
-                capstderr=tr.get("capstderr", ""),
-                capstdout=tr.get("capstdout", ""),
-                longreprtext=tr.get("error_message", ""),
-                longreprtext_stripped=tr.get("error_message", ""),
             )
             test_results.append(test_result)
 
@@ -459,21 +310,11 @@ class Results:
             num_deselected=data["session"].get("num_deselected", 0),
         )
 
-        # Create empty output fields for now
-        output_fields = OutputFields()
-
-        # Convert warnings and rerun groups
-        warnings = []
-        rerun_groups = []
-
         return cls(
             session_metadata=session_metadata,
             session_stats=session_stats,
-            report_stats=None,  # Not stored in database
+            report_stats=ReportBasedStats(),  # Not stored in database
             test_results=test_results,
-            output_fields=output_fields,
-            warnings=warnings,
-            rerun_test_groups=rerun_groups,
         )
 
     def to_dict(self) -> Dict[str, Any]:
@@ -483,36 +324,7 @@ class Results:
             "session_stats": self.session_stats.to_dict(),
             "report_stats": self.report_stats.to_dict(),
             "test_results": [tr.to_dict() for tr in self.test_results],
-            "output_fields": self.output_fields.to_dict(),
-            "warnings": [w.to_dict() for w in self.warnings],
-            "rerun_test_groups": [rg.to_dict() for rg in self.rerun_test_groups],
         }
-
-
-@dataclass
-class TerminalOutput:
-    """
-    'TerminalOutput': the terminal output from a pytest run, with convenience methods
-    """
-
-    output: str = ""
-    output_ansi: str = r""
-
-    @classmethod
-    def from_file(
-        cls,
-        terminal_output_file_path: Path = TERMINAL_OUTPUT_FILE,
-    ) -> "TerminalOutput":
-        # Retrieve terminal output data from 'terminal_output.ansi' file
-        with open(terminal_output_file_path, "r") as f:
-            output_ansi = f.read()
-        output = strip_ansi(output_ansi)
-
-        # Construct the instance using the data loaded from file
-        return cls(
-            output_ansi=output_ansi,
-            output=output,
-        )
 
 
 @dataclass
@@ -671,37 +483,36 @@ class TestHistory:
     ) -> None:
         """Load test results from the database."""
         if not self.path:
-            raise ValueError("Database path not set")
+            raise ValueError("No database path set")
 
         with db_connection(self.path) as conn:
             c = conn.cursor()
 
-            # Build the query
+            # Get test sessions
             query = """
                 SELECT
-                    ts.id as session_id,
-                    ts.start_time,
-                    ts.end_time,
-                    ts.duration,
-                    ts.sut_id,
-                    ts.sut_type,
-                    ts.sut_version,
-                    ts.sut_env,
-                    ts.python_version,
-                    ts.os_info,
-                    ts.pytest_version,
-                    ts.command_line,
-                    ts.report_based,
-                    ts.num_tests,
-                    ts.num_passes,
-                    ts.num_failures,
-                    ts.num_errors,
-                    ts.num_skips,
-                    ts.num_xfails,
-                    ts.num_xpasses,
-                    ts.num_reruns,
-                    ts.num_rerun_groups,
-                    ts.num_warnings
+                    id,
+                    start_time,
+                    end_time,
+                    duration,
+                    sut_id,
+                    sut_type,
+                    sut_version,
+                    sut_env,
+                    python_version,
+                    os_info,
+                    pytest_version,
+                    command_line,
+                    num_tests,
+                    num_passes,
+                    num_failures,
+                    num_errors,
+                    num_skips,
+                    num_xfails,
+                    num_xpasses,
+                    num_reruns,
+                    num_rerun_groups,
+                    num_warnings
                 FROM test_sessions ts
                 WHERE 1=1
             """
@@ -764,16 +575,16 @@ class TestHistory:
 
                 # Create session stats from database values
                 session_stats = TestSessionStats(
-                    num_tests=row[13] or 0,
-                    num_passes=row[14] or 0,
-                    num_failures=row[15] or 0,
-                    num_errors=row[16] or 0,
-                    num_skips=row[17] or 0,
-                    num_xfails=row[18] or 0,
-                    num_xpasses=row[19] or 0,
-                    num_reruns=row[20] or 0,
-                    num_rerun_groups=row[21] or 0,
-                    num_warnings=row[22] or 0,
+                    num_tests=row[12] or 0,
+                    num_passes=row[13] or 0,
+                    num_failures=row[14] or 0,
+                    num_errors=row[15] or 0,
+                    num_skips=row[16] or 0,
+                    num_xfails=row[17] or 0,
+                    num_xpasses=row[18] or 0,
+                    num_reruns=row[19] or 0,
+                    num_rerun_groups=row[20] or 0,
+                    num_warnings=row[21] or 0,
                 )
 
                 # Create Results object and add to history
@@ -782,9 +593,6 @@ class TestHistory:
                     session_stats=session_stats,
                     report_stats=ReportBasedStats(),  # Empty report stats since we use session stats
                     test_results=[],  # We'll populate this next
-                    output_fields=OutputFields(),  # Empty output fields
-                    warnings=[],  # Empty warnings list
-                    rerun_test_groups=[],  # Empty rerun groups
                 )
 
                 # Get test results for this session
@@ -797,12 +605,7 @@ class TestHistory:
                         error_message,
                         error_type,
                         error_traceback,
-                        parameters,
-                        has_warning,
-                        caplog,
-                        capstderr,
-                        capstdout,
-                        source_line_id
+                        has_warning
                     FROM test_results
                     WHERE session_id = ?
                 """
@@ -825,11 +628,10 @@ class TestHistory:
                         outcome=test_row[1],
                         start_time=datetime.fromisoformat(test_row[2]) if test_row[2] else None,
                         duration=test_row[3] or 0.0,
-                        longreprtext=test_row[4] or "",
-                        caplog=test_row[9] or "",
-                        capstderr=test_row[10] or "",
-                        capstdout=test_row[11] or "",
-                        has_warning=bool(test_row[8]),
+                        error_message=test_row[4] or "",
+                        error_type=test_row[5] or "",
+                        error_traceback=test_row[6] or "",
+                        has_warning=bool(test_row[7])
                     )
                     result.test_results.append(test_result)
 

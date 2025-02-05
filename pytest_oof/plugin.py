@@ -1,138 +1,35 @@
 import json
-import pickle
-import re
-import tempfile
-import warnings
-from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
-from io import StringIO
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any, Dict, List, Optional, Tuple, Union
+import uuid
+import sys
+import platform
 
 import pytest
-from _pytest._io.terminalwriter import TerminalWriter
-from _pytest.config import Config, PytestPluginManager, create_terminal_writer
+from _pytest.config import Config, PytestPluginManager
 from _pytest.config.argparsing import Parser
 from _pytest.main import Session
 from _pytest.nodes import Item
 from _pytest.reports import TestReport
-from _pytest.terminal import TerminalReporter
-from strip_ansi import strip_ansi
 
 from pytest_oof import hooks
 from pytest_oof.utils import (
-    HISTORY_FILE,
-    JSON_OUT_FILE,
-    RESULTS_FILE,
-    OutputField,
-    OutputFields,
-    ReportBasedStats,
-    RerunTestGroup,
     Results,
     SessionMetadata,
-    TestHistory,
-    TestResult,
-    TestResults,
     TestSessionStats,
+    TestResult,
+    ReportBasedStats,
     generate_timestamp_uuid,
 )
 
 from .db import (
-    add_console_line,
-    add_report_metric,
     add_session,
     add_test_result,
     db_connection,
     init_db,
+    update_session_stats,
 )
-
-# regex matching patterns for pytest console output fields/sections
-test_session_starts_field_matcher = re.compile(r"^==.*\stest session starts\s==+")
-test_session_starts_results_grabber = re.compile(r"(collected\s\d+\sitems[\s\S]+)")
-test_session_starts_test_matcher = r"^(.*::.*)"
-errors_field_matcher = re.compile(r"^==.*\sERRORS\s==+")
-failures_field_matcher = re.compile(r"^==.*\sFAILURES\s==+")
-warnings_summary_field_matcher = re.compile(r"^==.*\swarnings summary\s.*==+")
-passes_field_matcher = re.compile(r"^==.*\sPASSES\s==+")
-rerun_test_summary_field_matcher = re.compile(r"^==.*\srerun test summary info\s.*==+")
-short_test_summary_field_matcher = re.compile(r"^==.*\sshort test summary info\s.*==+")
-short_test_summary_test_matcher = re.compile(
-    r"^(PASSED|FAILED|ERROR|SKIPPED|XFAIL|XPASS|RERUN)\s+(?:\[\d+\]\s)?(\S+)(?:.*)?$"
-)
-# warnings_summary_test_matcher = re.compile(r"^([^\n]+:{1,2}[^\n]+)\n([^\n]+\n)+")
-warnings_summary_test_matcher = re.compile(r"^[\w\/-]+\.py:+:*\w+")
-
-lastline_matcher = re.compile(r"^==.*in\s\d+.\d+s.*=+")
-standard_test_matcher = re.compile(
-    r"(.*\::\S+)\s(PASSED|FAILED|ERROR|SKIPPED|XFAIL|XPASS|RERUN)"
-)
-# nodeid_matcher = re.compile(r"([\w/.]+::[\w/]+(?:\[[^\]]+\])?)")
-
-
-@dataclass
-class ResultsFromConfig(Results):
-    """
-    Creates a Results object from a pytest Config object.
-    This is used during test execution to collect results.
-    """
-
-    def __init__(self):
-        super().__init__(
-            session_metadata=SessionMetadata(
-                session_id=generate_timestamp_uuid(),
-                start_time=datetime.now(timezone.utc),
-                stop_time=datetime.now(timezone.utc),
-                duration=timedelta(0),
-                sut_id="",
-                sut_type="",
-                sut_version="",
-                sut_environment="",
-                sut_metadata={},
-            ),
-            session_stats=TestSessionStats(),
-            report_stats=ReportBasedStats(),
-            test_results=[],
-            output_fields=OutputFields(),
-            warnings=[],
-            rerun_test_groups=[],
-        )
-
-    @classmethod
-    def from_config(cls, config: Config) -> "ResultsFromConfig":
-        """Create a Results object from a pytest Config object."""
-        instance = cls()
-        instance.session_metadata = SessionMetadata(
-            session_id=getattr(config, "_oof_session_id", generate_timestamp_uuid()),
-            start_time=getattr(
-                config, "_oof_session_start_time", datetime.now(timezone.utc)
-            ),
-            stop_time=getattr(
-                config, "_oof_session_stop_time", datetime.now(timezone.utc)
-            ),
-            duration=getattr(config, "_oof_session_duration", timedelta(0)),
-            sut_id=getattr(config, "_oof_sut_id", ""),
-            sut_type=getattr(config, "_oof_sut_type", ""),
-            sut_version=getattr(config, "_oof_sut_version", ""),
-            sut_environment=getattr(config, "_oof_sut_environment", ""),
-            sut_metadata=getattr(config, "_oof_sut_metadata", {}),
-        )
-
-        if not hasattr(config, "_oof_report_stats"):
-            config._oof_report_stats = ReportBasedStats()
-            # Initialize total test count including deselected
-            config._oof_report_stats.num_tests_total = (
-                config._oof_session_stats.num_tests_total
-            )
-
-        instance.session_stats = config._oof_session_stats
-        instance.report_stats = config._oof_report_stats
-        instance.test_results = config._oof_test_results.test_results
-        instance.output_fields = config._oof_fields
-        instance.warnings = config._oof_test_results.all_warnings()
-        instance.rerun_test_groups = config._oof_rerun_test_groups
-
-        return instance
 
 
 def pytest_addoption(parser: Parser) -> None:
@@ -210,251 +107,71 @@ def pytest_addhooks(pluginmanager: PytestPluginManager) -> None:
     pluginmanager.add_hookspecs(hooks.HookSpecs)
 
 
-def add_ansi_to_report(config: Config, report: TestReport) -> None:
-    """
-    If the report has longreprtext (traceback info), mark it up with ANSI codes
-    From https://stackoverflow.com/questions/71846269/algorithm-for-extracting-first-and-last-lines-from-fieldalized-output-file
-    """
-    buf = StringIO()
-    buf.isatty = lambda: True
-
-    reporter = config.pluginmanager.getplugin("terminalreporter")
-    original_writer = reporter._tw
-    writer = create_terminal_writer(config, file=buf)
-    reporter._tw = writer
-
-    reporter._outrep_summary(report)
-    buf.seek(0)
-    ansi = buf.read()
-    buf.close()
-
-    report.ansi = SimpleNamespace()
-    setattr(report.ansi, "val", ansi)
-
-    reporter._tw = original_writer
-
-
-def replace_string(original_string, new_char, new_phrase):
-    """Replace a phrase in a string with a new phrase, padding with a new character."""
-    parts = original_string.split(" ")
-
-    old_phrase_length = len(parts[1])
-    new_phrase_length = len(new_phrase)
-    length_difference = old_phrase_length - new_phrase_length
-    char_count = len(parts[0]) + length_difference // 2
-
-    if length_difference % 2 != 0:
-        return f"{new_char * char_count} {new_phrase} {new_char * (char_count + 1)}"
-    else:
-        return f"{new_char * char_count} {new_phrase} {new_char * char_count}"
-
-
 def pytest_cmdline_main(config: Config) -> None:
-    # If the oof option is enabled, put the OOF plugin in verbose mode,
-    # and force all test results to be reported, including reruns.
-    # Verbose (makes final outcome classification possible)
-    # Reportchars = RA (forces All test results, plus Reruns)
+    """Configure command line options."""
     if hasattr(config.option, "_oof") and config.option._oof:
         config.option.verbose = 1
         config.option.reportchars = "A"
-        if hasattr(config.option, "reruns"):
-            config.option.reportchars += "R"
-
-    # Using global Config object to store OOF-specific attributes.
-    # TODO: port to Stash in future; but that will break backwards compatibility
-    # for pytest < 7.0.
-    if not hasattr(config, "_oof_session_start_time"):
-        config._oof_session_start_time = datetime.now(timezone.utc)
-    if not hasattr(config, "_oof_session_id"):
-        config._oof_session_id = generate_timestamp_uuid()
-    if not hasattr(config, "_oof_metadata"):
-        config._oof_metadata = {
-            "session_id": config._oof_session_id,
-            "start_time": None,  # Will be set when the session starts
-            "stop_time": None,  # Will be set when the session ends
-            "duration": None,  # Will be calculated later
-        }
-    if not hasattr(config, "_oof_sessionstart"):
-        config._oof_sessionstart = True
-    if not hasattr(config, "_oof_sessionstart_test_outcome_next"):
-        config._oof_sessionstart_test_outcome_next = False
-    if not hasattr(config, "_oof_sessionstart_current_nodeid"):
-        config._oof_sessionstart_current_nodeid = ""
-    if not hasattr(config, "_oof_session_stats"):
-        config._oof_session_stats = TestSessionStats()
-    if not hasattr(config, "_oof_rerun_test_groups"):
-        config._oof_rerun_test_groups = []
-    if not hasattr(config, "_oof_current_rerun_test_group"):
-        config._oof_current_rerun_test_group = 0
-    if not hasattr(config, "_oof_current_field"):
-        config._oof_current_field = "pre_test"
-    if not hasattr(config, "_oof_reports"):
-        config._oof_reports = []
-    if not hasattr(config, "_oof_test_results"):
-        config._oof_test_results = TestResults()
-    if not hasattr(config, "_oof_terminal_out"):
-        config._oof_terminal_out = tempfile.NamedTemporaryFile(mode="wb", delete=True)
-    if not hasattr(config, "_oof_fields"):
-        config._oof_fields = OutputFields(
-            test_session_starts=OutputField(name="test_session_starts", content=""),
-            errors=OutputField(name="errors", content=""),
-            failures=OutputField(name="failures", content=""),
-            passes=OutputField(name="passes", content=""),
-            warnings_summary=OutputField(name="warnings_summary", content=""),
-            rerun_test_summary=OutputField(name="rerun_test_summary", content=""),
-            short_test_summary=OutputField(name="short_test_summary", content=""),
-            lastline=OutputField(name="lastline", content=""),
-        )
-
-
-def pytest_report_teststatus(report: TestReport, config: Config) -> None:
-    if not hasattr(config.option, "_oof"):
-        return
-    if not config.option._oof:
-        return
-
-    # Instantiate TerminalWriter to write separation strings for captured stdout,
-    # stderr and stdlog. These are appended to the TuiTestResult's capstdout,
-    # captstderr and caplog attrs to replicate terminal output.
-    # Don't do this for longreptext, as it is already included there.
-    caplog_sep = (
-        replace_string(config._oof_test_session_starts_line, "-", "Captured log call")
-        + "\n"
-    )
-    capstderr_sep = (
-        replace_string(
-            config._oof_test_session_starts_line, "-", "Captured stderr call"
-        )
-        + "\n"
-    )
-    capstdout_sep = (
-        replace_string(
-            config._oof_test_session_starts_line, "-", "Captured stdout call"
-        )
-        + "\n"
-    )
-
-    if hasattr(report, "caplog") and report.caplog:
-        for oof_test_result in config._oof_test_results.test_results:
-            if oof_test_result.nodeid == report.nodeid:
-                oof_test_result.caplog = caplog_sep + report.caplog + "\n"
-
-    if hasattr(report, "capstderr") and report.capstderr:
-        for oof_test_result in config._oof_test_results.test_results:
-            if oof_test_result.nodeid == report.nodeid:
-                oof_test_result.capstderr = capstderr_sep + report.capstderr
-
-    if hasattr(report, "capstdout") and report.capstdout:
-        for oof_test_result in config._oof_test_results.test_results:
-            if oof_test_result.nodeid == report.nodeid:
-                oof_test_result.capstdout = capstdout_sep + report.capstdout
-
-    if hasattr(report, "longreprtext") and report.longreprtext:
-        add_ansi_to_report(config, report)
-        for oof_test_result in config._oof_test_results.test_results:
-            if oof_test_result.nodeid == report.nodeid:
-                oof_test_result.longreprtext = report.ansi.val
-                oof_test_result.longreprtext_stripped = oof_test_result.longreprtext
-
-    if hasattr(report, "longreprtext") and report.longreprtext:
-        add_ansi_to_report(config, report)
-        for oof_test_result in config._oof_test_results.test_results:
-            if oof_test_result.nodeid == report.nodeid:
-                oof_test_result.longreprtext = report.ansi.val
-
-    config._oof_reports.append(report)
 
 
 @pytest.hookimpl(hookwrapper=True)
 def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo) -> None:
     """Collect test outcomes directly from pytest reports."""
-    # Get or create the report-based stats
-    if not hasattr(item.session.config, "_oof_report_stats"):
-        item.session.config._oof_report_stats = ReportBasedStats()
-        # Initialize total test count including deselected
-        item.session.config._oof_report_stats.num_tests_total = (
-            item.session.testscollected
-        )
-
-    if not hasattr(item.session.config, "_oof_test_results"):
-        item.session.config._oof_test_results = TestResults()
-
-    report_stats = item.session.config._oof_report_stats
-    test_results = item.session.config._oof_test_results
+    if not item.config.option._oof:
+        yield
+        return
 
     # Get the report
     outcome = yield
     report = outcome.get_result()
 
-    # Only process the call phase for counting test outcomes
     if report.when == "call":
-        # Create a TestResult object
+        now = datetime.now(timezone.utc)
+        
+        # Get error details
+        error_message = getattr(report, "longreprtext", "")
+        error_type = str(getattr(report, "longrepr", ""))  # Convert to string
+        error_traceback = getattr(report, "longreprtext", "")
+        
         test_result = TestResult(
             nodeid=report.nodeid,
-            outcome=report.outcome.upper(),  # Convert to uppercase
-            start_time=datetime.now(timezone.utc),
+            outcome=report.outcome.upper(),
+            start_time=now,
             duration=report.duration,
-            longreprtext=report.longreprtext if hasattr(report, "longreprtext") else None,
+            error_message=error_message,
+            error_type=error_type,
+            error_traceback=error_traceback,
         )
+        item.config._oof_test_results.test_results.append(test_result)
 
-        # Set the correct outcome for xfail/xpass cases
-        if hasattr(report, "wasxfail"):
-            if report.outcome == "passed":
-                test_result.outcome = "XPASS"
-                item.session.config._oof_session_stats.num_xpasses += 1
-                item.session.config._oof_session_stats.num_tests += 1
-            else:  # report.outcome == "skipped"
-                test_result.outcome = "XFAIL"
-                item.session.config._oof_session_stats.num_xfails += 1
-                item.session.config._oof_session_stats.num_tests += 1
-        else:
-            # Update session stats based on outcome
-            if report.outcome == "passed":
-                item.session.config._oof_session_stats.num_passes += 1
-                item.session.config._oof_session_stats.num_tests += 1
-            elif report.outcome == "failed":
-                item.session.config._oof_session_stats.num_failures += 1
-                item.session.config._oof_session_stats.num_tests += 1
-            elif report.outcome == "skipped":
-                item.session.config._oof_session_stats.num_skips += 1
-                item.session.config._oof_session_stats.num_tests += 1
-            elif report.outcome == "error":
-                item.session.config._oof_session_stats.num_errors += 1
-                item.session.config._oof_session_stats.num_tests += 1
+        # Update session stats based on test outcome
+        if report.outcome == "passed":
+            item.config._oof_test_results.session_stats.num_passes += 1
+        elif report.outcome == "failed":
+            item.config._oof_test_results.session_stats.num_failures += 1
+        elif report.outcome == "skipped":
+            item.config._oof_test_results.session_stats.num_skips += 1
+        elif report.outcome == "xfailed":
+            item.config._oof_test_results.session_stats.num_xfails += 1
+        elif report.outcome == "xpassed":
+            item.config._oof_test_results.session_stats.num_xpasses += 1
+        elif report.outcome == "error":
+            item.config._oof_test_results.session_stats.num_errors += 1
 
-        test_results.test_results.append(test_result)
-
-        # Write test result to database
-        if hasattr(item.session.config, "_oof_db_session_id"):
-            db_path = Path(item.session.config.getoption("oof_db_path"))
-
-            # Determine the actual outcome
-            outcome = report.outcome
-            if hasattr(report, "wasxfail"):
-                if report.outcome == "passed":
-                    outcome = "xpass"
-                else:  # report.outcome == "skipped"
-                    outcome = "xfail"
-
+        # Update database
+        with db_connection(item.config.option.oof_db_path) as conn:
             add_test_result(
-                db_path=db_path,
-                session_id=item.session.config._oof_db_session_id,
+                db_path=item.config.option.oof_db_path,
+                session_id=item.config._oof_test_results.session_metadata.db_session_id,
                 test_id=report.nodeid,
-                outcome=outcome.upper(),  # Convert to uppercase
-                timestamp=datetime.now(timezone.utc),
+                outcome=report.outcome.upper(),
+                timestamp=now,
                 duration=report.duration,
-                error_message=str(report.longrepr) if hasattr(report, "longrepr") else None,
-                error_type=report.outcome,
-                error_traceback=str(report.longrepr) if hasattr(report, "longrepr") else None,
-                has_warning=test_result.has_warning,
-                caplog=test_result.caplog,
-                capstderr=test_result.capstderr,
-                capstdout=test_result.capstdout,
+                error_message=error_message,
+                error_type=error_type,
+                error_traceback=error_traceback,
+                has_warning=False
             )
-
-    # Handle setup/teardown errors
-    elif report.when in ("setup", "teardown") and report.outcome == "failed":
-        report_stats.num_errors += 1
 
 
 @pytest.hookimpl(trylast=True)
@@ -473,354 +190,64 @@ def pytest_collection_modifyitems(
 
 @pytest.hookimpl(trylast=True)
 def pytest_configure(config: Config) -> None:
-    """
-    Configure pytest-oof plugin, including setting up hooks and initializing data structures.
-    """
-    # Check if plugin is enabled via command line option or ini file
-    enabled = config.getoption("_oof")
-    if enabled is None:
-        enabled = config.getini("oof")
-    if not enabled:
-        return
+    """Configure pytest-oof plugin."""
+    if not hasattr(config.option, "_oof"):
+        config.option._oof = False
 
-    # Create output directory
-    Path("oof").mkdir(exist_ok=True)
+    config.addinivalue_line("markers", "oof: mark test to run with pytest-oof plugin")
 
-    # Initialize database and add session
-    db_path = Path(config.getoption("oof_db_path"))
-    db_path.parent.mkdir(exist_ok=True)
-    init_db(db_path)
+    if config.getoption("--oof"):
+        config.option._oof = True
+        config.option.oof_db_path = Path(config.getoption("--oof-db-path"))
+        init_db(config.option.oof_db_path)
 
-    config._oof_db_session_id = add_session(
-        db_path=db_path,
-        start_time=config._oof_session_start_time,
-        sut_id=config.getoption("oof_sut_id"),
-        sut_type=config.getoption("oof_sut_type"),
-        sut_version=config.getoption("oof_sut_version"),
-        sut_env=config.getoption("oof_sut_env"),
-    )
+        # Initialize test results container
+        start_time = datetime.now(timezone.utc)
+        session_id = str(uuid.uuid4())
 
-    # Add hooks used by pytest-oof
-    config.pluginmanager.register(hooks, "pytest-oof")
-
-    # Initialize session metadata
-    config._oof_session_id = generate_timestamp_uuid()
-    config._oof_session_start_time = datetime.now(timezone.utc)
-    config._oof_session_stop_time = None
-    config._oof_session_duration = None
-
-    # Parse SUT metadata
-    try:
-        sut_metadata = json.loads(config.getoption("oof_sut_metadata"))
-    except json.JSONDecodeError:
-        sut_metadata = {}
-
-    # Store SUT info
-    config._oof_sut_id = config.getoption("oof_sut_id")
-    config._oof_sut_type = config.getoption("oof_sut_type")
-    config._oof_sut_version = config.getoption("oof_sut_version")
-    config._oof_sut_environment = config.getoption("oof_sut_env")
-    config._oof_sut_metadata = sut_metadata
-
-    # Initialize test results
-    config._oof_test_results = TestResults()
-    config._oof_session_stats = TestSessionStats()
-    config._oof_session_start_time = datetime.now(timezone.utc)
-
-    # Initialize output fields
-    config._oof_fields = OutputFields()
-
-    # Create a temporary file for terminal output
-    config._oof_terminal_out = tempfile.NamedTemporaryFile(mode="wb", delete=True)
-    config._oof_current_field = "test_session_starts"
-    config._oof_sessionstart = True
-    config._oof_sessionstart_test_outcome_next = False
-    config._oof_sessionstart_current_nodeid = None
-
-    # Examine Pytest terminal output to mark different fields of the output.
-    # This code is based on pytest's 'pastebin.py'.
-    tr = config.pluginmanager.getplugin("terminalreporter")
-    if tr is not None:
-        # Save the old terminal writer instance so we can restore it later
-        oldwrite = tr._tw.write
-
-        # identify and mark each results field
-        def tee_write(s, **kwargs):
-            # Check to see if current line is a field start marker
-            if re.search(test_session_starts_field_matcher, s):
-                config._oof_current_field = "test_session_starts"
-                config._oof_test_session_starts_line = s
-            if re.search(errors_field_matcher, s):
-                config._oof_current_field = "errors"
-            if re.search(failures_field_matcher, s):
-                config._oof_current_field = "failures"
-            if re.search(warnings_summary_field_matcher, s):
-                config._oof_current_field = "warnings_summary"
-            if re.search(passes_field_matcher, s):
-                config._oof_current_field = "passes"
-            if re.search(rerun_test_summary_field_matcher, s):
-                config._oof_current_field = "rerun_test_summary"
-            if re.search(short_test_summary_field_matcher, s):
-                config._oof_current_field = "short_test_summary"
-            if re.search(lastline_matcher, s):
-                config._oof_current_field = "lastline"
-            else:
-                # This line is not a field start marker
-                if config._oof_sessionstart:
-                    config._oof_current_field = "test_session_starts"
-                    config._oof_sessionstart = False
-
-            # If this is a "collecting..." line, insert a line feed after it to prevent non-wrapped following items.
-            if re.search(r"^collecting\s.*", s):
-                s += "\n"
-
-            # If this is an actual test outcome line in the initial `=== test session starts ==='
-            # field, populate the TestResult's fully qualified test name field (aka nodeid).
-            if config._oof_current_field == "test_session_starts":
-                if config._oof_sessionstart_test_outcome_next:
-                    outcome = s.strip()
-                    config._oof_test_results.test_results[-1].outcome = outcome
-                    # Update session stats based on the outcome
-                    if outcome == "PASSED":
-                        config._oof_session_stats.num_passes += 1
-                    elif outcome == "FAILED":
-                        config._oof_session_stats.num_failures += 1
-                    elif outcome == "SKIPPED":
-                        config._oof_session_stats.num_skips += 1
-                    elif outcome == "XFAIL":
-                        config._oof_session_stats.num_xfails += 1
-                    elif outcome == "XPASS":
-                        config._oof_session_stats.num_xpasses += 1
-                    elif outcome == "ERROR":
-                        config._oof_session_stats.num_errors += 1
-                    elif outcome == "RERUN":
-                        config._oof_session_stats.num_reruns += 1
-                    config._oof_session_stats.num_tests += 1
-                    config._oof_sessionstart_test_outcome_next = False
-
-                search = re.search(test_session_starts_test_matcher, s, re.MULTILINE)
-                if search:
-                    nodeid = re.search(
-                        test_session_starts_test_matcher, s, re.MULTILINE
-                    )[1].rstrip()
-                    config._oof_sessionstart_current_nodeid = nodeid
-                    config._oof_test_results.test_results.append(
-                        TestResult(nodeid=nodeid)
-                    )
-                    config._oof_sessionstart_test_outcome_next = True
-
-            # If this is an actual test outcome line in the `=== short test summary info ===' field,
-            # populate the TestResult's outcome attribute.
-            if config._oof_current_field == "short_test_summary" and re.search(
-                short_test_summary_test_matcher, strip_ansi(s)
-            ):
-                outcome = re.search(
-                    short_test_summary_test_matcher, strip_ansi(s)
-                ).groups()[0]
-                nodeid = re.search(
-                    short_test_summary_test_matcher, strip_ansi(s)
-                ).groups()[1]
-
-                for oof_test_result in config._oof_test_results.test_results:
-                    if (
-                        oof_test_result.nodeid == nodeid
-                        and oof_test_result.outcome != "RERUN"
-                    ):
-                        oof_test_result.outcome = outcome
-                        break
-
-            # If this is the last line, parse it for deselected tests
-            if config._oof_current_field == "lastline":
-                lastline = strip_ansi(s)
-                deselected_match = re.search(r"(\d+) deselected", lastline)
-                if deselected_match:
-                    config._oof_session_stats.num_deselected = int(
-                        deselected_match.group(1)
-                    )
-
-            # Write this line's original pytest output text (plus markup) to console.
-            # Also write marked up content to this OutputField's 'content' field.
-            # Markup is done w/ TerminalWriter's 'markup' method.
-            # (do not pass "flush" to the method, or it will throw an error)
-            oldwrite(s, **kwargs)
-            kwargs.pop("flush") if "flush" in kwargs else None
-
-            s_orig = s
-            kwargs.pop("flush") if "flush" in kwargs else None
-            s_orig = TerminalWriter().markup(s, **kwargs)
-            exec(f"config._oof_fields.{config._oof_current_field}.content += s_orig")
-            exec(
-                f"config._oof_fields.{config._oof_current_field}.content_stripped += strip_ansi(s_orig)"
+        # Add session to database
+        with db_connection(config.option.oof_db_path) as conn:
+            db_session_id = add_session(
+                db_path=config.option.oof_db_path,
+                start_time=start_time,
+                session_id=session_id
             )
-            if isinstance(s_orig, str):
-                unmarked_up = s_orig.encode("utf-8")
-            config._oof_terminal_out.write(unmarked_up)
 
-        # Write to both terminal/console and tempfiles
-        tr._tw.write = tee_write
-
-
-def populate_rerun_groups(config: Config) -> List[RerunTestGroup]:
-    """Build a list of RerunTestGroup objects from the test
-    results in the config object."""
-    rerun_test_groups = []
-
-    # First, get all test results that have an outcome of "RERUN"
-    rerun_tests = [
-        test_result
-        for test_result in config._oof_test_results.test_results
-        if test_result.outcome == "RERUN"
-    ]
-
-    # If there are no rerun tests, return empty list
-    if not rerun_tests:
-        return rerun_test_groups
-
-    # Group the rerun tests by nodeid
-    rerun_tests_by_nodeid = {}
-    for test_result in rerun_tests:
-        if test_result.nodeid not in rerun_tests_by_nodeid:
-            rerun_tests_by_nodeid[test_result.nodeid] = []
-        rerun_tests_by_nodeid[test_result.nodeid].append(test_result)
-
-    # Get unique nodeids from rerun test summary field
-
-    # Update session stats for reruns
-    config._oof_session_stats.num_reruns = len(rerun_tests)
-    config._oof_session_stats.num_rerun_groups = len(rerun_tests_by_nodeid)
-    config._oof_session_stats.num_tests = len(config._oof_test_results.test_results)
-    config._oof_session_stats.num_tests_without_rerun = (
-        config._oof_session_stats.num_tests - config._oof_session_stats.num_reruns
-    )
-
-    # Build RerunTestGroup objects
-    for nodeid, rerun_tests in rerun_tests_by_nodeid.items():
-        # Get all test results for this nodeid, including the final result
-        all_test_results = [
-            test_result
-            for test_result in config._oof_test_results.test_results
-            if test_result.nodeid == nodeid
-        ]
-
-        # The final test is the last one that's not a RERUN
-        final_test = next(
-            (test for test in reversed(all_test_results) if test.outcome != "RERUN"),
-            None,
+        config._oof_test_results = Results(
+            session_metadata=SessionMetadata(
+                session_id=session_id,
+                start_time=start_time,
+                stop_time=start_time,  # Will be updated in pytest_unconfigure
+                duration=timedelta(0),  # Will be updated in pytest_unconfigure
+                python_version=platform.python_version(),
+                os_info=platform.platform(),
+                pytest_version=pytest.__version__,
+                command_line=" ".join(sys.argv[1:])
+            ),
+            session_stats=TestSessionStats(),
+            report_stats=ReportBasedStats(),
+            test_results=[]
         )
-
-        if final_test:
-            rerun_test_groups.append(
-                RerunTestGroup(
-                    nodeid=nodeid,
-                    final_outcome=final_test.outcome,
-                    final_test=final_test,
-                    forerunners=rerun_tests,
-                    full_test_list=all_test_results,
-                )
-            )
-
-    return rerun_test_groups
-
-
-def mark_warning_tests(config: Config) -> List[TestResult]:
-    """Mark tests that have warnings in the warnings field."""
-    warning_field = strip_ansi(config._oof_fields.warnings_summary.content)
-    warning_field_lines = warning_field.split("\n")
-
-    # use regex warnings_summary_test_matcher to match the nodeids in the warning field
-    # to the config test results in the test_results list
-    warning_nodeids = []
-    for line in warning_field_lines:
-        if re.search(warnings_summary_test_matcher, line):
-            warning_nodeids.append(line)
-
-    # Update warning counts
-    config._oof_session_stats.num_warnings = len(warning_nodeids)
-    config._oof_session_stats.num_warnings_unique = len(set(warning_nodeids))
-
-    for test_result in config._oof_test_results.test_results:
-        for warning_nodeid in warning_nodeids:
-            if test_result.nodeid == warning_nodeid:
-                test_result.has_warning = True
-
-    return warning_nodeids
+        
+        # Store database session ID for later use
+        config._oof_test_results.session_metadata.db_session_id = db_session_id
 
 
 def pytest_unconfigure(config: Config) -> None:
-    """
-    Called before test process is exited.
-    """
-    if not config.getoption("_oof"):
+    """Clean up pytest-oof plugin."""
+    if not config.option._oof:
         return
 
-    # Calculate final stats from test results
     if hasattr(config, "_oof_test_results"):
-        stats = TestSessionStats()
-        for result in config._oof_test_results.test_results:
-            stats.num_tests += 1
-            if result.outcome == "PASSED":
-                stats.num_passes += 1
-            elif result.outcome == "FAILED":
-                stats.num_failures += 1
-            elif result.outcome == "SKIPPED":
-                stats.num_skips += 1
-            elif result.outcome == "ERROR":
-                stats.num_errors += 1
-            elif result.outcome == "XFAIL":
-                stats.num_xfails += 1
-            elif result.outcome == "XPASS":
-                stats.num_xpasses += 1
-            if result.has_warning:
-                stats.num_warnings += 1
-
-        # Update config session stats with final values
-        config._oof_session_stats = stats
-
-        # Update session end time and duration
-        db_path = Path(config.getoption("oof_db_path"))
-        if db_path.exists():
-            with db_connection(db_path) as conn:
-                c = conn.cursor()
-                c.execute(
-                    """
-                    UPDATE test_sessions
-                    SET end_time = ?,
-                        duration = ?,
-                        num_tests = ?,
-                        num_passes = ?,
-                        num_failures = ?,
-                        num_errors = ?,
-                        num_skips = ?,
-                        num_xfails = ?,
-                        num_xpasses = ?,
-                        num_warnings = ?,
-                        num_reruns = ?,
-                        num_rerun_groups = ?,
-                        num_deselected = ?
-                    WHERE id = ?
-                    """,
-                    (
-                        datetime.now(timezone.utc),
-                        (
-                            datetime.now(timezone.utc) - config._oof_session_start_time
-                        ).total_seconds(),
-                        config._oof_session_stats.num_tests,
-                        config._oof_session_stats.num_passes,
-                        config._oof_session_stats.num_failures,
-                        config._oof_session_stats.num_errors,
-                        config._oof_session_stats.num_skips,
-                        config._oof_session_stats.num_xfails,
-                        config._oof_session_stats.num_xpasses,
-                        config._oof_session_stats.num_warnings,
-                        config._oof_session_stats.num_reruns,
-                        config._oof_session_stats.num_rerun_groups,
-                        config._oof_session_stats.num_deselected,
-                        config._oof_db_session_id,
-                    ),
-                )
-                conn.commit()
-
-    # Clean up temporary files
-    if hasattr(config, "_oof_terminal_out"):
-        config._oof_terminal_out.close()
-        del config._oof_terminal_out
+        stop_time = datetime.now(timezone.utc)
+        config._oof_test_results.session_metadata.stop_time = stop_time
+        config._oof_test_results.session_metadata.duration = (
+            stop_time - config._oof_test_results.session_metadata.start_time
+        )
+        
+        # Update final session stats in database
+        with db_connection(config.option.oof_db_path) as conn:
+            update_session_stats(
+                db_path=config.option.oof_db_path,
+                session_id=config._oof_test_results.session_metadata.db_session_id
+            )
