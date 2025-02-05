@@ -122,9 +122,169 @@ def vary_session(session: Dict[Any, Any], base_time: datetime) -> Dict[Any, Any]
     return varied
 
 
+def get_test_templates():
+    """Get template test cases and their possible outcomes."""
+    return {
+        # Basic outcomes
+        'demo-tests/test_0.py::test0_pass_1': ['PASSED'],
+        'demo-tests/test_0.py::test0_fail_1': ['FAILED'],
+        'demo-tests/test_0.py::test0_pass_2_logs': ['PASSED'],
+        'demo-tests/test_0.py::test0_pass_3_error_in_fixture': ['ERROR'],
+        'demo-tests/test_0.py::test0_skip': ['PASSED', 'SKIPPED'],
+        'demo-tests/test_0.py::test0_warning': ['WARNING', 'PASSED'],
+        'demo-tests/test_0.py::test0_xfail': ['XFAIL'],
+        'demo-tests/test_0.py::test0_xpass': ['XPASS'],
+        
+        # Flaky tests
+        'demo-tests/test_flaky_3': ['FAILED', 'PASSED'],
+        'demo-tests/test_1.py::test_flaky_1': ['FAILED', 'PASSED'],
+        'demo-tests/test_1.py::test_flaky_2': ['FAILED', 'PASSED'],
+        'demo-tests/test_1.py::test_flaky_3': ['FAILED', 'PASSED'],
+        'demo-tests/test_1.py::test_flaky_always_fail': ['FAILED'],
+        'demo-tests/test_1.py::test_flaky_always_pass': ['PASSED'],
+        
+        # Tests with warnings
+        'demo-tests/test_warnings.py::test_1_fails_with_warnings': ['WARNING', 'FAILED'],
+        'demo-tests/test_warnings.py::test_2_passes_with_warnings': ['WARNING', 'PASSED'],
+        'demo-tests/test_errors.py::test_fails_with_warnings': ['WARNING', 'FAILED'],
+        'demo-tests/test_errors.py::test_passes_with_warnings': ['WARNING', 'PASSED'],
+        
+        # Tests with errors
+        'demo-tests/test_1.py::test_14_causes_error_pass_stderr_stdout_stdlog': ['ERROR'],
+        'demo-tests/test_1.py::test_15_causes_error_fail_stderr_stdout_stdlog': ['ERROR'],
+        'demo-tests/test_2.py::test_c_error': ['ERROR'],
+        'demo-tests/test_issue_1004.py::test_foo': ['ERROR', 'PASSED'],
+        'demo-tests/test_issue_1004.py::test_foo2': ['ERROR', 'FAILED'],
+        
+        # Regular tests
+        'demo-tests/test_1.py::test_a_ok': ['PASSED'],
+        'demo-tests/test_1.py::test_b_fail': ['FAILED'],
+        'demo-tests/test_1.py::test_c_error': ['ERROR', 'PASSED'],
+        'demo-tests/test_1.py::test_d1_skip_inline': ['SKIPPED'],
+    }
+
+
+def generate_test_results(session_id: int, num_tests: int, base_time: datetime) -> list:
+    """Generate test results for a session."""
+    templates = get_test_templates()
+    test_ids = list(templates.keys())
+    
+    # Select a random subset of tests
+    selected_tests = random.sample(test_ids, min(num_tests, len(test_ids)))
+    
+    # Generate results
+    results = []
+    for test_id in selected_tests:
+        possible_outcomes = templates[test_id]
+        outcome = random.choice(possible_outcomes)
+        
+        # Add some variance to the timestamp
+        timestamp = base_time + timedelta(seconds=random.uniform(0, 300))
+        
+        result = {
+            'session_id': session_id,
+            'test_id': test_id,
+            'outcome': outcome,
+            'timestamp': timestamp,
+            'duration': random.uniform(0.1, 2.0),
+            'error_message': 'Error occurred' if outcome in ['ERROR', 'FAILED'] else None,
+            'error_type': 'AssertionError' if outcome == 'FAILED' else 'RuntimeError' if outcome == 'ERROR' else None,
+            'has_warning': random.random() < 0.2,  # 20% chance of having a warning
+        }
+        results.append(result)
+    
+    return results
+
+
+def create_template_session():
+    """Create a template test session."""
+    return {
+        'session_id': str(uuid.uuid4()),
+        'start_time': datetime.now(),
+        'end_time': datetime.now() + timedelta(minutes=5),
+        'duration': 300.0,  # 5 minutes
+        'sut_id': random.choice(SUT_IDS),
+        'sut_type': 'local',
+        'sut_version': '1.0.0',
+        'sut_env': 'test',
+        'num_tests': 18,  # Number of tests in our template
+        'num_passes': 10,
+        'num_failures': 3,
+        'num_errors': 2,
+        'num_skips': 1,
+        'num_xfails': 1,
+        'num_xpasses': 1
+    }
+
+
+def ensure_template_data():
+    """Ensure there is at least one template session in the database."""
+    db_path = get_db_path()
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    
+    # Check if we have any sessions
+    cursor.execute("SELECT COUNT(*) FROM test_sessions")
+    count = cursor.fetchone()[0]
+    
+    if count == 0:
+        print("\nNo template data found, creating initial template...")
+        template = create_template_session()
+        
+        cursor.execute(
+            """
+            INSERT INTO test_sessions (
+                session_id, start_time, end_time, duration,
+                sut_id, sut_type, sut_version, sut_env,
+                num_tests, num_passes, num_failures,
+                num_errors, num_skips, num_xfails, num_xpasses
+            ) VALUES (
+                :session_id, :start_time, :end_time, :duration,
+                :sut_id, :sut_type, :sut_version, :sut_env,
+                :num_tests, :num_passes, :num_failures,
+                :num_errors, :num_skips, :num_xfails, :num_xpasses
+            )
+            """,
+            template
+        )
+        
+        # Get the session ID
+        session_id = cursor.lastrowid
+        
+        # Generate test results for the template
+        test_results = generate_test_results(
+            session_id=session_id,
+            num_tests=template['num_tests'],
+            base_time=template['start_time']
+        )
+        
+        # Insert test results
+        for result in test_results:
+            cursor.execute(
+                """
+                INSERT INTO test_results (
+                    session_id, test_id, outcome, timestamp,
+                    duration, error_message, error_type, has_warning
+                ) VALUES (
+                    :session_id, :test_id, :outcome, :timestamp,
+                    :duration, :error_message, :error_type, :has_warning
+                )
+                """,
+                result
+            )
+        
+        conn.commit()
+        print(f"Created template session with {len(test_results)} test results")
+    
+    conn.close()
+
+
 def generate_historical_data(days: int = 7, sessions_per_day: tuple = (3, 8)):
     """Generate historical test data."""
     db_path = get_db_path()
+
+    # Ensure we have template data
+    ensure_template_data()
 
     # Connect to database
     conn = sqlite3.connect(db_path)
@@ -155,6 +315,7 @@ def generate_historical_data(days: int = 7, sessions_per_day: tuple = (3, 8)):
 
     # Generate historical data
     new_sessions = []
+    all_test_results = []
     current_time = datetime.now()
 
     for day in range(days):
@@ -183,10 +344,11 @@ def generate_historical_data(days: int = 7, sessions_per_day: tuple = (3, 8)):
 
     print(f"\nInserting {len(new_sessions)} new sessions...")
 
-    # Insert new sessions
+    # Insert new sessions and generate test results
     cursor = conn.cursor()
 
     for session in new_sessions:
+        # Insert session
         cursor.execute(
             """
             INSERT INTO test_sessions (
@@ -203,13 +365,62 @@ def generate_historical_data(days: int = 7, sessions_per_day: tuple = (3, 8)):
         """,
             session,
         )
+        
+        # Get the session ID (SQLite's last_insert_rowid)
+        session_id = cursor.lastrowid
+        
+        # Generate and collect test results
+        test_results = generate_test_results(
+            session_id=session_id,
+            num_tests=session['num_tests'],
+            base_time=session['start_time']
+        )
+        all_test_results.extend(test_results)
+
+    # Insert all test results
+    print(f"\nInserting {len(all_test_results)} test results...")
+    for result in all_test_results:
+        cursor.execute(
+            """
+            INSERT INTO test_results (
+                session_id, test_id, outcome, timestamp,
+                duration, error_message, error_type, has_warning
+            ) VALUES (
+                :session_id, :test_id, :outcome, :timestamp,
+                :duration, :error_message, :error_type, :has_warning
+            )
+        """,
+            result,
+        )
 
     conn.commit()
     conn.close()
 
     print(
-        f"\nSuccessfully generated {len(new_sessions)} historical test sessions over {days} days"
+        f"\nSuccessfully generated {len(new_sessions)} historical test sessions "
+        f"with {len(all_test_results)} test results over {days} days"
     )
+
+
+def purge_database():
+    """Purge all data from the database."""
+    db_path = get_db_path()
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    
+    print("Purging database...")
+    cursor.execute("DELETE FROM test_results")
+    cursor.execute("DELETE FROM test_sessions")
+    conn.commit()
+    
+    # Get counts after purge
+    cursor.execute("SELECT COUNT(*) FROM test_sessions")
+    sessions_count = cursor.fetchone()[0]
+    cursor.execute("SELECT COUNT(*) FROM test_results")
+    results_count = cursor.fetchone()[0]
+    
+    conn.close()
+    print(f"Database purged. Remaining sessions: {sessions_count}, remaining results: {results_count}")
 
 
 if __name__ == "__main__":
@@ -220,17 +431,31 @@ if __name__ == "__main__":
         "--days",
         type=int,
         default=7,
-        help="Number of days of historical data to generate",
+        help="Number of days to generate data for",
     )
     parser.add_argument(
-        "--min-sessions", type=int, default=3, help="Minimum sessions per day"
+        "--min-sessions",
+        type=int,
+        default=3,
+        help="Minimum number of sessions per day",
     )
     parser.add_argument(
-        "--max-sessions", type=int, default=8, help="Maximum sessions per day"
+        "--max-sessions",
+        type=int,
+        default=8,
+        help="Maximum number of sessions per day",
+    )
+    parser.add_argument(
+        "--purge",
+        action="store_true",
+        help="Purge existing data before generating new data",
     )
 
     args = parser.parse_args()
-
+    
+    if args.purge:
+        purge_database()
+    
     generate_historical_data(
         days=args.days, sessions_per_day=(args.min_sessions, args.max_sessions)
     )
