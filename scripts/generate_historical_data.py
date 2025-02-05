@@ -31,17 +31,28 @@ def vary_number(original: int, variance_pct: float = 0.1) -> int:
     return max(0, original + random.randint(-variance, variance))
 
 
+# Define available SUT IDs
+SUT_IDS = [
+    "qa-ref-azulprimejdk17",
+    "qa-ref-dist-core-azulprime17",
+    "qa-re-openjdk17",
+    "qa-ref-dist-core-openjdk17"
+]
+
+
 def vary_session(session: Dict[Any, Any], base_time: datetime) -> Dict[Any, Any]:
     """Create a varied version of a test session."""
     varied = session.copy()
 
-    # Generate new session ID
+    # Generate new session ID and random SUT ID
     varied["session_id"] = str(uuid.uuid4())
+    varied["sut_id"] = random.choice(SUT_IDS)
 
     # Print debug info
     print("\nTemplate session values:")
     for k, v in varied.items():
-        print(f"{k}: {v}")
+        if k in ["sut_id", "num_tests", "num_passes", "num_failures", "num_errors", "num_skips", "num_xfails", "num_xpasses"]:
+            print(f"{k}: {v}")
 
     # Vary the test counts (maintain consistency)
     total = int(varied["num_tests"] or 0)  # Handle NULL
@@ -51,17 +62,29 @@ def vary_session(session: Dict[Any, Any], base_time: datetime) -> Dict[Any, Any]
     skipped = int(varied["num_skips"] or 0)
 
     # Calculate new counts while maintaining reasonable proportions
-    new_total = vary_number(total, 0.1)
+    new_total = vary_number(total, 0.25)
     ratio = new_total / total if total > 0 else 1
+
+    # Add XF and XP results
+    xf_ratio = random.uniform(0.05, 0.15)  # 5-15% of failures will be XF
+    xp_ratio = random.uniform(0.05, 0.15)  # 5-15% of passes will be XP
 
     new_passed = int(passed * ratio * random.uniform(0.95, 1.05))
     new_failed = int(failed * ratio * random.uniform(0.9, 1.1))
     new_errors = int(errors * ratio * random.uniform(0.9, 1.1))
     new_skipped = int(skipped * ratio * random.uniform(0.9, 1.1))
 
+    # Calculate XF and XP counts
+    new_xf = int(new_failed * xf_ratio)
+    new_xp = int(new_passed * xp_ratio)
+
+    # Adjust regular passes and failures
+    new_failed -= new_xf
+    new_passed -= new_xp
+
     # Ensure totals add up
-    while (new_passed + new_failed + new_errors + new_skipped) != new_total:
-        diff = new_total - (new_passed + new_failed + new_errors + new_skipped)
+    while (new_passed + new_failed + new_errors + new_skipped + new_xf + new_xp) != new_total:
+        diff = new_total - (new_passed + new_failed + new_errors + new_skipped + new_xf + new_xp)
         if diff > 0:
             new_passed += diff
         else:
@@ -72,20 +95,29 @@ def vary_session(session: Dict[Any, Any], base_time: datetime) -> Dict[Any, Any]
     varied["num_failures"] = new_failed
     varied["num_errors"] = new_errors
     varied["num_skips"] = new_skipped
+    varied["num_xfails"] = new_xf
+    varied["num_xpasses"] = new_xp
 
     # Vary the duration (handle NULL values)
-    base_duration = float(varied["duration"] or 10.0)  # Default to 10 seconds if NULL
+    base_duration = float(varied.get("duration", 10.0) or 10.0)  # Default to 10 seconds if NULL or NaN
+    if pd.isna(base_duration):
+        base_duration = 10.0
     varied["duration"] = base_duration * random.uniform(0.9, 1.1)
 
     # Set the timestamps
     varied["start_time"] = base_time
-    varied["end_time"] = base_time + timedelta(seconds=varied["duration"])
+    varied["end_time"] = base_time + timedelta(seconds=int(varied["duration"]))
 
     # Handle potentially NULL fields
-    varied["sut_id"] = varied["sut_id"] or ""
-    varied["sut_type"] = varied["sut_type"] or ""
-    varied["sut_version"] = varied["sut_version"] or ""
-    varied["sut_env"] = varied["sut_env"] or ""
+    varied["sut_type"] = varied.get("sut_type", "") or ""
+    varied["sut_version"] = varied.get("sut_version", "") or ""
+    varied["sut_env"] = varied.get("sut_env", "") or ""
+
+    # Print final values for verification
+    print("\nGenerated session values:")
+    for k, v in varied.items():
+        if k in ["sut_id", "num_tests", "num_passes", "num_failures", "num_errors", "num_skips", "num_xfails", "num_xpasses"]:
+            print(f"{k}: {v}")
 
     return varied
 
@@ -103,7 +135,7 @@ def generate_historical_data(days: int = 7, sessions_per_day: tuple = (3, 8)):
             session_id, start_time, end_time, duration,
             sut_id, sut_type, sut_version, sut_env,
             num_tests, num_passes, num_failures,
-            num_errors, num_skips
+            num_errors, num_skips, num_xfails, num_xpasses
         FROM test_sessions
         ORDER BY start_time DESC
         LIMIT 10
@@ -161,12 +193,12 @@ def generate_historical_data(days: int = 7, sessions_per_day: tuple = (3, 8)):
                 session_id, start_time, end_time, duration,
                 sut_id, sut_type, sut_version, sut_env,
                 num_tests, num_passes, num_failures,
-                num_errors, num_skips
+                num_errors, num_skips, num_xfails, num_xpasses
             ) VALUES (
                 :session_id, :start_time, :end_time, :duration,
                 :sut_id, :sut_type, :sut_version, :sut_env,
                 :num_tests, :num_passes, :num_failures,
-                :num_errors, :num_skips
+                :num_errors, :num_skips, :num_xfails, :num_xpasses
             )
         """,
             session,

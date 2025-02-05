@@ -2,7 +2,7 @@
 import sqlite3
 from datetime import datetime, timedelta
 from pathlib import Path
-
+import pytz
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
@@ -16,6 +16,15 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
 )
+
+# Global Plotly theme settings for larger fonts
+PLOTLY_LAYOUT = {
+    "font": {"size": 15},  # 25% larger than default (12)
+    "title_font_size": 20,
+    "legend_font_size": 15,
+    "xaxis_title_font_size": 15,
+    "yaxis_title_font_size": 15
+}
 
 # Custom CSS
 st.markdown(
@@ -72,6 +81,30 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+# Update Streamlit theme for larger text
+st.markdown("""
+<style>
+    .stMarkdown, .stText, .stTable, .stMetric {
+        font-size: 1.25rem !important;
+    }
+    .stMarkdown h1 {
+        font-size: 2.5rem !important;
+    }
+    .stMarkdown h2 {
+        font-size: 2rem !important;
+    }
+    .stMarkdown h3 {
+        font-size: 1.75rem !important;
+    }
+    .stMarkdown h4 {
+        font-size: 1.5rem !important;
+    }
+    .stSelectbox, .stMultiSelect, .stDateInput {
+        font-size: 1.25rem !important;
+    }
+</style>
+""", unsafe_allow_html=True)
+
 
 def ensure_db_exists():
     """Ensure the database exists and is initialized."""
@@ -102,54 +135,43 @@ def format_datetime(dt):
 
 @st.cache_data(ttl=10)  # Cache data for 10 seconds
 def load_session_data():
-    """Load test session data into a pandas DataFrame."""
+    """Load session data from the database."""
     db_path = ensure_db_exists()
-
+    query = """
+        SELECT
+            session_id, start_time, end_time, duration,
+            sut_id, num_tests, num_passes, num_failures,
+            num_errors, num_skips, num_xfails, num_xpasses
+        FROM test_sessions
+        ORDER BY start_time DESC
+        LIMIT 10000
+    """
+    
     try:
-        conn = sqlite3.connect(db_path)
-        df = pd.read_sql_query(
-            """
-            SELECT
-                session_id,
-                start_time,
-                end_time,
-                duration,
-                sut_id,
-                num_tests,
-                num_passes,
-                num_failures,
-                num_errors,
-                num_skips
-            FROM test_sessions
-            ORDER BY start_time DESC
-            """,
-            conn,
-            parse_dates=[
-                "start_time",
-                "end_time",
-            ],  # Explicitly parse these columns as datetime
-        )
-        conn.close()
+        with sqlite3.connect(db_path) as conn:
+            df = pd.read_sql_query(query, conn, parse_dates=['start_time', 'end_time'])
+            
+            # Ensure timezone awareness
+            if df['start_time'].dt.tz is None:
+                df['start_time'] = df['start_time'].dt.tz_localize('UTC')
+            if df['end_time'].dt.tz is None:
+                df['end_time'] = df['end_time'].dt.tz_localize('UTC')
+                
+            # Fill NaN/None values and convert to native types
+            df['sut_id'] = df['sut_id'].fillna('')
+            df['duration'] = df['duration'].fillna(0).astype(float)
 
-        # Fill NaN/None values
-        df["sut_id"] = df["sut_id"].fillna("")
-        df["duration"] = df["duration"].fillna(0)
-        df["num_tests"] = df["num_tests"].fillna(0).astype(int)
-        df["num_passes"] = df["num_passes"].fillna(0).astype(int)
-        df["num_failures"] = df["num_failures"].fillna(0).astype(int)
-        df["num_errors"] = df["num_errors"].fillna(0).astype(int)
-        df["num_skips"] = df["num_skips"].fillna(0).astype(int)
+            # Convert numeric columns to native Python int
+            int_columns = ['num_tests', 'num_passes', 'num_failures', 'num_errors', 'num_skips', 'num_xfails', 'num_xpasses']
+            for col in int_columns:
+                df[col] = df[col].fillna(0).astype('int32').astype(int)
 
-        # Calculate pass rate
-        df["pass_rate"] = (df["num_passes"] / df["num_tests"] * 100).fillna(0)
+            # Calculate pass rate as float
+            df['pass_rate'] = (df['num_passes'] / df['num_tests'] * 100).fillna(0).astype(float)
 
-        # Ensure datetime columns are properly formatted
-        df["start_time"] = pd.to_datetime(df["start_time"])
-        df["end_time"] = pd.to_datetime(df["end_time"])
-
-        return df
+            return df
     except Exception as e:
-        st.error(f"Error loading data: {str(e)}")
+        st.error(f"Error loading session data: {str(e)}")
         return pd.DataFrame()  # Return empty DataFrame on error
 
 
@@ -165,8 +187,9 @@ def plot_test_results_trend(df):
             x=df_sorted["start_time"],
             y=df_sorted["num_passes"],
             name="Passed",
-            line=dict(color="#28a745", width=2),
+            line=dict(color="#28a745", width=2, shape='spline', smoothing=1.3),
             fill="tonexty",
+            mode="lines+markers"
         )
     )
 
@@ -175,8 +198,9 @@ def plot_test_results_trend(df):
             x=df_sorted["start_time"],
             y=df_sorted["num_failures"],
             name="Failed",
-            line=dict(color="#dc3545", width=2),
+            line=dict(color="#dc3545", width=2, shape='spline', smoothing=1.3),
             fill="tonexty",
+            mode="lines+markers"
         )
     )
 
@@ -185,8 +209,9 @@ def plot_test_results_trend(df):
             x=df_sorted["start_time"],
             y=df_sorted["num_errors"],
             name="Errors",
-            line=dict(color="#fd7e14", width=2),
+            line=dict(color="#fd7e14", width=2, shape='spline', smoothing=1.3),
             fill="tonexty",
+            mode="lines+markers"
         )
     )
 
@@ -195,8 +220,31 @@ def plot_test_results_trend(df):
             x=df_sorted["start_time"],
             y=df_sorted["num_skips"],
             name="Skipped",
-            line=dict(color="#6c757d", width=2),
+            line=dict(color="#6c757d", width=2, shape='spline', smoothing=1.3),
             fill="tonexty",
+            mode="lines+markers"
+        )
+    )
+
+    fig.add_trace(
+        go.Scatter(
+            x=df_sorted["start_time"],
+            y=df_sorted["num_xfails"],
+            name="Expected Failures",
+            line=dict(color="#9932cc", width=2, shape='spline', smoothing=1.3),
+            fill="tonexty",
+            mode="lines+markers"
+        )
+    )
+
+    fig.add_trace(
+        go.Scatter(
+            x=df_sorted["start_time"],
+            y=df_sorted["num_xpasses"],
+            name="Unexpected Passes",
+            line=dict(color="#ffd700", width=2, shape='spline', smoothing=1.3),
+            fill="tonexty",
+            mode="lines+markers"
         )
     )
 
@@ -207,8 +255,55 @@ def plot_test_results_trend(df):
         hovermode="x unified",
         showlegend=True,
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        **PLOTLY_LAYOUT  # Apply global font settings
     )
 
+    return fig
+
+
+def plot_sut_pass_fail_trend(df, sut_id):
+    """Plot pass/fail rate trend for a specific SUT."""
+    df_sut = df[df['sut_id'] == sut_id].sort_values('start_time')
+    
+    fig = go.Figure()
+    
+    # Calculate pass rate for each session
+    df_sut['pass_rate'] = (df_sut['num_passes'] / df_sut['num_tests'] * 100)
+    df_sut['fail_rate'] = 100 - df_sut['pass_rate']
+    
+    # Add pass rate line
+    fig.add_trace(
+        go.Scatter(
+            x=df_sut['start_time'],
+            y=df_sut['pass_rate'],
+            name='Pass Rate',
+            line=dict(color='#28a745', width=2, shape='spline', smoothing=1.3),
+            mode='lines+markers'
+        )
+    )
+    
+    # Add fail rate line
+    fig.add_trace(
+        go.Scatter(
+            x=df_sut['start_time'],
+            y=df_sut['fail_rate'],
+            name='Fail Rate',
+            line=dict(color='#dc3545', width=2, shape='spline', smoothing=1.3),
+            mode='lines+markers'
+        )
+    )
+    
+    fig.update_layout(
+        title=f"Pass/Fail Rate Trend for {sut_id}",
+        xaxis_title="Date",
+        yaxis_title="Rate (%)",
+        yaxis_range=[0, 100],
+        hovermode="x unified",
+        showlegend=True,
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        **PLOTLY_LAYOUT
+    )
+    
     return fig
 
 
@@ -216,7 +311,7 @@ def plot_test_results_trend(df):
 with st.sidebar:
     st.title("pytest-oof Analysis")
     page = st.radio(
-        "Navigation", ["Dashboard", "Session Details", "Compare Sessions", "Trends"]
+        "Navigation", ["Dashboard", "Session Details", "Compare Sessions", "SUT Analysis", "Trends"]
     )
 
     # Time range filter
@@ -322,6 +417,8 @@ else:
                     "num_failures",
                     "num_errors",
                     "num_skips",
+                    "num_xfails",
+                    "num_xpasses",
                     "pass_rate",
                     "sut_id",
                 ]
@@ -341,6 +438,7 @@ else:
                 y="pass_rate",
                 title="Test Pass Rate Over Time",
             )
+            fig.update_traces(line_shape='spline', line_smoothing=1.3)
             st.plotly_chart(fig, use_container_width=True)
 
     elif page == "Session Details":
@@ -407,6 +505,8 @@ else:
                             if pd.notna(session["duration"])
                             else "N/A",
                         )
+                        st.write("**Expected Failures:**", session["num_xfails"])
+                        st.write("**Unexpected Passes:**", session["num_xpasses"])
 
                 # Test results visualization
                 st.markdown("### Test Results")
@@ -417,12 +517,14 @@ else:
                     fig_pie = go.Figure(
                         data=[
                             go.Pie(
-                                labels=["Passed", "Failed", "Errors", "Skipped"],
+                                labels=["Passed", "Failed", "Errors", "Skipped", "Expected Failures", "Unexpected Passes"],
                                 values=[
                                     session["num_passes"],
                                     session["num_failures"],
                                     session["num_errors"],
                                     session["num_skips"],
+                                    session["num_xfails"],
+                                    session["num_xpasses"],
                                 ],
                                 hole=0.3,
                                 marker_colors=[
@@ -430,6 +532,8 @@ else:
                                     "#dc3545",
                                     "#fd7e14",
                                     "#6c757d",
+                                    "#9932cc",
+                                    "#ffd700",
                                 ],
                             )
                         ]
@@ -464,6 +568,18 @@ else:
                                 y=[session["num_skips"]],
                                 name="Skipped",
                                 marker_color="#6c757d",
+                            ),
+                            go.Bar(
+                                x=["Tests"],
+                                y=[session["num_xfails"]],
+                                name="Expected Failures",
+                                marker_color="#9932cc",
+                            ),
+                            go.Bar(
+                                x=["Tests"],
+                                y=[session["num_xpasses"]],
+                                name="Unexpected Passes",
+                                marker_color="#ffd700",
                             ),
                         ]
                     )
@@ -534,58 +650,36 @@ else:
 
                 # Comparison visualizations
                 st.markdown("### Session Comparison")
-
-                # Metrics comparison
-                metrics = [
-                    ("num_tests", "Total Tests"),
-                    ("num_passes", "Passed Tests"),
-                    ("num_failures", "Failed Tests"),
-                    ("num_errors", "Test Errors"),
-                    ("num_skips", "Skipped Tests"),
-                    ("pass_rate", "Pass Rate (%)"),
-                ]
-
-                for metric, label in metrics:
-                    st.markdown(f"#### {label}")
-                    cols = st.columns(len(selected_data))
-
-                    baseline = None
-                    for i, (col, session) in enumerate(zip(cols, selected_data)):
-                        with col:
-                            value = session[metric]
-                            if "rate" in metric:
-                                formatted_value = f"{value:.1f}%"
-                                if i > 0:
-                                    delta = value - baseline
-                                    st.metric(
-                                        session["session_id"],
-                                        formatted_value,
-                                        f"{delta:+.1f}pp",
-                                        delta_color="normal"
-                                        if abs(delta) < 1
-                                        else "inverse"
-                                        if delta < 0
-                                        else "normal",
-                                    )
-                                else:
-                                    st.metric(session["session_id"], formatted_value)
-                                    baseline = value
-                            else:
-                                if i > 0:
-                                    delta = value - baseline
-                                    st.metric(
-                                        session["session_id"],
-                                        value,
-                                        delta,
-                                        delta_color="normal"
-                                        if abs(delta) < 1
-                                        else "inverse"
-                                        if delta < 0
-                                        else "normal",
-                                    )
-                                else:
-                                    st.metric(session["session_id"], value)
-                                    baseline = value
+                
+                # Create 4 columns for metrics
+                col1, col2, col3, col4 = st.columns(4)
+                
+                # Column 1: Test counts
+                with col1:
+                    st.metric("Total Tests", selected_data[0]["num_tests"], delta=int(selected_data[1]["num_tests"] - selected_data[0]["num_tests"]))
+                    st.metric("Pass Rate", f"{selected_data[0]['pass_rate']:.1f}%", delta=f"{(selected_data[1]['pass_rate'] - selected_data[0]['pass_rate']):.1f}%")
+                    st.metric("Duration", f"{selected_data[0]['duration']:.1f}s", delta=f"{(selected_data[1]['duration'] - selected_data[0]['duration']):.1f}s")
+                
+                # Column 2: Pass/Fail
+                with col2:
+                    st.metric("Passes", selected_data[0]["num_passes"], delta=int(selected_data[1]["num_passes"] - selected_data[0]["num_passes"]))
+                    st.metric("Failures", selected_data[0]["num_failures"], delta=int(selected_data[1]["num_failures"] - selected_data[0]["num_failures"]))
+                    st.metric("Errors", selected_data[0]["num_errors"], delta=int(selected_data[1]["num_errors"] - selected_data[0]["num_errors"]))
+                
+                # Column 3: Skip/XFail
+                with col3:
+                    st.metric("Skips", selected_data[0]["num_skips"], delta=int(selected_data[1]["num_skips"] - selected_data[0]["num_skips"]))
+                    st.metric("Expected Failures", selected_data[0]["num_xfails"], delta=int(selected_data[1]["num_xfails"] - selected_data[0]["num_xfails"]))
+                    st.metric("Unexpected Passes", selected_data[0]["num_xpasses"], delta=int(selected_data[1]["num_xpasses"] - selected_data[0]["num_xpasses"]))
+                
+                # Column 4: Additional Info
+                with col4:
+                    st.markdown(f"**Session 1 Details**")
+                    st.markdown(f"Start: {selected_data[0]['start_time'].strftime('%Y-%m-%d %H:%M:%S')}")
+                    st.markdown(f"SUT: {selected_data[0]['sut_id']}")
+                    st.markdown(f"\n**Session 2 Details**")
+                    st.markdown(f"Start: {selected_data[1]['start_time'].strftime('%Y-%m-%d %H:%M:%S')}")
+                    st.markdown(f"SUT: {selected_data[1]['sut_id']}")
 
                 # Stacked bar comparison
                 st.markdown("### Test Results Comparison")
@@ -596,18 +690,22 @@ else:
                     fig.add_trace(
                         go.Bar(
                             name=session["session_id"],
-                            x=["Passed", "Failed", "Errors", "Skipped"],
+                            x=["Passed", "Failed", "Errors", "Skipped", "Expected Failures", "Unexpected Passes"],
                             y=[
                                 session["num_passes"],
                                 session["num_failures"],
                                 session["num_errors"],
                                 session["num_skips"],
+                                session["num_xfails"],
+                                session["num_xpasses"],
                             ],
                             text=[
                                 session["num_passes"],
                                 session["num_failures"],
                                 session["num_errors"],
                                 session["num_skips"],
+                                session["num_xfails"],
+                                session["num_xpasses"],
                             ],
                             textposition="auto",
                         )
@@ -627,37 +725,190 @@ else:
 
                 st.plotly_chart(fig, use_container_width=True)
 
-                # Compare metrics
-                for col in [
-                    "num_tests",
-                    "num_passes",
-                    "num_failures",
-                    "num_errors",
-                    "num_skips",
-                ]:
-                    with st.container():
-                        diff = int(df_compare.iloc[0][col]) - int(
-                            df_compare.iloc[1][col]
-                        )
-                        st.metric(
-                            label=col.replace("num_", "").title(),
-                            value=int(df_compare.iloc[0][col]),
-                            delta=int(diff),
-                            delta_color="inverse"
-                            if col in ["num_failures", "num_errors", "num_skips"]
-                            else "normal",
-                        )
+    elif page == "SUT Analysis":
+        st.title("System Under Test Analysis")
 
-                # Compare pass rates
-                pass_rate_diff = float(df_compare.iloc[0]["pass_rate"]) - float(
-                    df_compare.iloc[1]["pass_rate"]
-                )
-                st.metric(
-                    label="Pass Rate",
-                    value=f"{float(df_compare.iloc[0]['pass_rate']):.1f}%",
-                    delta=f"{pass_rate_diff:+.1f}%",
-                    delta_color="normal",
-                )
+        # Time window selection
+        st.sidebar.markdown("### Time Window")
+        window_options = {
+            "Last 24 Hours": timedelta(days=1),
+            "Last 7 Days": timedelta(days=7),
+            "Last 30 Days": timedelta(days=30),
+            "All Time": None
+        }
+        selected_window = st.sidebar.selectbox("Select Time Window", list(window_options.keys()))
+        
+        # Filter data based on time window
+        df = load_session_data()
+        if window_options[selected_window]:
+            cutoff_time = pd.Timestamp.now(pytz.utc) - window_options[selected_window]
+            df = df[df['start_time'] >= cutoff_time]
+        
+        # Get unique SUTs and add selector
+        suts = sorted(df['sut_id'].unique())
+        if not suts:
+            st.warning("No test data available for the selected time window.")
+            st.stop()
+            
+        selected_sut = st.selectbox(
+            "Select System Under Test",
+            suts,
+            format_func=lambda x: f"SUT: {x}"
+        )
+        
+        # Filter data for selected SUT
+        df_sut = df[df['sut_id'] == selected_sut]
+        
+        # Create two columns for the summary metrics
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.metric("Total Sessions", len(df_sut))
+        with col2:
+            total_tests = df_sut['num_tests'].sum()
+            st.metric("Total Tests", total_tests)
+        with col3:
+            pass_rate = (df_sut['num_passes'].sum() / total_tests * 100) if total_tests > 0 else 0
+            st.metric("Overall Pass Rate", f"{pass_rate:.1f}%")
+        with col4:
+            avg_duration = df_sut['duration'].mean()
+            st.metric("Avg Duration", f"{avg_duration:.1f}s")
+        
+        # Pass/Fail trend chart
+        st.markdown("### Pass/Fail Rate Trend")
+        
+        # Create trend chart
+        fig = go.Figure()
+        
+        # Add traces
+        fig.add_trace(
+            go.Scatter(
+                x=df_sut['start_time'],
+                y=df_sut['pass_rate'],
+                name='Pass Rate',
+                line=dict(color='#28a745', width=2),
+                mode='lines+markers'
+            )
+        )
+        
+        # Add test count trace on secondary y-axis
+        fig.add_trace(
+            go.Scatter(
+                x=df_sut['start_time'],
+                y=df_sut['num_tests'],
+                name='Total Tests',
+                line=dict(color='#17a2b8', width=2),
+                mode='lines+markers',
+                yaxis='y2'
+            )
+        )
+
+        # Update layout
+        fig.update_layout(
+            title='Pass Rate and Test Count Trends',
+            xaxis=dict(title='Time'),
+            yaxis=dict(
+                title='Pass Rate (%)',
+                range=[0, 100],
+                gridcolor='rgba(0,0,0,0.1)'
+            ),
+            yaxis2=dict(
+                title='Total Tests',
+                overlaying='y',
+                side='right',
+                gridcolor='rgba(0,0,0,0.1)'
+            ),
+            hovermode='x unified',
+            showlegend=True,
+            legend=dict(
+                orientation="h",
+                yanchor="bottom",
+                y=1.02,
+                xanchor="right",
+                x=1
+            ),
+            **PLOTLY_LAYOUT
+        )
+        
+        st.plotly_chart(fig, use_container_width=True)
+        
+        # Create two columns for additional metrics
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            # Detailed metrics table
+            st.markdown("### Test Result Breakdown")
+            metrics_df = df_sut.agg({
+                'num_tests': 'sum',
+                'num_passes': 'sum',
+                'num_failures': 'sum',
+                'num_errors': 'sum',
+                'num_skips': 'sum',
+                'num_xfails': 'sum',
+                'num_xpasses': 'sum',
+                'duration': 'mean'
+            })
+            
+            # Format values - integers for counts, float for duration
+            metrics_table = pd.DataFrame({
+                'Metric': [
+                    'Total Tests', 'Passes', 'Failures', 'Errors', 'Skips',
+                    'Expected Failures', 'Unexpected Passes', 'Avg Duration (s)'
+                ],
+                'Value': [
+                    int(metrics_df['num_tests']),
+                    int(metrics_df['num_passes']),
+                    int(metrics_df['num_failures']),
+                    int(metrics_df['num_errors']),
+                    int(metrics_df['num_skips']),
+                    int(metrics_df['num_xfails']),
+                    int(metrics_df['num_xpasses']),
+                    f"{float(metrics_df['duration']):.2f}"
+                ]
+            })
+            st.table(metrics_table)
+            
+        with col2:
+            # Test result distribution pie chart
+            st.markdown("### Result Distribution")
+            
+            # Prepare data
+            labels = ["Passed", "Failed", "Errors", "Skipped", "Expected Failures", "Unexpected Passes"]
+            values = [
+                int(df_sut['num_passes'].sum()),
+                int(df_sut['num_failures'].sum()),
+                int(df_sut['num_errors'].sum()),
+                int(df_sut['num_skips'].sum()),
+                int(df_sut['num_xfails'].sum()),
+                int(df_sut['num_xpasses'].sum())
+            ]
+            colors = ["#28a745", "#dc3545", "#fd7e14", "#6c757d", "#9932cc", "#ffd700"]
+            
+            fig_pie = go.Figure()
+            fig_pie.add_trace(go.Pie(
+                labels=labels,
+                values=values,
+                hole=0.3,
+                marker_colors=colors,
+                texttemplate="%{value} (%{percent})",
+                hovertemplate="<b>%{label}</b><br>" +
+                            "Count: %{value}<br>" +
+                            "Percentage: %{percent}<extra></extra>"
+            ))
+            
+            fig_pie.update_layout(
+                showlegend=True,
+                legend=dict(
+                    orientation="h",
+                    yanchor="bottom",
+                    y=1.02,
+                    xanchor="right",
+                    x=1
+                ),
+                **PLOTLY_LAYOUT
+            )
+            
+            fig_pie.update_traces(textposition='inside')
+            st.plotly_chart(fig_pie, use_container_width=True)
 
     else:  # Trends
         st.title("Test Result Trends")
@@ -681,6 +932,8 @@ else:
                         "num_failures": "sum",
                         "num_errors": "sum",
                         "num_skips": "sum",
+                        "num_xfails": "sum",
+                        "num_xpasses": "sum",
                     }
                 )
                 .reset_index()
@@ -703,7 +956,7 @@ else:
                     x=daily_stats["date"],
                     y=daily_stats["pass_rate"],
                     name="Pass Rate",
-                    line=dict(color="#28a745", width=2),
+                    line=dict(color="#28a745", width=2, shape='spline', smoothing=1.3),
                     mode="lines+markers",
                 )
             )
@@ -713,7 +966,7 @@ else:
                     x=daily_stats["date"],
                     y=daily_stats["failure_rate"],
                     name="Failure Rate",
-                    line=dict(color="#dc3545", width=2),
+                    line=dict(color="#dc3545", width=2, shape='spline', smoothing=1.3),
                     mode="lines+markers",
                 )
             )
@@ -727,6 +980,7 @@ else:
                 legend=dict(
                     orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1
                 ),
+                **PLOTLY_LAYOUT
             )
 
             st.plotly_chart(fig_pass_rate, use_container_width=True)
@@ -743,6 +997,8 @@ else:
                 ("num_failures", "Failed", "#dc3545"),
                 ("num_errors", "Errors", "#fd7e14"),
                 ("num_skips", "Skipped", "#6c757d"),
+                ("num_xfails", "Expected Failures", "#9932cc"),
+                ("num_xpasses", "Unexpected Passes", "#ffd700"),
             ]
 
             for metric, label, color in metrics:
@@ -751,7 +1007,7 @@ else:
                         x=daily_stats["date"],
                         y=daily_stats[metric],
                         name=label,
-                        line=dict(color=color, width=2),
+                        line=dict(color=color, width=2, shape='spline', smoothing=1.3),
                         mode="lines+markers",
                     )
                 )
@@ -765,6 +1021,7 @@ else:
                 legend=dict(
                     orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1
                 ),
+                **PLOTLY_LAYOUT
             )
 
             st.plotly_chart(fig_volume, use_container_width=True)
@@ -781,6 +1038,8 @@ else:
                         "num_failures": "sum",
                         "num_errors": "sum",
                         "num_skips": "sum",
+                        "num_xfails": "sum",
+                        "num_xpasses": "sum",
                     }
                 )
                 .reset_index()
@@ -809,6 +1068,7 @@ else:
                 xaxis_title="SUT ID",
                 yaxis_title="Pass Rate (%)",
                 showlegend=True,
+                **PLOTLY_LAYOUT
             )
 
             st.plotly_chart(fig_sut, use_container_width=True)

@@ -93,6 +93,7 @@ def analyze_results(
     list_sessions: bool = False,
     list_sessions_limit: int = 10,
     compare_with: Optional[str] = None,
+    output_format: str = "json",  # Add output_format parameter with default value
 ) -> None:
     """Analyze test results from the database."""
     # Initialize database if it doesn't exist
@@ -102,30 +103,38 @@ def analyze_results(
     if list_sessions:
         sessions = list_recent_sessions(db_path, list_sessions_limit)
         if not sessions:
-            click.echo("No test sessions found in the database")
+            click.echo("No test sessions found.")
             return
 
-        click.echo("\nRecent Test Sessions:")
-        click.echo("-" * 90)
-        click.echo(
-            f"{'Session ID':45} {'Start Time':20} {'Duration':10} {'SUT Info':15}"
-        )
-        click.echo("-" * 90)
+        click.echo("\nRecent test sessions:")
         for session in sessions:
-            duration = f"{session['duration']:.1f}s" if session["duration"] else "N/A"
-            sut_info = session["sut_id"]
-            if session["sut_type"]:
-                sut_info = (
-                    f"{sut_info} ({session['sut_type']})"
-                    if sut_info
-                    else session["sut_type"]
-                )
-            short_id = get_short_session_id(session["session_id"])
-            session_display = f"{short_id} ({session['session_id']})"
+            session_id = session["session_id"]
+            short_id = get_short_session_id(session_id)
+            start_time = session["start_time"]
+            sut_info = f" ({session['sut_id']})" if session["sut_id"] else ""
             click.echo(
-                f"{session_display:<45} {session['start_time']:<20} {duration:<10} {sut_info:<15}"
+                f"- {short_id}: {start_time}{sut_info}"
             )
-        click.echo("\nUse --id <SESSION ID> with either the short or full session ID")
+        return
+
+    # If export file is specified, export results
+    if export_file:
+        click.echo(f"\nExporting results to {export_file}...")
+        export_results(
+            db_path,
+            session_id=session_id,
+            start_time=start_time,
+            end_time=end_time,
+            sut_id=sut_id,
+            sut_type=sut_type,
+            sut_version=sut_version,
+            sut_env=sut_env,
+            output_file=export_file,
+            output_format=output_format,  # Pass output_format to export_results
+            outcome=outcome,
+            test_id=test_id,
+        )
+        click.echo("Export complete.")
         return
 
     # Convert outcome to lowercase
