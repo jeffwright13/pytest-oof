@@ -27,22 +27,6 @@ def init_db(db_path: Path) -> None:
     with db_connection(db_path) as conn:
         c = conn.cursor()
 
-        # Drop existing tables
-        c.executescript(
-            """
-            DROP TABLE IF EXISTS test_fixture_usage;
-            DROP TABLE IF EXISTS fixtures;
-            DROP TABLE IF EXISTS system_state;
-            DROP TABLE IF EXISTS test_artifacts;
-            DROP TABLE IF EXISTS resource_metrics;
-            DROP TABLE IF EXISTS report_metrics;
-            DROP TABLE IF EXISTS console_output;
-            DROP TABLE IF EXISTS test_results;
-            DROP TABLE IF EXISTS test_sessions;
-            DROP TABLE IF EXISTS schema_version;
-            """
-        )
-
         # Create tables if they don't exist
         c.executescript(
             """
