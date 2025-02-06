@@ -484,10 +484,11 @@ def analyze_results(
 
 
 @click.command()
-@click.argument(
-    "db_path",
+@click.option(
+    "--db-path",
     type=click.Path(exists=True, dir_okay=False, path_type=Path),
-    default=Path("test_results.db"),
+    default=Path("oof/oof-results.db"),
+    help="Path to the SQLite database file",
 )
 @click.option("--delete-all", is_flag=True, help="Delete all test results")
 @click.option("--delete-last-n", type=int, help="Delete the last N sessions")
