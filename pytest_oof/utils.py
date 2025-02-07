@@ -177,6 +177,9 @@ class TestResult:
     error_traceback: str = ""
     has_warning: bool = False
     longreprtext: str = ""
+    caplog: str = ""
+    capstdout: str = ""
+    capstderr: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -191,6 +194,9 @@ class TestResult:
             "error_traceback": self.error_traceback,
             "has_warning": self.has_warning,
             "longreprtext": self.longreprtext,
+            "caplog": self.caplog,
+            "capstdout": self.capstdout,
+            "capstderr": self.capstderr,
         }
 
 

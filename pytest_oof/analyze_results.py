@@ -492,7 +492,7 @@ def analyze_results(
         return
 
 
-@click.command()
+@click.command(context_settings={"help_option_names": ["-h", "--help"]})
 @click.option(
     "--db-path",
     type=click.Path(exists=True, dir_okay=False, path_type=Path),

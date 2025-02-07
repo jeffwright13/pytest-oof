@@ -88,6 +88,9 @@ def init_db(db_path: Path) -> None:
                 is_flaky BOOLEAN DEFAULT 0,
                 final_outcome TEXT DEFAULT NULL,
                 total_rerun_time REAL DEFAULT 0,
+                caplog TEXT,
+                capstdout TEXT,
+                capstderr TEXT,
                 FOREIGN KEY (session_id) REFERENCES test_sessions (id)
             )
             """
@@ -110,7 +113,7 @@ def init_db(db_path: Path) -> None:
         current_version = row[0] if row else 0
 
         # Update schema version if needed
-        if current_version < 7:  # Increment version for rerun columns
+        if current_version < 8:  # Increment version for capture columns
             # Check if columns exist first
             cursor = c.execute("PRAGMA table_info(test_results)")
             existing_columns = {col[1] for col in cursor.fetchall()}
@@ -152,6 +155,12 @@ def init_db(db_path: Path) -> None:
                 c.execute(
                     "ALTER TABLE test_results ADD COLUMN total_rerun_time REAL DEFAULT 0"
                 )
+            if "caplog" not in existing_columns:
+                c.execute("ALTER TABLE test_results ADD COLUMN caplog TEXT")
+            if "capstdout" not in existing_columns:
+                c.execute("ALTER TABLE test_results ADD COLUMN capstdout TEXT")
+            if "capstderr" not in existing_columns:
+                c.execute("ALTER TABLE test_results ADD COLUMN capstderr TEXT")
 
             # Check test_sessions columns
             cursor = c.execute("PRAGMA table_info(test_sessions)")
@@ -171,7 +180,7 @@ def init_db(db_path: Path) -> None:
                     "ALTER TABLE test_sessions ADD COLUMN total_rerun_time REAL DEFAULT 0"
                 )
 
-            c.execute("INSERT INTO schema_version (version) VALUES (?)", (7,))
+            c.execute("INSERT INTO schema_version (version) VALUES (?)", (8,))
             conn.commit()
 
 
@@ -248,6 +257,9 @@ def add_test_result(
     is_flaky: bool = False,
     final_outcome: Optional[str] = None,
     total_rerun_time: Optional[float] = None,
+    caplog: Optional[str] = None,
+    capstdout: Optional[str] = None,
+    capstderr: Optional[str] = None,
 ) -> int:
     """Add a test result to the database and return its ID."""
     with db_connection(db_path) as conn:
@@ -274,9 +286,11 @@ def add_test_result(
                 rerun_error_messages,
                 is_flaky,
                 final_outcome,
-                total_rerun_time
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                total_rerun_time,
+                caplog,
+                capstdout,
+                capstderr
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 session_id,
@@ -298,6 +312,9 @@ def add_test_result(
                 is_flaky,
                 final_outcome,
                 total_rerun_time,
+                caplog,
+                capstdout,
+                capstderr,
             ),
         )
 
@@ -448,7 +465,10 @@ def export_results(
                     rerun_error_messages,
                     is_flaky,
                     final_outcome,
-                    total_rerun_time
+                    total_rerun_time,
+                    caplog,
+                    capstdout,
+                    capstderr
                 FROM test_results
                 WHERE session_id = ?
                 ORDER BY timestamp
@@ -509,6 +529,9 @@ def export_results(
                         "is_flaky": bool(tr[15]),
                         "final_outcome": tr[16],
                         "total_rerun_time": tr[17],
+                        "caplog": tr[18],
+                        "capstdout": tr[19],
+                        "capstderr": tr[20],
                         "session_id": session[0],
                     }
                     for tr in test_results
@@ -553,26 +576,34 @@ def delete_results(
     """
     with db_connection(db_path) as conn:
         cursor = conn.cursor()
-
-        # Build WHERE clause based on filters
         where_clauses = []
         params = []
 
-        if not all_results:
-            if start_time:
-                where_clauses.append("start_time >= ?")
-                params.append(start_time)
-            if end_time:
-                where_clauses.append("start_time <= ?")
-                params.append(end_time)
-            if sut_id:
-                where_clauses.append("sut_id = ?")
-                params.append(sut_id)
-            if sut_type:
-                where_clauses.append("sut_type = ?")
-                params.append(sut_type)
+        if all_results:
+            # Delete all test results first
+            cursor.execute("DELETE FROM test_results")
+            # Then delete all sessions
+            cursor.execute("DELETE FROM test_sessions")
+            deleted_count = cursor.rowcount
+            conn.commit()
+            return deleted_count
 
-        # For last N sessions, we need to get the session IDs first
+        # Build WHERE clause for filtering sessions
+        if start_time:
+            where_clauses.append("start_time >= ?")
+            params.append(start_time)
+        if end_time:
+            where_clauses.append("start_time <= ?")
+            params.append(end_time)
+        if sut_id:
+            where_clauses.append("sut_id = ?")
+            params.append(sut_id)
+        if sut_type:
+            where_clauses.append("sut_type = ?")
+            params.append(sut_type)
+
+        # Handle last_n_sessions
+        session_ids = []
         if last_n_sessions:
             cursor.execute(
                 """
@@ -587,16 +618,32 @@ def delete_results(
                 where_clauses.append(f"id IN ({','.join('?' * len(session_ids))})")
                 params.extend(session_ids)
 
-        # Build and execute the DELETE query
-        query = "DELETE FROM test_sessions"
+        # Build base query for getting session IDs to delete
+        query = "SELECT id FROM test_sessions"
         if where_clauses:
             query += " WHERE " + " AND ".join(where_clauses)
 
+        # Get the session IDs that will be deleted
         cursor.execute(query, params)
-        deleted_count = cursor.rowcount
-        conn.commit()
+        session_ids_to_delete = [row[0] for row in cursor.fetchall()]
 
-        return deleted_count
+        if session_ids_to_delete:
+            # Delete test results for these sessions first
+            cursor.execute(
+                f"DELETE FROM test_results WHERE session_id IN ({','.join('?' * len(session_ids_to_delete))})",
+                session_ids_to_delete,
+            )
+
+            # Then delete the sessions
+            cursor.execute(
+                f"DELETE FROM test_sessions WHERE id IN ({','.join('?' * len(session_ids_to_delete))})",
+                session_ids_to_delete,
+            )
+            deleted_count = cursor.rowcount
+            conn.commit()
+            return deleted_count
+
+        return 0
 
 
 def update_session_stats(db_path: Path, session_id: int) -> None:

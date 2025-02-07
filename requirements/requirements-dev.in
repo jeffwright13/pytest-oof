@@ -1,13 +1,19 @@
 -c requirements.txt
 
 black
-click>=8.1.7
-faker
+build
 flake8
 isort
 pre-commit
 pyflakes
+pytest-cov
+pytest-faker
+pytest-html
+pytest-json-report
+pytest-metadata
 pytest-mock<3.0.0
+pytest-repeat
 pytest-rerunfailures
+pytest-tally
 twine
 wheel

@@ -160,6 +160,11 @@ def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo) -> None:
     error_traceback = getattr(report, "longreprtext", "")
     longreprtext = str(getattr(report, "longrepr", ""))  # Store full failure output
 
+    # Get capture output
+    caplog = getattr(report, "caplog", "")
+    capstdout = getattr(report, "capstdout", "")
+    capstderr = getattr(report, "capstderr", "")
+
     # Check for warnings
     has_warning = hasattr(report, "warnings") and len(report.warnings) > 0
 
@@ -171,6 +176,9 @@ def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo) -> None:
         error_message=error_message,
         error_type=error_type,
         error_traceback=error_traceback,
+        caplog=caplog,
+        capstderr=capstderr,
+        capstdout=capstdout,
         has_warning=has_warning,
         longreprtext=longreprtext,
     )
@@ -208,6 +216,9 @@ def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo) -> None:
             error_message=error_message,
             error_type=error_type,
             error_traceback=error_traceback,
+            caplog=caplog,
+            capstderr=capstderr,
+            capstdout=capstdout,
             has_warning=has_warning,
             longreprtext=longreprtext,
         )
