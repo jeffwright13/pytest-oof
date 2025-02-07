@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 
-import json
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -15,7 +14,7 @@ from pytest_oof.db import (
     get_db_id_from_session_id,
     init_db,
 )
-from pytest_oof.utils import LongitudinalAnalysis, Results, TestHistory
+from pytest_oof.utils import LongitudinalAnalysis, TestHistory
 
 
 def validate_timestamp(
@@ -112,29 +111,7 @@ def analyze_results(
             short_id = get_short_session_id(session_id)
             start_time = session["start_time"]
             sut_info = f" ({session['sut_id']})" if session["sut_id"] else ""
-            click.echo(
-                f"- {short_id}: {start_time}{sut_info}"
-            )
-        return
-
-    # If export file is specified, export results
-    if export_file:
-        click.echo(f"\nExporting results to {export_file}...")
-        export_results(
-            db_path,
-            session_id=session_id,
-            start_time=start_time,
-            end_time=end_time,
-            sut_id=sut_id,
-            sut_type=sut_type,
-            sut_version=sut_version,
-            sut_env=sut_env,
-            output_file=export_file,
-            output_format=output_format,  # Pass output_format to export_results
-            outcome=outcome,
-            test_id=test_id,
-        )
-        click.echo("Export complete.")
+            click.echo(f"- {short_id}: {start_time}{sut_info}")
         return
 
     # Convert outcome to lowercase
@@ -170,6 +147,39 @@ def analyze_results(
 
             db_id = result[0]
 
+    # If export file is specified, export results
+    if export_file:
+        click.echo(f"\nExporting results to {export_file}...")
+
+        # If we have a session_id but no db_id, try to get the db_id
+        if session_id and not db_id:
+            db_id = get_db_id_from_session_id(db_path, session_id)
+            if not db_id:
+                click.echo(f"No session found with session ID {session_id}")
+                return
+
+        results = export_results(
+            db_path,
+            session_id=db_id,  # This can be None if we want all sessions
+            start_time=start_time,
+            end_time=end_time,
+            sut_id=sut_id,
+            sut_type=sut_type,
+            sut_version=sut_version,
+            sut_env=sut_env,
+            output_file=export_file,
+            output_format=output_format,
+            outcome=outcome,
+            test_id=test_id,
+        )
+
+        if not results:
+            click.echo("No results found matching the specified criteria.")
+            return
+
+        click.echo(f"Exported {len(results)} session(s) to {export_file}")
+        return
+
     # If a specific session ID is provided, show detailed results for that session
     if db_id is not None:
         results = export_results(
@@ -190,7 +200,6 @@ def analyze_results(
 
         click.echo(f"\nSession {display_id} Details:")
         click.echo("-" * 40)
-        # Safely access dictionary keys
         click.echo(f"Session ID: {session.get('session_id', 'N/A')}")
         click.echo(f"Start Time: {session.get('start_time', 'N/A')}")
         click.echo(f"End Time: {session.get('end_time', 'N/A') or 'N/A'}")
@@ -202,7 +211,7 @@ def analyze_results(
 
         # Show test statistics if available
         if session.get("num_tests"):
-            click.echo(f"\nTest Statistics:")
+            click.echo("\nTest Statistics:")
             click.echo(f"Total Tests: {session.get('num_tests', 0)}")
             click.echo(f"Passed: {session.get('num_passes', 0)}")
             click.echo(f"Failed: {session.get('num_failures', 0)}")
