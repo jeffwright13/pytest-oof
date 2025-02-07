@@ -1,0 +1,43 @@
+#!/usr/bin/env python3
+"""Launch the pytest-oof GUI."""
+import argparse
+import sys
+
+from nicegui import ui
+from pytest_oof.gui.longitudinal_view import LongitudinalView
+
+def main():
+    parser = argparse.ArgumentParser(description='Launch the pytest-oof GUI')
+    parser.add_argument('--port', type=int, default=8000, help='Port to run the server on (default: 8000)')
+    args = parser.parse_args()
+
+    view = LongitudinalView()
+
+    ui.label('Longitudinal Test Outcome Analysis').classes('text-h4 q-my-md')
+
+    with ui.row().classes('w-full items-center'):
+        ui.select(
+            label='Select SUTs (max 4)',
+            options=view.get_available_suts(),
+            multiple=True,
+            on_change=view.on_sut_select
+        ).classes('w-64').props('use-chips max-values=4')
+
+        ui.number(
+            label='Window Size (days)',
+            value=7,
+            min=1,
+            max=90,
+            on_change=view.on_window_change
+        ).classes('w-32')
+
+    view.plot = ui.plotly({}).classes('w-full h-[600px]')
+
+    try:
+        ui.run(title='Pytest-OOF Longitudinal View', port=args.port, reload=False)
+    except OSError as e:
+        print(f"Error: Could not start server on port {args.port}. Port may be in use.", file=sys.stderr)
+        sys.exit(1)
+
+if __name__ in {"__main__", "__mp_main__"}:
+    main()

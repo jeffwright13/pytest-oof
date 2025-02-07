@@ -37,7 +37,12 @@ def list_recent_sessions(db_path: Path, limit: int = 10) -> List[Dict[str, Any]]
         c = conn.cursor()
         c.execute(
             """
-            SELECT id, session_id, start_time, end_time, duration, sut_id, sut_type
+            SELECT 
+                id, start_time, stop_time, duration, 
+                sut_id, sut_type, sut_version, sut_env,
+                num_tests, num_passes, num_failures,
+                num_errors, num_skips, num_xfails, num_xpasses,
+                num_reruns, num_rerun_groups
             FROM test_sessions
             ORDER BY start_time DESC
             LIMIT ?
@@ -45,7 +50,17 @@ def list_recent_sessions(db_path: Path, limit: int = 10) -> List[Dict[str, Any]]
             (limit,),
         )
         columns = [desc[0] for desc in c.description]
-        return [dict(zip(columns, row)) for row in c.fetchall()]
+        sessions = [dict(zip(columns, row)) for row in c.fetchall()]
+        
+        # Format the output for better readability
+        for session in sessions:
+            session["id_short"] = get_short_session_id(session["id"])
+            if session["start_time"]:
+                session["start_time"] = datetime.fromisoformat(session["start_time"]).strftime("%Y-%m-%d %H:%M:%S")
+            if session["stop_time"]:
+                session["stop_time"] = datetime.fromisoformat(session["stop_time"]).strftime("%Y-%m-%d %H:%M:%S")
+        
+        return sessions
 
 
 def get_short_session_id(session_id: str, length: int = 8) -> str:
@@ -60,7 +75,7 @@ def find_session_by_suffix(db_path: Path, suffix: str) -> Optional[str]:
     with db_connection(db_path) as conn:
         c = conn.cursor()
         c.execute(
-            "SELECT session_id FROM test_sessions WHERE session_id LIKE ?",
+            "SELECT id FROM test_sessions WHERE id LIKE ?",
             (f"%{suffix}",),
         )
         matches = c.fetchall()
@@ -106,9 +121,10 @@ def analyze_results(
             return
 
         click.echo("\nRecent test sessions:")
+        click.echo("-" * 40)
         for session in sessions:
-            session_id = session["session_id"]
-            short_id = get_short_session_id(session_id)
+            session_id = session["id"]
+            short_id = session["id_short"]
             start_time = session["start_time"]
             sut_info = f" ({session['sut_id']})" if session["sut_id"] else ""
             click.echo(f"- {short_id}: {start_time}{sut_info}")
@@ -125,7 +141,7 @@ def analyze_results(
         with db_connection(db_path) as conn:
             c = conn.cursor()
             c.execute(
-                "SELECT id FROM test_sessions WHERE session_id = ?",
+                "SELECT id FROM test_sessions WHERE id = ?",
                 (session_id,),
             )
             result = c.fetchone()
@@ -140,7 +156,7 @@ def analyze_results(
                     click.echo(f"No session found with session ID {session_id}")
                     return
                 c.execute(
-                    "SELECT id FROM test_sessions WHERE session_id = ?",
+                    "SELECT id FROM test_sessions WHERE id = ?",
                     (full_session_id,),
                 )
                 result = c.fetchone()
@@ -159,7 +175,7 @@ def analyze_results(
                 return
 
         results = export_results(
-            db_path,
+            db_path=db_path,
             session_id=db_id,  # This can be None if we want all sessions
             start_time=start_time,
             end_time=end_time,
@@ -194,15 +210,15 @@ def analyze_results(
         test_results = result.get("test_results", [])  # Get test results safely
 
         # Get the last 6 characters of the session ID for display
-        display_id = session.get("session_id", "N/A")
+        display_id = session.get("id", "N/A")
         if len(display_id) > 6:
             display_id = display_id[-6:]
 
         click.echo(f"\nSession {display_id} Details:")
         click.echo("-" * 40)
-        click.echo(f"Session ID: {session.get('session_id', 'N/A')}")
+        click.echo(f"Session ID: {session.get('id', 'N/A')}")
         click.echo(f"Start Time: {session.get('start_time', 'N/A')}")
-        click.echo(f"End Time: {session.get('end_time', 'N/A') or 'N/A'}")
+        click.echo(f"End Time: {session.get('stop_time', 'N/A') or 'N/A'}")
         duration = session.get("duration")
         if duration is not None:
             click.echo(f"Duration: {duration:.2f} seconds")
@@ -306,22 +322,22 @@ def analyze_results(
 
     # Export results if requested
     if export_file:
+        click.echo(f"\nExporting results to {export_file}...")
         results = export_results(
             db_path=db_path,
-            sut_id=sut_id or None,
-            sut_type=sut_type or None,
-            sut_version=sut_version or None,
-            sut_env=sut_env or None,
             start_time=start_time,
             end_time=end_time,
+            sut_id=sut_id,
+            sut_type=sut_type,
+            sut_version=None,
+            sut_env=None,
+            output_file=export_file,
+            output_format=output_format,
             outcome=outcome,
             test_id=test_id,
-            output_file=export_file,
-            output_format="jsonl" if export_file.suffix == ".jsonl" else "json",
         )
-        if not results:
-            click.echo("No results found matching the specified criteria")
-            return
+        click.echo(f"Exported {len(results)} test sessions to {export_file}")
+        return
 
     # Load test history
     history = TestHistory()
@@ -420,17 +436,17 @@ def analyze_results(
 
         # Compare basic session info
         fields = [
-            ("Session ID", "session_id"),
+            ("Session ID", "id"),
             ("Start Time", "start_time"),
-            ("End Time", "end_time"),
+            ("End Time", "stop_time"),
             ("Duration", "duration"),
         ]
         for label, field in fields:
             val1 = session1.get(field, "N/A")
             val2 = session2.get(field, "N/A")
-            if field == "session_id" and len(str(val1)) > 6:
+            if field == "id" and len(str(val1)) > 6:
                 val1 = f"{str(val1)[-6:]} ({val1})"
-            if field == "session_id" and len(str(val2)) > 6:
+            if field == "id" and len(str(val2)) > 6:
                 val2 = f"{str(val2)[-6:]} ({val2})"
             if field == "duration" and val1 != "N/A":
                 val1 = f"{val1:.2f}s"
@@ -522,6 +538,7 @@ def analyze_results(
     default=10,
     help="Number of sessions to list (default: 10)",
 )
+@click.option("--list-suts", is_flag=True, help="List all unique SUT IDs in the database")
 @click.option("--id", help="Show details for a specific session ID")
 @click.option(
     "--export",
@@ -554,6 +571,7 @@ def main(
     delete_sut_id: Optional[str],
     list_sessions: bool,
     list_sessions_limit: int,
+    list_suts: bool,
     id: Optional[str],
     export: Optional[Path],
     output_format: str,
@@ -564,7 +582,7 @@ def main(
     outcome: Optional[str],
     test_id: Optional[str],
     compare: Optional[Tuple[str, str]],
-) -> None:
+):
     """Analyze and manage test results from the database.
 
     This tool allows you to analyze test results, compare sessions, and manage the test history database.
@@ -573,7 +591,11 @@ def main(
     # Initialize database if it doesn't exist
     init_db(db_path)
 
-    # Handle deletion commands first
+    # Convert timestamps to datetime objects
+    start_dt = validate_timestamp(None, None, after) if after else None
+    end_dt = validate_timestamp(None, None, before) if before else None
+
+    # Handle delete operations first
     if delete_all:
         num_deleted = delete_results(db_path, all_results=True)
         click.echo(f"Deleted {num_deleted} test sessions")
@@ -584,21 +606,15 @@ def main(
         click.echo(f"Deleted {num_deleted} test sessions")
         return
 
-    if delete_after or delete_before:
-        try:
-            after_time = datetime.fromisoformat(delete_after) if delete_after else None
-            before_time = (
-                datetime.fromisoformat(delete_before) if delete_before else None
-            )
-        except ValueError:
-            click.echo(
-                "Timestamp must be in ISO format (e.g. 2025-02-04T12:00:00)",
-                err=True,
-            )
-            return
-        num_deleted = delete_results(
-            db_path, start_time=after_time, end_time=before_time
-        )
+    if delete_after:
+        after_dt = validate_timestamp(None, None, delete_after)
+        num_deleted = delete_results(db_path, start_time=after_dt)
+        click.echo(f"Deleted {num_deleted} test sessions")
+        return
+
+    if delete_before:
+        before_dt = validate_timestamp(None, None, delete_before)
+        num_deleted = delete_results(db_path, end_time=before_dt)
         click.echo(f"Deleted {num_deleted} test sessions")
         return
 
@@ -607,27 +623,21 @@ def main(
         click.echo(f"Deleted {num_deleted} test sessions")
         return
 
-    # Handle analysis commands
-    try:
-        start_dt = datetime.fromisoformat(after) if after else None
-        end_dt = datetime.fromisoformat(before) if before else None
-    except ValueError:
-        click.echo(
-            "Timestamp must be in ISO format (e.g. 2025-02-04T12:00:00)",
-            err=True,
-        )
-        return
-
-    # Compare two sessions if requested
-    if compare:
-        session_id1, session_id2 = compare
-        analyze_results(
+    # Export results if requested
+    if export:
+        click.echo(f"\nExporting results to {export}...")
+        results = export_results(
             db_path=db_path,
-            session_id=session_id1,
-            export_file=export,
+            start_time=start_dt,
+            end_time=end_dt,
+            sut_id=sut_id,
+            sut_type=sut_type,
+            output_file=export,
             output_format=output_format,
-            compare_with=session_id2,
+            outcome=outcome,
+            test_id=test_id,
         )
+        click.echo(f"Exported {len(results)} test sessions to {export}")
         return
 
     # Show details for a specific session
@@ -635,33 +645,114 @@ def main(
         analyze_results(
             db_path=db_path,
             session_id=id,
-            export_file=export,
-            output_format=output_format,
         )
         return
 
     # List sessions if requested
     if list_sessions:
-        analyze_results(
-            db_path=db_path,
-            list_sessions=True,
-            list_sessions_limit=list_sessions_limit,
-        )
+        sessions = list_recent_sessions(db_path, list_sessions_limit)
+        if not sessions:
+            click.echo("\nNo test sessions found in database")
+            return
+
+        click.echo("\nRecent Test Sessions:")
+        click.echo("=" * 80)
+        
+        for session in sessions:
+            # Header with session ID and timestamp
+            session_id = session["id"]
+            short_id = get_short_session_id(session_id)
+            start_time = datetime.fromisoformat(session["start_time"]).strftime("%Y-%m-%d %H:%M:%S")
+            
+            click.echo(f"\nSession: {short_id} ({start_time})")
+            
+            # SUT information
+            sut_info = []
+            if session["sut_id"]:
+                sut_info.append(f"id: {session['sut_id']}")
+            if session["sut_type"]:
+                sut_info.append(f"type: {session['sut_type']}")
+            if session["sut_version"]:
+                sut_info.append(f"version: {session['sut_version']}")
+            if session["sut_env"]:
+                sut_info.append(f"env: {session['sut_env']}")
+            
+            if sut_info:
+                click.echo(f"SUT: {', '.join(sut_info)}")
+            
+            # Test results summary
+            total = session["num_tests"]
+            passes = session["num_passes"]
+            failures = session["num_failures"]
+            errors = session["num_errors"]
+            skips = session["num_skips"]
+            xfails = session["num_xfails"]
+            xpasses = session["num_xpasses"]
+            
+            click.echo("Results:")
+            click.echo(f"  Total Tests: {total}")
+            click.echo(f"  Passed: {passes}, Failed: {failures}, Error: {errors}")
+            if skips or xfails or xpasses:
+                click.echo(f"  Skipped: {skips}, XFailed: {xfails}, XPassed: {xpasses}")
+            
+            # Duration if available
+            if session["duration"]:
+                duration = f"{session['duration']:.1f}s"
+                click.echo(f"Duration: {duration}")
+            
+            click.echo("-" * 80)
         return
 
-    # Export results with filters
-    analyze_results(
-        db_path=db_path,
-        start_time=start_dt,
-        end_time=end_dt,
-        sut_id=sut_id,
-        sut_type=sut_type,
-        outcome=outcome,
-        test_id=test_id,
-        export_file=export,
-        output_format=output_format,
-    )
-
+    # List SUTs if requested
+    if list_suts:
+        with db_connection(db_path) as conn:
+            c = conn.cursor()
+            c.execute("""
+                SELECT 
+                    sut_id,
+                    sut_type,
+                    sut_version,
+                    sut_env,
+                    COUNT(DISTINCT id) as session_count,
+                    SUM(num_tests) as total_tests,
+                    MIN(start_time) as first_seen,
+                    MAX(start_time) as last_seen
+                FROM test_sessions 
+                WHERE sut_id IS NOT NULL
+                GROUP BY sut_id, sut_type, sut_version, sut_env
+                ORDER BY sut_id, sut_type, last_seen DESC
+            """)
+            suts = c.fetchall()
+            
+            if not suts:
+                click.echo("\nNo SUTs found in database")
+                return
+                
+            click.echo("\nSystem Under Test (SUT) Summary:")
+            click.echo("=" * 80)
+            
+            current_sut = None
+            for row in suts:
+                sut_id, sut_type, version, env, sessions, tests, first, last = row
+                
+                if sut_id != current_sut:
+                    if current_sut:
+                        click.echo("-" * 80)
+                    current_sut = sut_id
+                    click.echo(f"\nSUT: {sut_id}")
+                
+                env_str = f" ({env})" if env else ""
+                version_str = f" v{version}" if version else ""
+                first_date = datetime.fromisoformat(first).strftime("%Y-%m-%d")
+                last_date = datetime.fromisoformat(last).strftime("%Y-%m-%d")
+                
+                click.echo(
+                    f"  {sut_type or 'unknown type'}{version_str}{env_str}:"
+                    f" {sessions} sessions,"
+                    f" {tests} total tests,"
+                    f" {first_date} to {last_date}"
+                )
+        return
 
 if __name__ == "__main__":
     main()

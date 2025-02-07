@@ -599,12 +599,6 @@ class LongitudinalAnalysis:
             else:
                 continue
 
-            # Only show debug info if there's a status change
-            if current_outcome != most_common:
-                print(
-                    f"Test {test_id}: current={current_outcome}, history={all_history}, most_common={most_common}"
-                )
-
             # Check for status changes
             if most_common == "passed" and current_outcome == "failed":
                 changes["new_failures"].append(test_id)
@@ -626,50 +620,36 @@ class LongitudinalAnalysis:
         self, window_size: timedelta = timedelta(days=1)
     ) -> List[Dict[str, Any]]:
         """
-        Calculate trend statistics over time using a sliding window.
-        Returns statistics for each window period.
+        Calculate trend statistics over time.
+        Returns statistics for each unique timestamp.
         """
         runs = self._get_filtered_runs()
         if not runs:
             return []
 
+        # Sort runs by timestamp
         sorted_runs = sorted(runs, key=lambda r: r.session_metadata.start_time)
-        start_time = sorted_runs[0].session_metadata.start_time
-        end_time = sorted_runs[-1].session_metadata.start_time
 
-        # Create windows
-        windows = []
-        window_start = start_time
-        while window_start <= end_time:
-            window_end = window_start + window_size
-            window_runs = [
-                r
-                for r in sorted_runs
-                if window_start <= r.session_metadata.start_time < window_end
-            ]
+        # Create a stats entry for each unique timestamp
+        stats_list = []
+        for run in sorted_runs:
+            # Helper function to safely get stats that might be None
+            def safe_get(attr: str) -> int:
+                return getattr(run.session_stats, attr, 0) or 0
 
-            if window_runs:
-                # Helper function to safely sum stats that might be None
-                def safe_sum(attr: str) -> int:
-                    return sum(
-                        getattr(r.session_stats, attr, 0) or 0 for r in window_runs
-                    )
+            stats = {
+                "window_start": run.session_metadata.start_time,
+                "window_end": run.session_metadata.start_time + timedelta(seconds=run.session_stats.duration or 0),
+                "num_runs": 1,  # Each timestamp is a unique run
+                "num_tests": safe_get("num_tests"),
+                "num_passes": safe_get("num_passes"),
+                "num_failures": safe_get("num_failures"),
+                "num_errors": safe_get("num_errors"),
+                "num_skips": safe_get("num_skips"),
+                "num_xfails": safe_get("num_xfails"),
+                "num_xpasses": safe_get("num_xpasses"),
+                "num_reruns": safe_get("num_reruns"),
+            }
+            stats_list.append(stats)
 
-                stats = {
-                    "window_start": window_start,
-                    "window_end": window_end,
-                    "num_runs": len(window_runs),
-                    "num_tests": safe_sum("num_tests"),
-                    "num_passes": safe_sum("num_passes"),
-                    "num_failures": safe_sum("num_failures"),
-                    "num_errors": safe_sum("num_errors"),
-                    "num_skips": safe_sum("num_skips"),
-                    "num_xfails": safe_sum("num_xfails"),
-                    "num_xpasses": safe_sum("num_xpasses"),
-                    "num_reruns": safe_sum("num_reruns"),
-                }
-                windows.append(stats)
-
-            window_start = window_end
-
-        return windows
+        return stats_list

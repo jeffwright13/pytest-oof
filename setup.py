@@ -34,6 +34,11 @@ setup(
         "single-source>=0.3.0",
         "strip-ansi>=0.1.1",
         "textual==0.1.18",
+        "pytest>=7.0.0",
+        "click>=8.0.0",
+        "nicegui>=1.4.0",
+        "plotly>=5.18.0",
+        "pandas>=2.1.0",
     ],
     setup_requires=["setuptools_scm"],
     include_package_data=True,
@@ -59,13 +64,16 @@ setup(
     ],
     keywords="pytest pytest-plugin testing",
     entry_points={
-        "pytest11": ["pytest_oof = pytest_oof.plugin"],
         "console_scripts": [
             "oofda = pytest_oof.__main__:main",
             "oof-console = pytest_oof.clients.console_gen:main",
             "oof-html = pytest_oof.clients.html_gen:main",
             "oof-tui = pytest_oof.clients.tui_gen:main",
             "oof-analyze = pytest_oof.analyze_results:main",
+            "oof-gui = pytest_oof.gui.longitudinal_view:main",
+        ],
+        "pytest11": [
+            "pytest_oof = pytest_oof.plugin",
         ],
     },
 )

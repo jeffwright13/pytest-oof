@@ -1,0 +1,83 @@
+#!/usr/bin/env python3
+"""Command-line interface for analyzing pytest-oof test data."""
+
+import argparse
+from pathlib import Path
+from pytest_oof.analyzer import TestDataAnalyzer
+import sqlite3
+from datetime import datetime
+
+def main():
+    parser = argparse.ArgumentParser(description="Analyze pytest-oof test results")
+    parser.add_argument(
+        "--db-path",
+        type=Path,
+        default=Path("oof/oof-results.db"),
+        help="Path to the SQLite database (default: oof/oof-results.db)",
+    )
+    parser.add_argument(
+        "--list-sut-ids",
+        action="store_true",
+        help="List all unique SUT IDs in the database",
+    )
+    parser.add_argument(
+        "--list-sessions",
+        action="store_true",
+        help="List recent test sessions",
+    )
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=10,
+        help="Limit the number of sessions to show (default: 10)",
+    )
+    args = parser.parse_args()
+
+    analyzer = TestDataAnalyzer(args.db_path)
+
+    if args.list_sut_ids:
+        suts = analyzer.get_all_suts()
+        if not suts:
+            print("No SUTs found in database")
+            return
+        
+        print("\nUnique SUT IDs in database:")
+        unique_sut_ids = {sut["sut_id"] for sut in suts}
+        for sut_id in sorted(unique_sut_ids):
+            print(f"- {sut_id}")
+
+    if args.list_sessions:
+        with sqlite3.connect(args.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT 
+                    id, start_time, stop_time, duration, 
+                    sut_id, sut_type, sut_version, sut_env,
+                    num_tests, num_passes, num_failures,
+                    num_errors, num_skips, num_xfails, num_xpasses,
+                    num_reruns, num_rerun_groups
+                FROM test_sessions
+                ORDER BY start_time DESC
+                LIMIT ?
+                """,
+                (args.limit,),
+            )
+            sessions = cursor.fetchall()
+            
+            if not sessions:
+                print("No test sessions found in database")
+                return
+            
+            print("\nRecent test sessions:")
+            for session in sessions:
+                session_id = session[0][:8]  # Show first 8 chars of UUID
+                start_time = datetime.fromisoformat(session[1]).strftime("%Y-%m-%d %H:%M:%S")
+                sut_id = session[4]
+                num_tests = session[8]
+                num_passes = session[9]
+                num_failures = session[10]
+                print(f"- {session_id}: {start_time} | SUT: {sut_id} | Tests: {num_tests} ({num_passes} passed, {num_failures} failed)")
+
+if __name__ == "__main__":
+    main()

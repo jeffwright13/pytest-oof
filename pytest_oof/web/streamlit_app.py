@@ -155,9 +155,13 @@ def load_session_data():
     db_path = ensure_db_exists()
     query = """
         SELECT
-            id, session_id, start_time, end_time, duration,
-            sut_id, num_tests, num_passes, num_failures,
-            num_errors, num_skips, num_xfails, num_xpasses
+            id, start_time, stop_time as end_time, duration,
+            sut_id, sut_type, sut_version, sut_env,
+            num_tests, num_tests_without_rerun, num_tests_total,
+            num_passes, num_failures, num_errors, num_skips,
+            num_xfails, num_xpasses, num_reruns,
+            num_rerun_groups, num_warnings, num_warnings_unique,
+            num_deselected
         FROM test_sessions
         ORDER BY start_time DESC
     """
@@ -174,25 +178,26 @@ def load_session_data():
 
             # Fill NaN/None values and convert to native types
             df["sut_id"] = df["sut_id"].fillna("")
+            df["sut_type"] = df["sut_type"].fillna("")
+            df["sut_version"] = df["sut_version"].fillna("")
+            df["sut_env"] = df["sut_env"].fillna("")
             df["duration"] = df["duration"].fillna(0).astype(float)
 
             # Convert numeric columns to native Python int
             int_columns = [
-                "num_tests",
-                "num_passes",
-                "num_failures",
-                "num_errors",
-                "num_skips",
-                "num_xfails",
-                "num_xpasses",
+                "num_tests", "num_tests_without_rerun", "num_tests_total",
+                "num_passes", "num_failures", "num_errors", "num_skips",
+                "num_xfails", "num_xpasses", "num_reruns",
+                "num_rerun_groups", "num_warnings", "num_warnings_unique",
+                "num_deselected"
             ]
             for col in int_columns:
                 df[col] = df[col].fillna(0).astype("int32").astype(int)
 
-            # Calculate pass rate as float
-            df["pass_rate"] = (
-                (df["num_passes"] / df["num_tests"] * 100).fillna(0).astype(float)
-            )
+            # Calculate metrics
+            df["pass_rate"] = (df["num_passes"] / df["num_tests"] * 100).fillna(0).astype(float)
+            df["rerun_rate"] = (df["num_reruns"] / df["num_tests"] * 100).fillna(0).astype(float)
+            df["warning_rate"] = (df["num_warnings"] / df["num_tests"] * 100).fillna(0).astype(float)
 
             return df
     except Exception as e:
@@ -206,43 +211,28 @@ def load_test_results():
     db_path = ensure_db_exists()
     query = """
         SELECT
-            tr.test_id,
+            tr.id,
+            tr.session_id,
+            tr.nodeid,
             tr.outcome,
+            tr.start_time,
             tr.duration,
             tr.error_message,
             tr.error_type,
+            tr.has_warning,
             tr.rerun_count,
-            tr.rerun_outcomes,
-            tr.total_rerun_time,
-            ts.id as session_id,
-            ts.start_time,
-            ts.sut_id
+            ts.sut_id,
+            ts.sut_type,
+            ts.sut_version,
+            ts.sut_env
         FROM test_results tr
         JOIN test_sessions ts ON tr.session_id = ts.id
-        ORDER BY ts.start_time DESC
+        ORDER BY tr.start_time DESC
     """
 
     try:
         with sqlite3.connect(db_path) as conn:
             df = pd.read_sql_query(query, conn, parse_dates=["start_time"])
-
-            if df.empty:
-                st.warning("No test results found in the database.")
-                return pd.DataFrame(
-                    columns=[
-                        "test_id",
-                        "outcome",
-                        "duration",
-                        "error_message",
-                        "error_type",
-                        "rerun_count",
-                        "rerun_outcomes",
-                        "total_rerun_time",
-                        "session_id",
-                        "start_time",
-                        "sut_id",
-                    ]
-                )
 
             # Ensure timezone awareness
             if df["start_time"].dt.tz is None:
@@ -250,151 +240,120 @@ def load_test_results():
 
             # Fill NaN/None values
             df["sut_id"] = df["sut_id"].fillna("")
-            df["duration"] = df["duration"].fillna(0).astype(float)
-            df["outcome"] = df["outcome"].fillna("unknown")
+            df["sut_type"] = df["sut_type"].fillna("")
+            df["sut_version"] = df["sut_version"].fillna("")
+            df["sut_env"] = df["sut_env"].fillna("")
             df["error_message"] = df["error_message"].fillna("")
             df["error_type"] = df["error_type"].fillna("")
+            df["duration"] = df["duration"].fillna(0).astype(float)
             df["rerun_count"] = df["rerun_count"].fillna(0).astype(int)
-            df["rerun_outcomes"] = df["rerun_outcomes"].fillna("[]")
-            df["total_rerun_time"] = df["total_rerun_time"].fillna(0).astype(float)
+            df["has_warning"] = df["has_warning"].fillna(False)
 
             return df
     except Exception as e:
         st.error(f"Error loading test results: {str(e)}")
-        return pd.DataFrame(
-            columns=[
-                "test_id",
-                "outcome",
-                "duration",
-                "error_message",
-                "error_type",
-                "rerun_count",
-                "rerun_outcomes",
-                "total_rerun_time",
-                "session_id",
-                "start_time",
-                "sut_id",
-            ]
-        )
+        return pd.DataFrame()  # Return empty DataFrame on error
 
 
-def plot_test_results_trend(df, viz_settings):
+def plot_test_results_trend(df, viz_settings, view_type="aggregate"):
     """Plot test results trend over time."""
     df_sorted = df.sort_values("start_time")
-
     fig = go.Figure()
 
-    # Add traces for each metric
-    fig.add_trace(
-        go.Scatter(
-            x=df_sorted["start_time"],
-            y=df_sorted["num_passes"],
-            name="Passed",
-            mode="lines+markers" if viz_settings["show_markers"] else "lines",
-            line=dict(
-                color=OUTCOME_COLORS["passed"],
-                width=viz_settings["line_width"],
-                shape=viz_settings["line_shape"],
-                smoothing=viz_settings["smoothing"]
-                if viz_settings["line_shape"] == "spline"
-                else None,
-            ),
-        )
-    )
+    if view_type == "aggregate":
+        # Original aggregate view
+        metrics = [
+            ("num_passes", "Passed", "passed"),
+            ("num_failures", "Failed", "failed"),
+            ("num_errors", "Errors", "error"),
+            ("num_skips", "Skipped", "skipped"),
+            ("num_xfails", "Expected Failures", "xfailed"),
+            ("num_xpasses", "Unexpected Passes", "xpassed"),
+        ]
 
-    fig.add_trace(
-        go.Scatter(
-            x=df_sorted["start_time"],
-            y=df_sorted["num_failures"],
-            name="Failed",
-            mode="lines+markers" if viz_settings["show_markers"] else "lines",
-            line=dict(
-                color=OUTCOME_COLORS["failed"],
-                width=viz_settings["line_width"],
-                shape=viz_settings["line_shape"],
-                smoothing=viz_settings["smoothing"]
-                if viz_settings["line_shape"] == "spline"
-                else None,
-            ),
-        )
-    )
+        for metric, name, color in metrics:
+            fig.add_trace(
+                go.Scatter(
+                    x=df_sorted["start_time"],
+                    y=df_sorted[metric],
+                    name=name,
+                    mode="lines+markers" if viz_settings["show_markers"] else "lines",
+                    line=dict(
+                        color=OUTCOME_COLORS[color],
+                        width=viz_settings["line_width"],
+                        shape=viz_settings["line_shape"],
+                    ),
+                )
+            )
 
-    fig.add_trace(
-        go.Scatter(
-            x=df_sorted["start_time"],
-            y=df_sorted["num_errors"],
-            name="Errors",
-            mode="lines+markers" if viz_settings["show_markers"] else "lines",
-            line=dict(
-                color=OUTCOME_COLORS["error"],
-                width=viz_settings["line_width"],
-                shape=viz_settings["line_shape"],
-                smoothing=viz_settings["smoothing"]
-                if viz_settings["line_shape"] == "spline"
-                else None,
-            ),
-        )
-    )
+    elif view_type == "by_sut":
+        # Show each SUT with different line styles
+        metrics = [
+            ("num_passes", "Passed", "passed"),
+            ("num_failures", "Failed", "failed"),
+            ("num_errors", "Errors", "error"),
+        ]
+        line_styles = ["solid", "dot", "dash", "dashdot"]
 
-    fig.add_trace(
-        go.Scatter(
-            x=df_sorted["start_time"],
-            y=df_sorted["num_skips"],
-            name="Skipped",
-            mode="lines+markers" if viz_settings["show_markers"] else "lines",
-            line=dict(
-                color=OUTCOME_COLORS["skipped"],
-                width=viz_settings["line_width"],
-                shape=viz_settings["line_shape"],
-                smoothing=viz_settings["smoothing"]
-                if viz_settings["line_shape"] == "spline"
-                else None,
-            ),
-        )
-    )
+        for sut_id in sorted(df_sorted["sut_id"].unique()):
+            sut_data = df_sorted[df_sorted["sut_id"] == sut_id]
+            style_idx = 0
+            for metric, name, color in metrics:
+                fig.add_trace(
+                    go.Scatter(
+                        x=sut_data["start_time"],
+                        y=sut_data[metric],
+                        name=f"{sut_id} - {name}",
+                        mode="lines+markers" if viz_settings["show_markers"] else "lines",
+                        line=dict(
+                            color=OUTCOME_COLORS[color],
+                            width=viz_settings["line_width"],
+                            dash=line_styles[style_idx % len(line_styles)],
+                        ),
+                        legendgroup=sut_id,
+                    )
+                )
+            style_idx += 1
 
-    fig.add_trace(
-        go.Scatter(
-            x=df_sorted["start_time"],
-            y=df_sorted["num_xfails"],
-            name="Expected Failures",
-            mode="lines+markers" if viz_settings["show_markers"] else "lines",
-            line=dict(
-                color=OUTCOME_COLORS["xfailed"],
-                width=viz_settings["line_width"],
-                shape=viz_settings["line_shape"],
-                smoothing=viz_settings["smoothing"]
-                if viz_settings["line_shape"] == "spline"
-                else None,
-            ),
-        )
-    )
+    elif view_type == "stacked":
+        # Stacked area chart showing contribution of each SUT
+        metrics = [
+            ("num_passes", "Passed", "passed"),
+            ("num_failures", "Failed", "failed"),
+            ("num_errors", "Errors", "error"),
+        ]
 
-    fig.add_trace(
-        go.Scatter(
-            x=df_sorted["start_time"],
-            y=df_sorted["num_xpasses"],
-            name="Unexpected Passes",
-            mode="lines+markers" if viz_settings["show_markers"] else "lines",
-            line=dict(
-                color=OUTCOME_COLORS["xpassed"],
-                width=viz_settings["line_width"],
-                shape=viz_settings["line_shape"],
-                smoothing=viz_settings["smoothing"]
-                if viz_settings["line_shape"] == "spline"
-                else None,
-            ),
-        )
-    )
+        for metric, name, color in metrics:
+            for sut_id in sorted(df_sorted["sut_id"].unique()):
+                sut_data = df_sorted[df_sorted["sut_id"] == sut_id]
+                fig.add_trace(
+                    go.Scatter(
+                        x=sut_data["start_time"],
+                        y=sut_data[metric],
+                        name=f"{sut_id} - {name}",
+                        mode="none",
+                        stackgroup=name,  # Stack by metric type
+                        fillcolor=OUTCOME_COLORS[color],
+                        line=dict(width=0),
+                        legendgroup=name,
+                    )
+                )
 
+    # Update layout
     fig.update_layout(
-        title="Test Results Over Time",
-        xaxis_title="Date",
-        yaxis_title="Number of Tests",
+        title="Test Results Trend",
+        xaxis_title="Time",
+        yaxis_title="Count",
         hovermode="x unified",
-        showlegend=True,
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-        **PLOTLY_LAYOUT,  # Apply global font settings
+        legend=dict(
+            groupclick="toggleitem",
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="right",
+            x=1,
+        ),
+        **PLOTLY_LAYOUT,
     )
 
     return fig
@@ -421,9 +380,6 @@ def plot_sut_pass_fail_trend(df, sut_id, viz_settings):
                 color=OUTCOME_COLORS["passed"],
                 width=viz_settings["line_width"],
                 shape=viz_settings["line_shape"],
-                smoothing=viz_settings["smoothing"]
-                if viz_settings["line_shape"] == "spline"
-                else None,
             ),
         )
     )
@@ -439,20 +395,16 @@ def plot_sut_pass_fail_trend(df, sut_id, viz_settings):
                 color=OUTCOME_COLORS["failed"],
                 width=viz_settings["line_width"],
                 shape=viz_settings["line_shape"],
-                smoothing=viz_settings["smoothing"]
-                if viz_settings["line_shape"] == "spline"
-                else None,
             ),
         )
     )
 
     fig.update_layout(
         title=f"Pass/Fail Rate Trend for {sut_id}",
-        xaxis_title="Date",
+        xaxis_title="Time",
         yaxis_title="Rate (%)",
         yaxis_range=[0, 100],
         hovermode="x unified",
-        showlegend=True,
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
         **PLOTLY_LAYOUT,
     )
@@ -499,8 +451,8 @@ def identify_test_transitions(
     pass_to_fail = []
 
     # Group by test_id and analyze each test's history
-    for test_id in recent_df["test_id"].unique():
-        test_runs = recent_df[recent_df["test_id"] == test_id].sort_values(
+    for test_id in recent_df["id"].unique():
+        test_runs = recent_df[recent_df["id"] == test_id].sort_values(
             "start_time", ascending=True
         )
 
@@ -533,8 +485,7 @@ def identify_test_transitions(
         if latest_outcome == "passed" and failure_rate >= failure_threshold:
             fail_to_pass.append(
                 {
-                    "test_id": test_id,
-                    "sut_id": latest_run["sut_id"],
+                    "id": test_id,
                     "last_run_time": latest_run["start_time"],
                     "num_previous_runs": total_runs,
                     "previous_fail_rate": failure_rate * 100,
@@ -546,8 +497,7 @@ def identify_test_transitions(
         ):
             pass_to_fail.append(
                 {
-                    "test_id": test_id,
-                    "sut_id": latest_run["sut_id"],
+                    "id": test_id,
                     "last_run_time": latest_run["start_time"],
                     "num_previous_runs": total_runs,
                     "previous_pass_rate": success_rate * 100,
@@ -577,7 +527,7 @@ def identify_flaky_tests(df, min_runs=5, flaky_threshold=0.2):
     flaky_tests = []
 
     # Group by test_id and analyze patterns
-    for test_id, group in df.groupby("test_id"):
+    for test_id, group in df.groupby("id"):
         total_runs = len(group)
         if total_runs < min_runs:
             continue
@@ -603,7 +553,7 @@ def identify_flaky_tests(df, min_runs=5, flaky_threshold=0.2):
 
             flaky_tests.append(
                 {
-                    "test_id": test_id,
+                    "id": test_id,
                     "total_runs": total_runs,
                     "pass_rate": pass_rate * 100,  # Convert to percentage
                     "fail_rate": fail_rate * 100,  # Convert to percentage
@@ -617,7 +567,7 @@ def identify_flaky_tests(df, min_runs=5, flaky_threshold=0.2):
     if not flaky_tests:
         return pd.DataFrame(
             columns=[
-                "test_id",
+                "id",
                 "total_runs",
                 "pass_rate",
                 "fail_rate",
@@ -721,11 +671,13 @@ def plot_metric_trends(df, metrics):
     """Plot trends for multiple metrics."""
     fig = go.Figure()
 
+    df_sorted = df.sort_values("start_time")
+    df_sorted['start_time'] = df_sorted['start_time'].dt.tz_localize(None)  # Remove timezone info
     for metric, label, color in metrics:
         fig.add_trace(
             go.Scatter(
-                x=df["date"],
-                y=df[metric],
+                x=df_sorted["start_time"],
+                y=df_sorted[metric],
                 name=label,
                 mode="lines+markers",
                 line=dict(color=OUTCOME_COLORS[color], width=2),
@@ -734,7 +686,7 @@ def plot_metric_trends(df, metrics):
 
     fig.update_layout(
         title="Test Metrics Over Time",
-        xaxis_title="Date",
+        xaxis_title="Time",
         yaxis_title="Count",
         hovermode="x unified",
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
@@ -758,22 +710,22 @@ def plot_test_transitions(fail_to_pass, pass_to_fail):
     for _, row in fail_to_pass.iterrows():
         transitions.append(
             {
-                "test_id": row["test_id"],
+                "id": row["id"],
                 "transition": "Fail → Pass",
                 "last_run_time": row["last_run_time"],
                 "previous_outcomes": row.get("previous_outcomes", []),
-                "percentage": row.get("fail_percentage", 0),
+                "percentage": row.get("previous_fail_rate", 0),
             }
         )
 
     for _, row in pass_to_fail.iterrows():
         transitions.append(
             {
-                "test_id": row["test_id"],
+                "id": row["id"],
                 "transition": "Pass → Fail",
                 "last_run_time": row["last_run_time"],
                 "previous_outcomes": row.get("previous_outcomes", []),
-                "percentage": row.get("pass_percentage", 0),
+                "percentage": row.get("previous_pass_rate", 0),
             }
         )
 
@@ -788,14 +740,14 @@ def plot_test_transitions(fail_to_pass, pass_to_fail):
         df,
         x_start="last_run_time",
         x_end="last_run_time",
-        y="test_id",
+        y="id",
         color="transition",
         color_discrete_map={
             "Fail → Pass": OUTCOME_COLORS["passed"],
             "Pass → Fail": OUTCOME_COLORS["failed"],
         },
         title="Test Transitions Timeline",
-        labels={"test_id": "Test", "last_run_time": "Transition Time"},
+        labels={"id": "Test", "last_run_time": "Transition Time"},
     )
 
     fig.update_layout(
@@ -822,10 +774,10 @@ def plot_test_transitions(fail_to_pass, pass_to_fail):
         for t in transitions:
             st.markdown(
                 f"""
-            **{t['test_id']}** ({t['transition']})
+            **{t['id']}** ({t['transition']})
             - Time: {t['last_run_time']}
             - Previous Outcomes: {', '.join(t['previous_outcomes'])}
-            - {'Fail' if 'fail_percentage' in t else 'Pass'} Rate: {t['percentage']:.1f}%
+            - {'Fail' if 'previous_fail_rate' in t else 'Pass'} Rate: {t['percentage']:.1f}%
             """
             )
 
@@ -903,7 +855,7 @@ def analyze_rerun_patterns(df):
             outcomes = eval(row["rerun_outcomes"])  # Convert string list to actual list
             for i, outcome in enumerate(outcomes, 1):
                 rerun_outcomes.append(
-                    {"test_id": row["test_id"], "rerun_number": i, "outcome": outcome}
+                    {"id": row["id"], "rerun_number": i, "outcome": outcome}
                 )
         except (ValueError, SyntaxError):
             continue
@@ -1097,10 +1049,7 @@ def create_test_scatter(df, metric="failures", colorscale="viridis"):
 
 # Load data first
 df = load_session_data()
-
-# Debug info
-st.write("DataFrame columns:", df.columns.tolist())
-st.write("DataFrame sample:", df.head())
+test_results_df = load_test_results()
 
 # Common settings in sidebar
 with st.sidebar:
@@ -1110,6 +1059,10 @@ with st.sidebar:
         ["All SUTs"] + sorted(df["sut_id"].unique().tolist()),
         key="sut_selector",
     )
+
+# Filter data based on selected SUT
+df_sut = df if selected_sut == "All SUTs" else df[df["sut_id"] == selected_sut]
+test_results_df_sut = test_results_df if selected_sut == "All SUTs" else test_results_df[test_results_df["sut_id"] == selected_sut]
 
 # Main content with tabs
 st.title("pytest-oof Test Analysis")
@@ -1128,38 +1081,89 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs(
 
 with tab1:
     st.header("Overview")
-    df_sut = df if selected_sut == "All SUTs" else df[df["sut_id"] == selected_sut]
+
+    # Add view type selector
+    view_type = st.radio(
+        "View Type",
+        ["Aggregate Stats", "By SUT", "Stacked Area"],
+        horizontal=True,
+        help=(
+            "Aggregate: Show total stats across all SUTs\n"
+            "By SUT: Show each SUT with different line styles\n"
+            "Stacked Area: Show contribution of each SUT"
+        ),
+    )
 
     st.subheader("Test Results Trend")
     trend_fig = plot_test_results_trend(
-        df_sut, {"show_markers": True, "line_width": 2, "line_shape": "linear"}
+        df_sut,
+        {"show_markers": True, "line_width": 2, "line_shape": "linear"},
+        view_type=view_type.lower().replace(" ", "_")
     )
     if trend_fig:
         st.plotly_chart(trend_fig, use_container_width=True)
 
 with tab2:
     st.header("Session View")
-    # Session View content here...
+    daily_stats_fig = plot_daily_stats(df_sut)
+    if daily_stats_fig:
+        st.plotly_chart(daily_stats_fig, use_container_width=True)
 
 with tab3:
     st.header("Session Details")
-    # Session Details content here...
+    if not df_sut.empty:
+        st.dataframe(
+            df_sut[["start_time", "sut_id", "num_tests", "num_passes", "num_failures", "num_errors", "duration"]],
+            use_container_width=True
+        )
+    else:
+        st.info("No session data available for the selected SUT.")
 
 with tab4:
     st.header("Session Comparison")
-    # Session Comparison content here...
+    if len(df_sut) >= 2:
+        # st.write("Debug - DataFrame columns:", df_sut.columns.tolist())
+        metrics = [
+            ("num_tests", "Total Tests", "total"),
+            ("num_passes", "Passes", "passed"),
+            ("num_failures", "Failures", "failed"),
+            ("num_errors", "Errors", "error"),
+        ]
+        metric_fig = plot_metric_trends(df_sut, metrics)
+        if metric_fig:
+            st.plotly_chart(metric_fig, use_container_width=True)
+    else:
+        st.info("Need at least 2 sessions to compare.")
 
 with tab5:
     st.header("Test Transitions")
-    # Test Transitions content here...
+    # st.write("Debug - Test Results DataFrame columns:", test_results_df_sut.columns.tolist())
+    fail_to_pass, pass_to_fail = identify_test_transitions(test_results_df_sut)
+    transitions_fig = plot_test_transitions(fail_to_pass, pass_to_fail)
+    if transitions_fig:
+        st.plotly_chart(transitions_fig, use_container_width=True)
 
 with tab6:
     st.header("Rerun Analysis")
-    # Rerun Analysis content here...
+    if not test_results_df_sut.empty:
+        rerun_stats_fig, rerun_outcomes_fig = analyze_rerun_patterns(test_results_df_sut)
+        if rerun_stats_fig:
+            st.plotly_chart(rerun_stats_fig, use_container_width=True)
+        if rerun_outcomes_fig:
+            st.plotly_chart(rerun_outcomes_fig, use_container_width=True)
+    else:
+        st.info("No rerun data available for the selected SUT.")
 
 with tab7:
     st.header("Flaky Tests")
-    # Flaky Tests content here...
+    if not test_results_df_sut.empty:
+        flaky_tests = identify_flaky_tests(test_results_df_sut)
+        if not flaky_tests.empty:
+            st.dataframe(flaky_tests, use_container_width=True)
+        else:
+            st.info("No flaky tests identified for the selected SUT.")
+    else:
+        st.info("No test data available for the selected SUT.")
 
 with tab8:
     st.header("3D Test Result Visualization")
@@ -1218,35 +1222,35 @@ with tab8:
     filtered_df = filtered_df[mask]
 
     if not filtered_df.empty:
-        with st.expander("Debug Information", expanded=False):
-            st.write(f"Total rows: {len(filtered_df)}")
-            st.write(f"Unique SUTs: {filtered_df['sut_id'].nunique()}")
-            st.write(
-                f"Date range: {filtered_df['date'].min()} to {filtered_df['date'].max()}"
-            )
-            st.write(f"Selected metric: {metric}")
-            st.write("DataFrame columns:", filtered_df.columns.tolist())
+        # with st.expander("Debug Information", expanded=False):
+        #     st.write(f"Total rows: {len(filtered_df)}")
+        #     st.write(f"Unique SUTs: {filtered_df['sut_id'].nunique()}")
+        #     st.write(
+        #         f"Date range: {filtered_df['date'].min()} to {filtered_df['date'].max()}"
+        #     )
+        #     st.write(f"Selected metric: {metric}")
+        #     st.write("DataFrame columns:", filtered_df.columns.tolist())
 
-            # Show sample of aggregated data
-            daily_stats = filtered_df.copy()
-            if metric == "failures":
-                daily_stats["count"] = (
-                    daily_stats["num_failures"] + daily_stats["num_errors"]
-                )
-            elif metric == "passes":
-                daily_stats["count"] = daily_stats["num_passes"]
-            elif metric == "flaky":
-                daily_stats["count"] = (
-                    daily_stats["num_xpasses"] + daily_stats["num_xfails"]
-                )
-            else:  # new_failures - this will show total failures for now
-                daily_stats["count"] = daily_stats["num_failures"]
+        #     # Show sample of aggregated data
+        #     daily_stats = filtered_df.copy()
+        #     if metric == "failures":
+        #         daily_stats["count"] = (
+        #             daily_stats["num_failures"] + daily_stats["num_errors"]
+        #         )
+        #     elif metric == "passes":
+        #         daily_stats["count"] = daily_stats["num_passes"]
+        #     elif metric == "flaky":
+        #         daily_stats["count"] = (
+        #             daily_stats["num_xpasses"] + daily_stats["num_xfails"]
+        #         )
+        #     else:  # new_failures - this will show total failures for now
+        #         daily_stats["count"] = daily_stats["num_failures"]
 
-            daily_stats = (
-                daily_stats.groupby(["sut_id", "date"])["count"].sum().reset_index()
-            )
-            st.write("\nAggregated data sample:")
-            st.dataframe(daily_stats.head())
+        #     daily_stats = (
+        #         daily_stats.groupby(["sut_id", "date"])["count"].sum().reset_index()
+        #     )
+        #     st.write("\nAggregated data sample:")
+        #     st.dataframe(daily_stats.head())
 
         # Create the visualization based on view mode
         if view_mode == "surface":

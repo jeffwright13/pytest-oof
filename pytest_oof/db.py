@@ -358,35 +358,49 @@ def get_test_results(
         sessions = []
         for row in c.fetchall():
             print(f"Raw row: {row}")  # Debug
-            session = {
-                "session_id": row[0],
-                "sut_id": row[1],
-                "sut_type": row[2],
-                "sut_version": row[3],
-                "sut_env": row[4],
-                "start_time": row[5],
-                "stop_time": row[6],
-                "duration": row[7],
-                "stats": {
-                    "num_tests": row[8],
-                    "num_tests_without_rerun": row[9],
-                    "num_tests_total": row[10],
-                    "num_passes": row[11],
-                    "num_failures": row[12],
-                    "num_errors": row[13],
-                    "num_skips": row[14],
-                    "num_xfails": row[15],
-                    "num_xpasses": row[16],
-                    "num_reruns": row[17],
-                    "num_rerun_groups": row[18],
-                    "num_warnings": row[19],
-                    "num_warnings_unique": row[20],
-                    "num_deselected": row[21],
+            session_dict = {
+                "session": {
+                    "id": row[0],  # Use single ID field
+                    "timing": {
+                        "start": row[5],
+                        "stop": row[6],
+                        "duration": row[7]
+                    },
+                    "sut": {
+                        "id": row[1],
+                        "type": row[2],
+                        "version": row[3],
+                        "environment": row[4],
+                        "metadata": json.loads(row[5]) if row[5] else None
+                    },
+                    "statistics": {
+                        "tests": {
+                            "total": row[8],
+                            "without_rerun": row[9],
+                            "with_rerun": row[10]
+                        },
+                        "outcomes": {
+                            "passed": row[11],
+                            "failed": row[12],
+                            "error": row[13],
+                            "skipped": row[14],
+                            "xfailed": row[15],
+                            "xpassed": row[16]
+                        },
+                        "reruns": {
+                            "total": row[17],
+                            "groups": row[18]
+                        },
+                        "warnings": {
+                            "total": row[19],
+                            "unique": row[20]
+                        },
+                        "deselected": row[21]
+                    }
                 },
-                "test_results": [],
-                "rerun_groups": [],
+                "test_results": []
             }
-            print(f"Session stats: {session['stats']}")  # Debug
+            print(f"Session stats: {session_dict['session']['statistics']}")  # Debug
 
             # Get test results for this session
             query = """
@@ -408,41 +422,56 @@ def get_test_results(
                 WHERE session_id = ?
                 ORDER BY start_time ASC
             """
-            print(f"Fetching test results with query: {query} and session_id: {session['session_id']}")  # Debug
-            c.execute(query, (session["session_id"],))
+            print(f"Fetching test results with query: {query} and session_id: {session_dict['session']['id']}")  # Debug
+            c.execute(query, (session_dict["session"]["id"],))
             rows = c.fetchall()
             print(f"Found {len(rows)} test results: {rows}")  # Debug
+
+            results_by_outcome = {}
             for test_row in rows:
-                test_result = {
-                    "nodeid": test_row[0],
-                    "outcome": test_row[1],
-                    "start_time": test_row[2],
-                    "duration": test_row[3],
-                    "error_message": test_row[4],
-                    "error_type": test_row[5],
-                    "error_traceback": test_row[6],
-                    "has_warning": bool(test_row[7]),
-                    "longreprtext": test_row[8],
-                    "caplog": test_row[9],
-                    "capstdout": test_row[10],
-                    "capstderr": test_row[11],
-                    "rerun_count": test_row[12],
+                outcome = test_row[1].lower()
+                if outcome not in results_by_outcome:
+                    results_by_outcome[outcome] = []
+
+                result = {
+                    "id": test_row[0],  # nodeid
+                    "timing": {
+                        "start": test_row[2],
+                        "duration": test_row[3]
+                    }
                 }
-                session["test_results"].append(test_result)
 
-            # Get rerun groups for this session
-            c.execute(
-                """
-                SELECT group_name
-                FROM rerun_groups
-                WHERE session_id = ?
-                ORDER BY group_name ASC
-                """,
-                (session["session_id"],),
-            )
-            session["rerun_groups"] = [row[0] for row in c.fetchall()]
+                # Only include error info if present
+                if any([test_row[4], test_row[5], test_row[6]]):
+                    result["error"] = {
+                        "message": test_row[4],
+                        "type": test_row[5],
+                        "traceback": test_row[6]
+                    }
 
-            sessions.append(session)
+                # Only include output if present
+                outputs = {}
+                if test_row[9]:  # caplog
+                    outputs["log"] = test_row[9]
+                if test_row[10]:  # stdout
+                    outputs["stdout"] = test_row[10]
+                if test_row[11]:  # stderr
+                    outputs["stderr"] = test_row[11]
+                if outputs:
+                    result["output"] = outputs
+
+                # Include other relevant fields
+                if test_row[7]:  # has_warning
+                    result["has_warning"] = True
+                if test_row[8]:  # longreprtext
+                    result["long_repr"] = test_row[8]
+                if test_row[12]:  # rerun_count
+                    result["rerun_count"] = test_row[12]
+
+                results_by_outcome[outcome].append(result)
+
+            session_dict["test_results"] = results_by_outcome
+            sessions.append(session_dict)
 
         return sessions
 
@@ -536,54 +565,95 @@ def export_results(
             c.execute(test_results_query, [session[0]])
             test_results = c.fetchall()
 
-            # Convert to dictionary
+            # Convert to dictionary with a more organized structure
             session_dict = {
                 "session": {
-                    "id": session[0],  # database id
-                    "session_id": session[0],  # uuid
-                    "start_time": session[6],
-                    "stop_time": session[7],
-                    "duration": session[8],
-                    "sut_id": session[1],
-                    "sut_type": session[2],
-                    "sut_version": session[3],
-                    "sut_env": session[4],
-                    "sut_metadata": json.loads(session[5]) if session[5] else None,
-                    "num_tests": session[9],
-                    "num_tests_without_rerun": session[10],
-                    "num_tests_total": session[11],
-                    "num_passes": session[12],
-                    "num_failures": session[13],
-                    "num_errors": session[14],
-                    "num_skips": session[15],
-                    "num_xfails": session[16],
-                    "num_xpasses": session[17],
-                    "num_reruns": session[18],
-                    "num_rerun_groups": session[19],
-                    "num_warnings": session[20],
-                    "num_warnings_unique": session[21],
-                    "num_deselected": session[22],
-                },
-                "test_results": [
-                    {
-                        "nodeid": tr[0],
-                        "outcome": tr[1].lower(),  # Convert outcome to lowercase
-                        "start_time": tr[2],
-                        "duration": tr[3],
-                        "error_message": tr[4],
-                        "error_type": tr[5],
-                        "error_traceback": tr[6],
-                        "has_warning": bool(tr[7]),
-                        "longreprtext": tr[8],
-                        "caplog": tr[9],
-                        "capstdout": tr[10],
-                        "capstderr": tr[11],
-                        "rerun_count": tr[12],
-                        "session_id": session[0],
+                    "id": session[0],  # Use single ID field
+                    "timing": {
+                        "start": session[6],
+                        "stop": session[7],
+                        "duration": session[8]
+                    },
+                    "sut": {
+                        "id": session[1],
+                        "type": session[2],
+                        "version": session[3],
+                        "environment": session[4],
+                        "metadata": json.loads(session[5]) if session[5] else None
+                    },
+                    "statistics": {
+                        "tests": {
+                            "total": session[9],
+                            "without_rerun": session[10],
+                            "with_rerun": session[11]
+                        },
+                        "outcomes": {
+                            "passed": session[12],
+                            "failed": session[13],
+                            "error": session[14],
+                            "skipped": session[15],
+                            "xfailed": session[16],
+                            "xpassed": session[17]
+                        },
+                        "reruns": {
+                            "total": session[18],
+                            "groups": session[19]
+                        },
+                        "warnings": {
+                            "total": session[20],
+                            "unique": session[21]
+                        },
+                        "deselected": session[22]
                     }
-                    for tr in test_results
-                ],
+                },
+                "test_results": []
             }
+
+            # Organize test results by outcome for easier analysis
+            results_by_outcome = {}
+            for tr in test_results:
+                outcome = tr[1].lower()
+                if outcome not in results_by_outcome:
+                    results_by_outcome[outcome] = []
+
+                result = {
+                    "id": tr[0],  # nodeid
+                    "timing": {
+                        "start": tr[2],
+                        "duration": tr[3]
+                    }
+                }
+
+                # Only include error info if present
+                if any([tr[4], tr[5], tr[6]]):
+                    result["error"] = {
+                        "message": tr[4],
+                        "type": tr[5],
+                        "traceback": tr[6]
+                    }
+
+                # Only include output if present
+                outputs = {}
+                if tr[9]:  # caplog
+                    outputs["log"] = tr[9]
+                if tr[10]:  # stdout
+                    outputs["stdout"] = tr[10]
+                if tr[11]:  # stderr
+                    outputs["stderr"] = tr[11]
+                if outputs:
+                    result["output"] = outputs
+
+                # Include other relevant fields
+                if tr[7]:  # has_warning
+                    result["has_warning"] = True
+                if tr[8]:  # longreprtext
+                    result["long_repr"] = tr[8]
+                if tr[12]:  # rerun_count
+                    result["rerun_count"] = tr[12]
+
+                results_by_outcome[outcome].append(result)
+
+            session_dict["test_results"] = results_by_outcome
             results.append(session_dict)
 
         if output_file:
