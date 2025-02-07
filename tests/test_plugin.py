@@ -1,6 +1,6 @@
 """Tests for pytest-oof plugin functionality."""
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
 import pytest
@@ -9,7 +9,7 @@ from _pytest.config.argparsing import Parser
 from _pytest.nodes import Item
 
 from pytest_oof.db import export_results
-from pytest_oof.utils import Results, TestResult, TestResults, ReportBasedStats
+from pytest_oof.utils import Results, TestResult, ReportBasedStats, SessionMetadata, TestSessionStats
 
 
 @pytest.fixture
@@ -109,7 +109,17 @@ def test_pytest_unconfigure(mock_config, tmp_path, mocker):
     pytest_configure(mock_config)
 
     # Add some test results
-    test_results = TestResults()
+    test_results = Results(
+        session_metadata=SessionMetadata(
+            session_id="test_session",
+            start_time=datetime.now(timezone.utc),
+            stop_time=datetime.now(timezone.utc),
+            duration=timedelta(seconds=0)
+        ),
+        session_stats=TestSessionStats(),
+        report_stats=ReportBasedStats(),
+        test_results=[]
+    )
     test_results.test_results = [
         TestResult(
             nodeid="test_1",

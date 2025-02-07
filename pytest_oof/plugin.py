@@ -123,9 +123,6 @@ def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo) -> None:
     outcome = yield
     report = outcome.get_result()
 
-    if hasattr(report, "rerun"):
-        print()
-
     # Only process if plugin is enabled
     if not item.config.option._oof:
         return
@@ -147,11 +144,6 @@ def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo) -> None:
         else:
             test_outcome = report.outcome.upper()
 
-        # Check for reruns
-        if hasattr(report, "rerun") and report.rerun > 0:
-            test_outcome = "RERUN"
-    ## DO NOT REMOVE !! ##
-
     now = datetime.now(timezone.utc)
 
     # Get error details
@@ -168,6 +160,11 @@ def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo) -> None:
     # Check for warnings
     has_warning = hasattr(report, "warnings") and len(report.warnings) > 0
 
+    # Handle reruns
+    is_rerun = hasattr(report, "rerun")
+    rerun_count = getattr(report, "rerun", 0)
+
+    # Create test result with rerun information
     test_result = TestResult(
         nodeid=report.nodeid,
         outcome=test_outcome,
@@ -181,14 +178,24 @@ def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo) -> None:
         capstdout=capstdout,
         has_warning=has_warning,
         longreprtext=longreprtext,
+        rerun_count=rerun_count,  # Store rerun count in test result
     )
     item.config._oof_test_results.test_results.append(test_result)
 
     # Update session stats based on test outcome
     stats = item.config._oof_test_results.session_stats
-    if test_outcome == "RERUN":
+    
+    # Update rerun stats if this is a rerun
+    if is_rerun:
         stats.num_reruns += 1
-    elif test_outcome == "PASSED":
+        # Add test to rerun group if not already there
+        rerun_group = f"{report.nodeid}::rerun_{rerun_count}"
+        if rerun_group not in item.config._oof_test_results.rerun_test_groups:
+            item.config._oof_test_results.rerun_test_groups.append(rerun_group)
+            stats.num_rerun_groups += 1
+
+    # Update outcome stats
+    if test_outcome == "PASSED":
         stats.num_passes += 1
     elif test_outcome == "FAILED":
         stats.num_failures += 1
@@ -201,17 +208,12 @@ def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo) -> None:
     elif test_outcome == "ERROR":
         stats.num_errors += 1
 
-    if has_warning:
-        stats.num_warnings += 1
-
     # Update database
     with db_connection(item.config.option.oof_db_path) as conn:
-        add_test_result(
-            db_path=item.config.option.oof_db_path,
-            session_id=item.config._oof_test_results.session_metadata.db_session_id,
-            test_id=report.nodeid,
+        test_result = TestResult(
+            nodeid=report.nodeid,
             outcome=test_outcome,
-            timestamp=now,
+            start_time=now,
             duration=report.duration,
             error_message=error_message,
             error_type=error_type,
@@ -221,6 +223,12 @@ def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo) -> None:
             capstdout=capstdout,
             has_warning=has_warning,
             longreprtext=longreprtext,
+            rerun_count=0  # This will be updated by the rerunfailures plugin if needed
+        )
+        add_test_result(
+            db_path=item.config.option.oof_db_path,
+            session_id=item.config._oof_test_results.session_metadata.db_session_id,
+            test_result=test_result
         )
 
 
@@ -255,6 +263,24 @@ def pytest_configure(config: Config) -> None:
         start_time = datetime.now(timezone.utc)
         session_id = str(uuid.uuid4())
 
+        # Initialize session stats
+        config._oof_session_stats = TestSessionStats(
+            num_tests=0,
+            num_tests_without_rerun=0,
+            num_tests_total=0,
+            num_passes=0,
+            num_failures=0,
+            num_errors=0,
+            num_skips=0,
+            num_xfails=0,
+            num_xpasses=0,
+            num_reruns=0,
+            num_rerun_groups=0,
+            num_warnings=0,
+            num_warnings_unique=0,
+            num_deselected=0
+        )
+
         session_metadata = SessionMetadata(
             session_id=session_id,
             start_time=start_time,
@@ -287,9 +313,10 @@ def pytest_configure(config: Config) -> None:
         # Create full Results object
         config._oof_test_results = Results(
             session_metadata=session_metadata,
-            session_stats=TestSessionStats(),
+            session_stats=config._oof_session_stats,  # Use the initialized stats
             report_stats=ReportBasedStats(),
             test_results=[],
+            rerun_test_groups=[],  # Initialize rerun test groups
         )
 
 
@@ -300,14 +327,34 @@ def pytest_unconfigure(config: Config) -> None:
 
     if hasattr(config, "_oof_test_results"):
         stop_time = datetime.now(timezone.utc)
-        config._oof_test_results.session_metadata.stop_time = stop_time
-        config._oof_test_results.session_metadata.duration = (
-            stop_time - config._oof_test_results.session_metadata.start_time
-        )
+        duration = stop_time - config._oof_test_results.session_metadata.start_time
 
-        # Update final session stats in database
+        # Update session metadata with final timing
+        config._oof_test_results.session_metadata.stop_time = stop_time
+        config._oof_test_results.session_metadata.duration = duration
+
+        # Update session stats in database
         with db_connection(config.option.oof_db_path) as conn:
-            update_session_stats(
-                db_path=config.option.oof_db_path,
-                session_id=config._oof_test_results.session_metadata.db_session_id,
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                UPDATE test_sessions SET
+                    stop_time = ?,
+                    duration = ?
+                WHERE id = ?
+                """,
+                (
+                    stop_time.isoformat(),
+                    duration.total_seconds(),
+                    config._oof_test_results.session_metadata.db_session_id,
+                ),
             )
+            conn.commit()
+
+        # Update final session stats
+        update_session_stats(
+            db_path=config.option.oof_db_path,
+            session_id=config._oof_test_results.session_metadata.db_session_id,
+            stats=config._oof_session_stats,
+            rerun_groups=config._oof_test_results.rerun_test_groups
+        )

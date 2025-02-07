@@ -4,7 +4,9 @@ import sqlite3
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
+
+from pytest_oof.models import TestResult, TestSessionStats
 
 
 @contextmanager
@@ -21,167 +23,75 @@ def db_connection(db_path: Path):
 
 def init_db(db_path: Path) -> None:
     """Initialize the SQLite database with required tables."""
-    # Create parent directory if it doesn't exist
-    db_path.parent.mkdir(parents=True, exist_ok=True)
-
     with db_connection(db_path) as conn:
-        c = conn.cursor()
+        cursor = conn.cursor()
 
         # Create test_sessions table
-        c.execute(
+        cursor.execute(
             """
             CREATE TABLE IF NOT EXISTS test_sessions (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                session_id TEXT NOT NULL,
-                start_time DATETIME NOT NULL,
-                end_time DATETIME,
-                duration REAL,
+                id TEXT PRIMARY KEY,
                 sut_id TEXT,
                 sut_type TEXT,
                 sut_version TEXT,
                 sut_env TEXT,
                 sut_metadata TEXT,
-                python_version TEXT,
-                os_info TEXT,
-                pytest_version TEXT,
-                command_line TEXT,
-                report_based BOOLEAN DEFAULT 1,
-                num_tests INTEGER DEFAULT 0,
-                num_passes INTEGER DEFAULT 0,
-                num_failures INTEGER DEFAULT 0,
-                num_errors INTEGER DEFAULT 0,
-                num_skips INTEGER DEFAULT 0,
-                num_xfails INTEGER DEFAULT 0,
-                num_xpasses INTEGER DEFAULT 0,
-                num_reruns INTEGER DEFAULT 0,
-                num_rerun_groups INTEGER DEFAULT 0,
-                num_warnings INTEGER DEFAULT 0,
-                num_deselected INTEGER DEFAULT 0,
-                flaky_test_count INTEGER DEFAULT 0,
-                max_rerun_count INTEGER DEFAULT 0,
-                total_rerun_time REAL DEFAULT 0
+                start_time TIMESTAMP,
+                stop_time TIMESTAMP,
+                duration REAL,
+                num_tests INTEGER,
+                num_tests_without_rerun INTEGER,
+                num_tests_total INTEGER,
+                num_passes INTEGER,
+                num_failures INTEGER,
+                num_errors INTEGER,
+                num_skips INTEGER,
+                num_xfails INTEGER,
+                num_xpasses INTEGER,
+                num_reruns INTEGER,
+                num_rerun_groups INTEGER,
+                num_warnings INTEGER,
+                num_warnings_unique INTEGER,
+                num_deselected INTEGER
             )
             """
         )
 
-        # Create test_results table with rerun support
-        c.execute(
+        # Create test_results table
+        cursor.execute(
             """
             CREATE TABLE IF NOT EXISTS test_results (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                session_id INTEGER NOT NULL,
-                test_id TEXT NOT NULL,
-                outcome TEXT NOT NULL,
-                timestamp DATETIME NOT NULL,
+                session_id TEXT,
+                nodeid TEXT,
+                outcome TEXT,
+                start_time TIMESTAMP,
                 duration REAL,
                 error_message TEXT,
                 error_type TEXT,
                 error_traceback TEXT,
-                has_warning BOOLEAN DEFAULT 0,
+                has_warning BOOLEAN,
                 longreprtext TEXT,
-                is_rerun BOOLEAN DEFAULT 0,
-                rerun_number INTEGER DEFAULT 0,
-                rerun_count INTEGER DEFAULT 0,
-                rerun_outcomes TEXT DEFAULT NULL,
-                rerun_durations TEXT DEFAULT NULL,
-                rerun_error_messages TEXT DEFAULT NULL,
-                is_flaky BOOLEAN DEFAULT 0,
-                final_outcome TEXT DEFAULT NULL,
-                total_rerun_time REAL DEFAULT 0,
                 caplog TEXT,
                 capstdout TEXT,
                 capstderr TEXT,
-                FOREIGN KEY (session_id) REFERENCES test_sessions (id)
+                rerun_count INTEGER DEFAULT 0,
+                FOREIGN KEY (session_id) REFERENCES test_sessions(id)
             )
             """
         )
 
-        # Create schema version table and set version
-        c.execute(
+        # Create rerun_groups table
+        cursor.execute(
             """
-            CREATE TABLE IF NOT EXISTS schema_version (
+            CREATE TABLE IF NOT EXISTS rerun_groups (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                version INTEGER NOT NULL,
-                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+                session_id TEXT,
+                group_name TEXT,
+                FOREIGN KEY (session_id) REFERENCES test_sessions(id)
             )
             """
         )
-
-        # Check current schema version
-        c.execute("SELECT version FROM schema_version ORDER BY id DESC LIMIT 1")
-        row = c.fetchone()
-        current_version = row[0] if row else 0
-
-        # Update schema version if needed
-        if current_version < 8:  # Increment version for capture columns
-            # Check if columns exist first
-            cursor = c.execute("PRAGMA table_info(test_results)")
-            existing_columns = {col[1] for col in cursor.fetchall()}
-
-            # Add columns only if they don't exist
-            if "is_rerun" not in existing_columns:
-                c.execute(
-                    "ALTER TABLE test_results ADD COLUMN is_rerun BOOLEAN DEFAULT 0"
-                )
-            if "rerun_number" not in existing_columns:
-                c.execute(
-                    "ALTER TABLE test_results ADD COLUMN rerun_number INTEGER DEFAULT 0"
-                )
-            if "rerun_count" not in existing_columns:
-                c.execute(
-                    "ALTER TABLE test_results ADD COLUMN rerun_count INTEGER DEFAULT 0"
-                )
-            if "rerun_outcomes" not in existing_columns:
-                c.execute(
-                    "ALTER TABLE test_results ADD COLUMN rerun_outcomes TEXT DEFAULT NULL"
-                )
-            if "rerun_durations" not in existing_columns:
-                c.execute(
-                    "ALTER TABLE test_results ADD COLUMN rerun_durations TEXT DEFAULT NULL"
-                )
-            if "rerun_error_messages" not in existing_columns:
-                c.execute(
-                    "ALTER TABLE test_results ADD COLUMN rerun_error_messages TEXT DEFAULT NULL"
-                )
-            if "is_flaky" not in existing_columns:
-                c.execute(
-                    "ALTER TABLE test_results ADD COLUMN is_flaky BOOLEAN DEFAULT 0"
-                )
-            if "final_outcome" not in existing_columns:
-                c.execute(
-                    "ALTER TABLE test_results ADD COLUMN final_outcome TEXT DEFAULT NULL"
-                )
-            if "total_rerun_time" not in existing_columns:
-                c.execute(
-                    "ALTER TABLE test_results ADD COLUMN total_rerun_time REAL DEFAULT 0"
-                )
-            if "caplog" not in existing_columns:
-                c.execute("ALTER TABLE test_results ADD COLUMN caplog TEXT")
-            if "capstdout" not in existing_columns:
-                c.execute("ALTER TABLE test_results ADD COLUMN capstdout TEXT")
-            if "capstderr" not in existing_columns:
-                c.execute("ALTER TABLE test_results ADD COLUMN capstderr TEXT")
-
-            # Check test_sessions columns
-            cursor = c.execute("PRAGMA table_info(test_sessions)")
-            existing_columns = {col[1] for col in cursor.fetchall()}
-
-            # Add test_sessions columns if they don't exist
-            if "flaky_test_count" not in existing_columns:
-                c.execute(
-                    "ALTER TABLE test_sessions ADD COLUMN flaky_test_count INTEGER DEFAULT 0"
-                )
-            if "max_rerun_count" not in existing_columns:
-                c.execute(
-                    "ALTER TABLE test_sessions ADD COLUMN max_rerun_count INTEGER DEFAULT 0"
-                )
-            if "total_rerun_time" not in existing_columns:
-                c.execute(
-                    "ALTER TABLE test_sessions ADD COLUMN total_rerun_time REAL DEFAULT 0"
-                )
-
-            c.execute("INSERT INTO schema_version (version) VALUES (?)", (8,))
-            conn.commit()
 
 
 def add_session(
@@ -199,14 +109,15 @@ def add_session(
         c.execute(
             """
             INSERT INTO test_sessions (
-                session_id,
-                start_time,
+                id,
                 sut_id,
                 sut_type,
                 sut_version,
                 sut_env,
-                report_based,
+                start_time,
                 num_tests,
+                num_tests_without_rerun,
+                num_tests_total,
                 num_passes,
                 num_failures,
                 num_errors,
@@ -216,112 +127,178 @@ def add_session(
                 num_reruns,
                 num_rerun_groups,
                 num_warnings,
-                num_deselected,
-                flaky_test_count,
-                max_rerun_count,
-                total_rerun_time
-            ) VALUES (?, ?, ?, ?, ?, ?, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
+                num_warnings_unique,
+                num_deselected
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 session_id,
-                start_time,
                 sut_id,
                 sut_type,
                 sut_version,
                 sut_env,
+                start_time,
+                0,  # num_tests
+                0,  # num_tests_without_rerun
+                0,  # num_tests_total
+                0,  # num_passes
+                0,  # num_failures
+                0,  # num_errors
+                0,  # num_skips
+                0,  # num_xfails
+                0,  # num_xpasses
+                0,  # num_reruns
+                0,  # num_rerun_groups
+                0,  # num_warnings
+                0,  # num_warnings_unique
+                0,  # num_deselected
             ),
         )
-        session_id = c.lastrowid
         conn.commit()
         return session_id
 
 
 def add_test_result(
     db_path: Path,
-    session_id: int,
-    test_id: str,
-    outcome: str,
-    timestamp: datetime,
-    duration: Optional[float] = None,
-    error_message: Optional[str] = None,
-    error_type: Optional[str] = None,
-    error_traceback: Optional[str] = None,
-    has_warning: bool = False,
-    longreprtext: Optional[str] = None,
-    is_rerun: bool = False,
-    rerun_number: int = 0,
-    rerun_count: int = 0,
-    rerun_outcomes: Optional[str] = None,
-    rerun_durations: Optional[str] = None,
-    rerun_error_messages: Optional[str] = None,
-    is_flaky: bool = False,
-    final_outcome: Optional[str] = None,
-    total_rerun_time: Optional[float] = None,
-    caplog: Optional[str] = None,
-    capstdout: Optional[str] = None,
-    capstderr: Optional[str] = None,
-) -> int:
-    """Add a test result to the database and return its ID."""
+    session_id: str,
+    test_result: Union[Dict[str, Any], TestResult],
+) -> None:
+    """Add a test result to the database."""
     with db_connection(db_path) as conn:
-        c = conn.cursor()
-
-        c.execute(
+        cursor = conn.cursor()
+        
+        # Convert TestResult to dict if needed
+        if isinstance(test_result, TestResult):
+            test_result = test_result.to_dict()
+            
+        cursor.execute(
             """
             INSERT INTO test_results (
-                session_id,
-                test_id,
-                outcome,
-                timestamp,
-                duration,
-                error_message,
-                error_type,
-                error_traceback,
-                has_warning,
-                longreprtext,
-                is_rerun,
-                rerun_number,
-                rerun_count,
-                rerun_outcomes,
-                rerun_durations,
-                rerun_error_messages,
-                is_flaky,
-                final_outcome,
-                total_rerun_time,
-                caplog,
-                capstdout,
-                capstderr
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                session_id, nodeid, outcome, start_time, duration,
+                error_message, error_type, error_traceback,
+                has_warning, longreprtext, caplog, capstdout, capstderr,
+                rerun_count
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 session_id,
-                test_id,
-                outcome.upper(),  # Convert outcome to uppercase
-                timestamp,
-                duration,
-                error_message,
-                error_type,
-                error_traceback,
-                has_warning,
-                longreprtext,
-                is_rerun,
-                rerun_number,
-                rerun_count,
-                rerun_outcomes,
-                rerun_durations,
-                rerun_error_messages,
-                is_flaky,
-                final_outcome,
-                total_rerun_time,
-                caplog,
-                capstdout,
-                capstderr,
+                test_result["nodeid"],
+                test_result["outcome"],
+                test_result["start_time"],
+                test_result["duration"],
+                test_result["error_message"],
+                test_result["error_type"],
+                test_result["error_traceback"],
+                test_result["has_warning"],
+                test_result["longreprtext"],
+                test_result["caplog"],
+                test_result["capstdout"],
+                test_result["capstderr"],
+                test_result["rerun_count"],
             ),
         )
+        conn.commit()  # Make sure changes are committed
 
-        result_id = c.lastrowid
-        conn.commit()
 
-        return result_id
+def add_rerun_group(
+    db_path: Path,
+    session_id: str,
+    group_name: str,
+) -> None:
+    """Add a rerun group to the database."""
+    with db_connection(db_path) as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            INSERT INTO rerun_groups (session_id, group_name)
+            VALUES (?, ?)
+            """,
+            (session_id, group_name),
+        )
+
+
+def update_session_stats(
+    db_path: Path,
+    session_id: str,
+    stats: Union[Dict[str, Any], TestSessionStats],
+    rerun_groups: List[str],
+) -> None:
+    """Update session statistics in the database."""
+    with db_connection(db_path) as conn:
+        cursor = conn.cursor()
+
+        # Convert TestSessionStats to dict if needed
+        if isinstance(stats, TestSessionStats):
+            stats = stats.to_dict()
+
+        print(f"Updating session stats for {session_id}: {stats}")  # Debug
+
+        cursor.execute(
+            """
+            UPDATE test_sessions SET
+                num_tests = ?,
+                num_tests_without_rerun = ?,
+                num_tests_total = ?,
+                num_passes = ?,
+                num_failures = ?,
+                num_errors = ?,
+                num_skips = ?,
+                num_xfails = ?,
+                num_xpasses = ?,
+                num_reruns = ?,
+                num_rerun_groups = ?,
+                num_warnings = ?,
+                num_warnings_unique = ?,
+                num_deselected = ?
+            WHERE id = ?
+            """,
+            (
+                stats["num_tests"],
+                stats["num_tests_without_rerun"],
+                stats["num_tests_total"],
+                stats["num_passes"],
+                stats["num_failures"],
+                stats["num_errors"],
+                stats["num_skips"],
+                stats["num_xfails"],
+                stats["num_xpasses"],
+                stats["num_reruns"],
+                stats["num_rerun_groups"],
+                stats["num_warnings"],
+                stats["num_warnings_unique"],
+                stats["num_deselected"],
+                session_id,
+            ),
+        )
+        conn.commit()  # Make sure changes are committed
+
+        # Verify the update
+        cursor.execute(
+            """
+            SELECT
+                num_tests,
+                num_tests_without_rerun,
+                num_tests_total,
+                num_passes,
+                num_failures,
+                num_reruns,
+                num_rerun_groups
+            FROM test_sessions
+            WHERE id = ?
+            """,
+            (session_id,),
+        )
+        row = cursor.fetchone()
+        print(f"After update: {row}")  # Debug
+
+        # Update rerun groups
+        cursor.execute("DELETE FROM rerun_groups WHERE session_id = ?", (session_id,))
+        for group in rerun_groups:
+            cursor.execute(
+                "INSERT INTO rerun_groups (session_id, group_name) VALUES (?, ?)",
+                (session_id, group),
+            )
+        conn.commit()  # Make sure changes are committed
 
 
 def get_test_results(
@@ -335,48 +312,139 @@ def get_test_results(
     with db_connection(db_path) as conn:
         c = conn.cursor()
 
-        # Build query conditions
+        # Build query conditions for sessions
         query = """
             SELECT
-                tr.test_id,
-                tr.outcome,
-                tr.timestamp,
-                tr.duration,
+                ts.id as session_id,
                 ts.sut_id,
                 ts.sut_type,
                 ts.sut_version,
-                ts.sut_env
-            FROM test_results tr
-            JOIN test_sessions ts ON tr.session_id = ts.id
+                ts.sut_env,
+                ts.start_time,
+                ts.stop_time,
+                ts.duration,
+                ts.num_tests,
+                ts.num_tests_without_rerun,
+                ts.num_tests_total,
+                ts.num_passes,
+                ts.num_failures,
+                ts.num_errors,
+                ts.num_skips,
+                ts.num_xfails,
+                ts.num_xpasses,
+                ts.num_reruns,
+                ts.num_rerun_groups,
+                ts.num_warnings,
+                ts.num_warnings_unique,
+                ts.num_deselected
+            FROM test_sessions ts
             WHERE 1=1
         """
         params = []
 
         if start_time:
-            query += " AND tr.timestamp >= ?"
+            query += " AND ts.start_time >= ?"
             params.append(start_time)
         if end_time:
-            query += " AND tr.timestamp <= ?"
+            query += " AND ts.stop_time <= ?"
             params.append(end_time)
-        if test_id:
-            query += " AND tr.test_id = ?"
-            params.append(test_id)
         if last_n_sessions:
-            query = f"""
-                WITH LastSessions AS (
-                    SELECT id FROM test_sessions
-                    ORDER BY start_time DESC
-                    LIMIT {last_n_sessions}
-                )
-                {query}
-                AND ts.id IN (SELECT id FROM LastSessions)
-            """
+            query += " ORDER BY ts.start_time DESC LIMIT ?"
+            params.append(last_n_sessions)
 
-        query += " ORDER BY tr.timestamp"
-
+        # Get sessions
+        print(f"Executing query: {query} with params: {params}")  # Debug
         c.execute(query, params)
-        results = c.fetchall()
-        return results
+        sessions = []
+        for row in c.fetchall():
+            print(f"Raw row: {row}")  # Debug
+            session = {
+                "session_id": row[0],
+                "sut_id": row[1],
+                "sut_type": row[2],
+                "sut_version": row[3],
+                "sut_env": row[4],
+                "start_time": row[5],
+                "stop_time": row[6],
+                "duration": row[7],
+                "stats": {
+                    "num_tests": row[8],
+                    "num_tests_without_rerun": row[9],
+                    "num_tests_total": row[10],
+                    "num_passes": row[11],
+                    "num_failures": row[12],
+                    "num_errors": row[13],
+                    "num_skips": row[14],
+                    "num_xfails": row[15],
+                    "num_xpasses": row[16],
+                    "num_reruns": row[17],
+                    "num_rerun_groups": row[18],
+                    "num_warnings": row[19],
+                    "num_warnings_unique": row[20],
+                    "num_deselected": row[21],
+                },
+                "test_results": [],
+                "rerun_groups": [],
+            }
+            print(f"Session stats: {session['stats']}")  # Debug
+
+            # Get test results for this session
+            query = """
+                SELECT
+                    nodeid,
+                    outcome,
+                    start_time,
+                    duration,
+                    error_message,
+                    error_type,
+                    error_traceback,
+                    has_warning,
+                    longreprtext,
+                    caplog,
+                    capstdout,
+                    capstderr,
+                    rerun_count
+                FROM test_results
+                WHERE session_id = ?
+                ORDER BY start_time ASC
+            """
+            print(f"Fetching test results with query: {query} and session_id: {session['session_id']}")  # Debug
+            c.execute(query, (session["session_id"],))
+            rows = c.fetchall()
+            print(f"Found {len(rows)} test results: {rows}")  # Debug
+            for test_row in rows:
+                test_result = {
+                    "nodeid": test_row[0],
+                    "outcome": test_row[1],
+                    "start_time": test_row[2],
+                    "duration": test_row[3],
+                    "error_message": test_row[4],
+                    "error_type": test_row[5],
+                    "error_traceback": test_row[6],
+                    "has_warning": bool(test_row[7]),
+                    "longreprtext": test_row[8],
+                    "caplog": test_row[9],
+                    "capstdout": test_row[10],
+                    "capstderr": test_row[11],
+                    "rerun_count": test_row[12],
+                }
+                session["test_results"].append(test_result)
+
+            # Get rerun groups for this session
+            c.execute(
+                """
+                SELECT group_name
+                FROM rerun_groups
+                WHERE session_id = ?
+                ORDER BY group_name ASC
+                """,
+                (session["session_id"],),
+            )
+            session["rerun_groups"] = [row[0] for row in c.fetchall()]
+
+            sessions.append(session)
+
+        return sessions
 
 
 def export_results(
@@ -436,7 +504,7 @@ def export_results(
             query += " AND r.outcome = ?"
             params.append(outcome.upper())  # Convert outcome filter to uppercase
         if test_id is not None:
-            query += " AND r.test_id = ?"
+            query += " AND r.nodeid = ?"
             params.append(test_id)
 
         query += " ORDER BY s.start_time DESC"
@@ -448,30 +516,22 @@ def export_results(
             # Get test results for this session
             test_results_query = """
                 SELECT
-                    test_id,
+                    nodeid,
                     outcome,
-                    timestamp,
+                    start_time,
                     duration,
                     error_message,
                     error_type,
                     error_traceback,
                     has_warning,
                     longreprtext,
-                    is_rerun,
-                    rerun_number,
-                    rerun_count,
-                    rerun_outcomes,
-                    rerun_durations,
-                    rerun_error_messages,
-                    is_flaky,
-                    final_outcome,
-                    total_rerun_time,
                     caplog,
                     capstdout,
-                    capstderr
+                    capstderr,
+                    rerun_count
                 FROM test_results
                 WHERE session_id = ?
-                ORDER BY timestamp
+                ORDER BY start_time
             """
             c.execute(test_results_query, [session[0]])
             test_results = c.fetchall()
@@ -480,58 +540,45 @@ def export_results(
             session_dict = {
                 "session": {
                     "id": session[0],  # database id
-                    "session_id": session[1],  # uuid
-                    "start_time": session[2],
-                    "end_time": session[3],
-                    "duration": session[4],
-                    "sut_id": session[5],
-                    "sut_type": session[6],
-                    "sut_version": session[7],
-                    "sut_env": session[8],
-                    "sut_metadata": json.loads(session[9]) if session[9] else None,
-                    "python_version": session[10],
-                    "os_info": session[11],
-                    "pytest_version": session[12],
-                    "command_line": session[13],
-                    "report_based": bool(session[14]),
-                    "num_tests": session[15],
-                    "num_passes": session[16],
-                    "num_failures": session[17],
-                    "num_errors": session[18],
-                    "num_skips": session[19],
-                    "num_xfails": session[20],
-                    "num_xpasses": session[21],
-                    "num_reruns": session[22],
-                    "num_rerun_groups": session[23],
-                    "num_warnings": session[24],
-                    "num_deselected": session[25],
-                    "flaky_test_count": session[26],
-                    "max_rerun_count": session[27],
-                    "total_rerun_time": session[28],
+                    "session_id": session[0],  # uuid
+                    "start_time": session[6],
+                    "stop_time": session[7],
+                    "duration": session[8],
+                    "sut_id": session[1],
+                    "sut_type": session[2],
+                    "sut_version": session[3],
+                    "sut_env": session[4],
+                    "sut_metadata": json.loads(session[5]) if session[5] else None,
+                    "num_tests": session[9],
+                    "num_tests_without_rerun": session[10],
+                    "num_tests_total": session[11],
+                    "num_passes": session[12],
+                    "num_failures": session[13],
+                    "num_errors": session[14],
+                    "num_skips": session[15],
+                    "num_xfails": session[16],
+                    "num_xpasses": session[17],
+                    "num_reruns": session[18],
+                    "num_rerun_groups": session[19],
+                    "num_warnings": session[20],
+                    "num_warnings_unique": session[21],
+                    "num_deselected": session[22],
                 },
                 "test_results": [
                     {
-                        "test_id": tr[0],
+                        "nodeid": tr[0],
                         "outcome": tr[1].lower(),  # Convert outcome to lowercase
-                        "timestamp": tr[2],
+                        "start_time": tr[2],
                         "duration": tr[3],
                         "error_message": tr[4],
                         "error_type": tr[5],
                         "error_traceback": tr[6],
                         "has_warning": bool(tr[7]),
                         "longreprtext": tr[8],
-                        "is_rerun": bool(tr[9]),
-                        "rerun_number": tr[10],
-                        "rerun_count": tr[11],
-                        "rerun_outcomes": json.loads(tr[12]) if tr[12] else None,
-                        "rerun_durations": json.loads(tr[13]) if tr[13] else None,
-                        "rerun_error_messages": json.loads(tr[14]) if tr[14] else None,
-                        "is_flaky": bool(tr[15]),
-                        "final_outcome": tr[16],
-                        "total_rerun_time": tr[17],
-                        "caplog": tr[18],
-                        "capstdout": tr[19],
-                        "capstderr": tr[20],
+                        "caplog": tr[9],
+                        "capstdout": tr[10],
+                        "capstderr": tr[11],
+                        "rerun_count": tr[12],
                         "session_id": session[0],
                     }
                     for tr in test_results
@@ -646,101 +693,13 @@ def delete_results(
         return 0
 
 
-def update_session_stats(db_path: Path, session_id: int) -> None:
-    """Update session statistics based on test results."""
-    with db_connection(db_path) as conn:
-        c = conn.cursor()
-
-        # Get all test results for this session
-        c.execute(
-            """
-            SELECT outcome, has_warning, is_rerun, rerun_number
-            FROM test_results
-            WHERE session_id = ?
-            """,
-            (session_id,),
-        )
-        test_results = c.fetchall()
-
-        # Calculate stats
-        num_tests = len(test_results)
-        num_passes = sum(
-            1 for (outcome, _, _, _) in test_results if outcome == "PASSED"
-        )
-        num_failures = sum(
-            1 for (outcome, _, _, _) in test_results if outcome == "FAILED"
-        )
-        num_skips = sum(
-            1 for (outcome, _, _, _) in test_results if outcome == "SKIPPED"
-        )
-        num_errors = sum(1 for (outcome, _, _, _) in test_results if outcome == "ERROR")
-        num_xfails = sum(1 for (outcome, _, _, _) in test_results if outcome == "XFAIL")
-        num_xpasses = sum(
-            1 for (outcome, _, _, _) in test_results if outcome == "XPASS"
-        )
-        num_reruns = sum(1 for (_, _, is_rerun, _) in test_results if is_rerun)
-        num_warnings = sum(1 for (_, has_warning, _, _) in test_results if has_warning)
-
-        # Get unique test IDs to calculate rerun groups
-        c.execute(
-            """
-            SELECT test_id, COUNT(*) as run_count
-            FROM test_results
-            WHERE session_id = ?
-            GROUP BY test_id
-            HAVING run_count > 1
-            """,
-            (session_id,),
-        )
-        rerun_groups = c.fetchall()
-        num_rerun_groups = len(rerun_groups)
-
-        # Update session stats
-        c.execute(
-            """
-            UPDATE test_sessions
-            SET num_tests = ?,
-                num_passes = ?,
-                num_failures = ?,
-                num_errors = ?,
-                num_skips = ?,
-                num_xfails = ?,
-                num_xpasses = ?,
-                num_reruns = ?,
-                num_rerun_groups = ?,
-                num_warnings = ?,
-                flaky_test_count = ?,
-                max_rerun_count = ?,
-                total_rerun_time = ?
-            WHERE id = ?
-            """,
-            (
-                num_tests,
-                num_passes,
-                num_failures,
-                num_errors,
-                num_skips,
-                num_xfails,
-                num_xpasses,
-                num_reruns,
-                num_rerun_groups,
-                num_warnings,
-                0,  # flaky_test_count
-                0,  # max_rerun_count
-                0,  # total_rerun_time
-                session_id,
-            ),
-        )
-        conn.commit()
-
-
 def get_db_id_from_session_id(db_path: Path, session_id: str) -> Optional[int]:
     """Get the database ID for a session given its session_id."""
     with db_connection(db_path) as conn:
         c = conn.cursor()
         c.execute(
             """
-            SELECT id FROM test_sessions WHERE session_id = ?
+            SELECT id FROM test_sessions WHERE id = ?
             """,
             (session_id,),
         )

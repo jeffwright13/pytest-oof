@@ -13,7 +13,6 @@ from pytest_oof.utils import (
     SessionMetadata,
     TestHistory,
     TestResult,
-    TestResults,
     TestSessionStats,
 )
 
@@ -104,8 +103,17 @@ def create_test_results():
         )
 
         # Create test results collection
-        test_results_collection = TestResults()
-        test_results_collection.session_stats = TestSessionStats()
+        test_results_collection = Results(
+            session_metadata=SessionMetadata(
+                session_id="test_session",
+                start_time=datetime.now(),
+                stop_time=datetime.now(),
+                duration=timedelta(seconds=0)
+            ),
+            session_stats=TestSessionStats(),
+            report_stats=ReportBasedStats(),
+            test_results=[]
+        )
 
         if test_results:
             for nodeid, outcome in test_results:

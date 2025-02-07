@@ -626,3 +626,31 @@ analyze-results --sut-id my-app --start-time 2025-01-01
 For a complete list of options, run `analyze-results --help`.
 
 ## oofda
+
+```
+
+### API Access
+pytest-oof now provides a powerful API for analyzing test results programmatically. This allows you to:
+
+- Get statistics for all SUTs in your database
+- Analyze test trends over time
+- Identify flaky tests
+- Generate custom reports
+- Compare test behavior across environments
+
+Example usage:
+```python
+from pytest_oof.analyzer import TestDataAnalyzer
+
+# Initialize analyzer
+analyzer = TestDataAnalyzer("path/to/test_results.db")
+
+# Get statistics for all SUTs
+stats = analyzer.get_sut_stats()
+for stat in stats:
+    print(f"SUT: {stat.sut_id}")
+    print(f"Pass Rate: {stat.total_passes / stat.total_tests:.1%}")
+    print(f"Flaky Tests: {len(stat.flaky_tests)}")
+```
+
+For detailed API documentation and examples, see [API Documentation](docs/api.md).

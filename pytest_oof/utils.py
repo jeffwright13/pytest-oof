@@ -1,11 +1,23 @@
 """Utility classes and functions for pytest-oof."""
 import json
 import logging
+import os
+import platform
+import sys
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
+import pytest
+
+from pytest_oof.models import (
+    Results,
+    TestResult,
+    TestSessionStats,
+    ReportBasedStats,
+    SessionMetadata,
+)
 from pytest_oof.db import db_connection
 
 logger = logging.getLogger(__name__)
@@ -28,264 +40,6 @@ def generate_timestamp_uuid():
     timestamp_uuid = uuid.UUID(int=combined)
 
     return str(timestamp_uuid)
-
-
-@dataclass
-class SessionMetadata:
-    """
-    'Metadata': metadata about the test run, including system under test (SUT) identification
-    and test session timing information.
-
-    Fields:
-        session_id: Unique identifier for the test session
-        sut_id: Unique identifier for the system under test
-        sut_type: Type/category of the system (e.g., "GEMS", "production", "staging")
-        sut_version: Version information about the system
-        sut_environment: Environment details (e.g., "prod", "staging", "dev")
-        sut_metadata: Additional SUT-specific metadata
-        start_time: Start time of the test session
-        stop_time: End time of the test session
-        duration: Duration of the test session
-        python_version: Python version used for running tests
-        os_info: Operating system information
-        pytest_version: Pytest version used for running tests
-        command_line: Command line used to run tests
-    """
-
-    session_id: str
-    start_time: datetime
-    stop_time: datetime
-    duration: timedelta
-    sut_id: str = ""
-    sut_type: str = ""
-    sut_version: str = ""
-    sut_environment: str = ""
-    sut_metadata: Dict[str, Any] = field(default_factory=dict)
-    python_version: str = ""
-    os_info: str = ""
-    pytest_version: str = ""
-    command_line: str = ""
-
-    def to_dict(self) -> Dict[str, Any]:
-        return {
-            "session_id": self.session_id,
-            "sut_id": self.sut_id,
-            "sut_type": self.sut_type,
-            "sut_version": self.sut_version,
-            "sut_environment": self.sut_environment,
-            "sut_metadata": self.sut_metadata,
-            "start_time": self.start_time.isoformat(),
-            "stop_time": self.stop_time.isoformat(),
-            "duration": self.duration.total_seconds(),
-            "python_version": self.python_version,
-            "os_info": self.os_info,
-            "pytest_version": self.pytest_version,
-            "command_line": self.command_line,
-        }
-
-
-@dataclass
-class TestSessionStats:
-    """
-    'TestSessionStats': cumulative statistics for the entire test session
-    """
-
-    num_tests: int = 0  # Total number of test runs including reruns
-    num_tests_without_rerun: int = 0  # Number of unique tests (excluding reruns)
-    num_tests_total: int = 0  # Total number of tests including deselected
-    num_passes: int = 0
-    num_failures: int = 0
-    num_errors: int = 0
-    num_skips: int = 0
-    num_xfails: int = 0
-    num_xpasses: int = 0
-    num_reruns: int = 0
-    num_rerun_groups: int = 0  # Number of distinct test groups that had reruns
-    num_warnings: int = 0
-    num_warnings_unique: int = 0
-    num_deselected: int = 0  # Number of tests deselected via pytest's test selection
-
-    def to_dict(self) -> Dict[str, int]:
-        return {
-            "num_tests": self.num_tests,
-            "num_tests_without_rerun": self.num_tests_without_rerun,
-            "num_tests_total": self.num_tests_total,
-            "num_passes": self.num_passes,
-            "num_failures": self.num_failures,
-            "num_errors": self.num_errors,
-            "num_skips": self.num_skips,
-            "num_xfails": self.num_xfails,
-            "num_xpasses": self.num_xpasses,
-            "num_reruns": self.num_reruns,
-            "num_rerun_groups": self.num_rerun_groups,
-            "num_warnings": self.num_warnings,
-            "num_warnings_unique": self.num_warnings_unique,
-            "num_deselected": self.num_deselected,
-        }
-
-
-@dataclass
-class ReportBasedStats:
-    """Stats collected directly from pytest test reports."""
-
-    num_tests: int = 0  # Total number of test runs
-    num_tests_total: int = 0  # Total number of tests including deselected
-    num_passes: int = 0
-    num_failures: int = 0
-    num_errors: int = 0
-    num_skips: int = 0
-    num_xfails: int = 0
-    num_xpasses: int = 0
-
-    def to_dict(self) -> Dict[str, int]:
-        return {
-            "num_tests": self.num_tests,
-            "num_tests_total": self.num_tests_total,
-            "num_passes": self.num_passes,
-            "num_failures": self.num_failures,
-            "num_errors": self.num_errors,
-            "num_skips": self.num_skips,
-            "num_xfails": self.num_xfails,
-            "num_xpasses": self.num_xpasses,
-        }
-
-
-@dataclass
-class TestResult:
-    """'TestResult': a single test result, which is a single test run of a single test.
-
-    Fields:
-    'nodeid': pytest 'node_id' (test identifier)
-    'outcome': outcome of the test (PASSED, FAILED, SKIPPED, etc.)
-    'start_time': datetime object for the start time of the test
-    'duration': duration of the test in microseconds
-    'error_message': error message if test failed
-    'error_type': type of error if test failed
-    'error_traceback': error traceback if test failed
-    'has_warning': whether the test resulted in a warning
-    'longreprtext': full representation of test failure or error
-    """
-
-    sut_id: str = ""
-    sut_metadata: Dict[str, Any] = field(default_factory=dict)
-    nodeid: str = ""
-    outcome: str = ""
-    start_time: datetime = None
-    duration: float = 0.0
-    error_message: str = ""
-    error_type: str = ""
-    error_traceback: str = ""
-    has_warning: bool = False
-    longreprtext: str = ""
-    caplog: str = ""
-    capstdout: str = ""
-    capstderr: str = ""
-
-    def to_dict(self) -> Dict[str, Any]:
-        return {
-            "sut_id": self.sut_id,
-            "sut_metadata": self.sut_metadata,
-            "nodeid": self.nodeid,
-            "outcome": self.outcome,
-            "start_time": self.start_time.isoformat() if self.start_time else None,
-            "duration": self.duration,
-            "error_message": self.error_message,
-            "error_type": self.error_type,
-            "error_traceback": self.error_traceback,
-            "has_warning": self.has_warning,
-            "longreprtext": self.longreprtext,
-            "caplog": self.caplog,
-            "capstdout": self.capstdout,
-            "capstderr": self.capstderr,
-        }
-
-
-@dataclass
-class TestResults:
-    """
-    A collection of TestResult objects, with convenience methods for accessing
-    subsets of the collection.
-    """
-
-    session_stats: TestSessionStats = None
-    test_results: List[TestResult] = field(default_factory=list)
-    warnings: List[str] = field(default_factory=list)
-    rerun_test_groups: List[str] = field(default_factory=list)
-
-    def to_dict(self) -> Dict[str, Any]:
-        return {
-            "session_stats": self.session_stats.to_dict()
-            if self.session_stats
-            else None,
-            "test_results": [r.to_dict() for r in self.test_results],
-            "warnings": self.warnings,
-            "rerun_test_groups": self.rerun_test_groups,
-        }
-
-    @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "TestResults":
-        session_stats = (
-            TestSessionStats(**data["session_stats"])
-            if data.get("session_stats")
-            else None
-        )
-        test_results = [TestResult(**r) for r in data["test_results"]]
-        warnings = data.get("warnings", [])
-        rerun_test_groups = data.get("rerun_test_groups", [])
-        return cls(
-            session_stats=session_stats,
-            test_results=test_results,
-            warnings=warnings,
-            rerun_test_groups=rerun_test_groups,
-        )
-
-
-@dataclass
-class Results:
-    """'Results': a collection of all data collected during a test run, made nicely
-    consumable by pytest-oof.
-
-    'session_metadata': metadata about the test session including timing and SUT info
-    'session_stats': overall statistics for this test session
-    'report_stats': statistics collected directly from pytest test reports
-    'test_results': collection of TestResult objects for all tests in the test session
-    'warnings': list of warning messages
-    'rerun_test_groups': list of test groups that were rerun
-    """
-
-    session_metadata: SessionMetadata
-    session_stats: TestSessionStats
-    report_stats: ReportBasedStats
-    test_results: List[TestResult]
-    warnings: List[str] = field(default_factory=list)
-    rerun_test_groups: List[str] = field(default_factory=list)
-
-    def to_dict(self) -> Dict[str, Any]:
-        return {
-            "session_metadata": self.session_metadata.to_dict(),
-            "session_stats": self.session_stats.to_dict(),
-            "report_stats": self.report_stats.to_dict(),
-            "test_results": [r.to_dict() for r in self.test_results],
-            "warnings": self.warnings,
-            "rerun_test_groups": self.rerun_test_groups,
-        }
-
-    @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "Results":
-        session_metadata = SessionMetadata(**data["session_metadata"])
-        session_stats = TestSessionStats(**data["session_stats"])
-        report_stats = ReportBasedStats(**data["report_stats"])
-        test_results = [TestResult(**r) for r in data["test_results"]]
-        warnings = data.get("warnings", [])
-        rerun_test_groups = data.get("rerun_test_groups", [])
-        return cls(
-            session_metadata=session_metadata,
-            session_stats=session_stats,
-            report_stats=report_stats,
-            test_results=test_results,
-            warnings=warnings,
-            rerun_test_groups=rerun_test_groups,
-        )
 
 
 @dataclass
@@ -445,127 +199,124 @@ class TestHistory:
         with db_connection(self.path) as conn:
             c = conn.cursor()
 
-            # Get test sessions
-            query = """
+            # Build session query
+            session_query = """
                 SELECT
-                    id,
-                    start_time,
-                    end_time,
-                    duration,
-                    sut_id,
-                    sut_type,
-                    sut_version,
-                    sut_env,
-                    python_version,
-                    os_info,
-                    pytest_version,
-                    command_line,
-                    num_tests,
-                    num_passes,
-                    num_failures,
-                    num_errors,
-                    num_skips,
-                    num_xfails,
-                    num_xpasses,
-                    num_reruns,
-                    num_rerun_groups,
-                    num_warnings
-                FROM test_sessions ts
+                    s.id,
+                    s.start_time,
+                    s.stop_time,
+                    s.duration,
+                    s.num_tests,
+                    s.num_tests_without_rerun,
+                    s.num_tests_total,
+                    s.num_passes,
+                    s.num_failures,
+                    s.num_errors,
+                    s.num_skips,
+                    s.num_xfails,
+                    s.num_xpasses,
+                    s.num_reruns,
+                    s.num_rerun_groups,
+                    s.num_warnings,
+                    s.num_warnings_unique,
+                    s.num_deselected,
+                    s.sut_id,
+                    s.sut_type,
+                    s.sut_version,
+                    s.sut_env
+                FROM test_sessions s
                 WHERE 1=1
             """
             params = []
 
-            # Add filters
             if sut_id:
-                query += " AND ts.sut_id = ?"
+                session_query += " AND s.sut_id = ?"
                 params.append(sut_id)
             if sut_type:
-                query += " AND ts.sut_type = ?"
+                session_query += " AND s.sut_type = ?"
                 params.append(sut_type)
             if sut_version:
-                query += " AND ts.sut_version = ?"
+                session_query += " AND s.sut_version = ?"
                 params.append(sut_version)
             if sut_env:
-                query += " AND ts.sut_env = ?"
+                session_query += " AND s.sut_env = ?"
                 params.append(sut_env)
             if start_time:
-                query += " AND ts.start_time >= ?"
-                params.append(start_time)
+                session_query += " AND s.start_time >= ?"
+                params.append(start_time.isoformat())
             if end_time:
-                query += " AND ts.start_time <= ?"
-                params.append(end_time)
+                session_query += " AND s.start_time <= ?"
+                params.append(end_time.isoformat())
 
-            # Add order by and limit
-            query += " ORDER BY ts.start_time DESC"
+            session_query += " ORDER BY s.start_time DESC"
             if last_n_sessions:
-                query += " LIMIT ?"
+                session_query += " LIMIT ?"
                 params.append(last_n_sessions)
 
-            # Execute query
-            c.execute(query, params)
-            rows = c.fetchall()
-
-            # Clear existing results
-            self.results.clear()
+            c.execute(session_query, params)
+            session_rows = c.fetchall()
 
             # Process each session
-            for row in rows:
-                session_id = row[0]
-                start_time = (
-                    datetime.fromisoformat(row[1]) if row[1] else datetime.now()
-                )
-                end_time = datetime.fromisoformat(row[2]) if row[2] else datetime.now()
-                duration = timedelta(seconds=row[3] or 0)
+            for session_row in session_rows:
+                session_id = session_row[0]  # id is first column
 
+                # Create session metadata
                 session_metadata = SessionMetadata(
-                    session_id=str(session_id),
-                    start_time=start_time,
-                    stop_time=end_time,
-                    duration=duration,
-                    sut_id=row[4] or "",
-                    sut_type=row[5] or "",
-                    sut_version=row[6] or "",
-                    sut_environment=row[7] or "",
-                    python_version=row[8] or "",
-                    os_info=row[9] or "",
-                    pytest_version=row[10] or "",
-                    command_line=row[11] or "",
+                    session_id=session_id,
+                    start_time=datetime.fromisoformat(session_row[1]),
+                    stop_time=datetime.fromisoformat(session_row[2]) if session_row[2] else None,
+                    duration=timedelta(seconds=session_row[3]) if session_row[3] else None,
+                    sut_id=session_row[18] or "",
+                    sut_type=session_row[19] or "",
+                    sut_version=session_row[20] or "",
+                    sut_environment=session_row[21] or "",
+                    python_version="",  # Not stored in DB
+                    os_info="",  # Not stored in DB
+                    pytest_version="",  # Not stored in DB
+                    command_line="",  # Not stored in DB
                 )
 
-                # Create session stats from database values
+                # Create session stats
                 session_stats = TestSessionStats(
-                    num_tests=row[12] or 0,
-                    num_passes=row[13] or 0,
-                    num_failures=row[14] or 0,
-                    num_errors=row[15] or 0,
-                    num_skips=row[16] or 0,
-                    num_xfails=row[17] or 0,
-                    num_xpasses=row[18] or 0,
-                    num_reruns=row[19] or 0,
-                    num_rerun_groups=row[20] or 0,
-                    num_warnings=row[21] or 0,
+                    num_tests=session_row[4] or 0,
+                    num_tests_without_rerun=session_row[5] or 0,
+                    num_tests_total=session_row[6] or 0,
+                    num_passes=session_row[7] or 0,
+                    num_failures=session_row[8] or 0,
+                    num_errors=session_row[9] or 0,
+                    num_skips=session_row[10] or 0,
+                    num_xfails=session_row[11] or 0,
+                    num_xpasses=session_row[12] or 0,
+                    num_reruns=session_row[13] or 0,
+                    num_rerun_groups=session_row[14] or 0,
+                    num_warnings=session_row[15] or 0,
+                    num_warnings_unique=session_row[16] or 0,
+                    num_deselected=session_row[17] or 0,
                 )
 
-                # Create Results object and add to history
-                result = Results(
-                    session_metadata=session_metadata,
-                    session_stats=session_stats,
-                    report_stats=ReportBasedStats(),  # Empty report stats since we use session stats
-                    test_results=[],  # We'll populate this next
+                # Get rerun groups for this session
+                c.execute(
+                    "SELECT group_name FROM rerun_groups WHERE session_id = ?",
+                    (session_id,),
                 )
+                rerun_groups = [row[0] for row in c.fetchall()]
 
                 # Get test results for this session
                 test_query = """
                     SELECT
-                        test_id,
+                        nodeid,
                         outcome,
-                        timestamp,
+                        start_time,
                         duration,
                         error_message,
                         error_type,
                         error_traceback,
+                        caplog,
+                        capstderr,
+                        capstdout,
                         has_warning,
-                        longreprtext
+                        longreprtext,
+                        rerun_count
                     FROM test_results
                     WHERE session_id = ?
                 """
@@ -575,13 +326,14 @@ class TestHistory:
                     test_query += " AND outcome = ?"
                     test_params.append(outcome)
                 if test_id:
-                    test_query += " AND test_id = ?"
+                    test_query += " AND nodeid = ?"
                     test_params.append(test_id)
 
                 c.execute(test_query, test_params)
                 test_rows = c.fetchall()
 
                 # Process test results
+                test_results = []
                 for test_row in test_rows:
                     test_result = TestResult(
                         nodeid=test_row[0],
@@ -593,11 +345,23 @@ class TestHistory:
                         error_message=test_row[4] or "",
                         error_type=test_row[5] or "",
                         error_traceback=test_row[6] or "",
-                        has_warning=bool(test_row[7]),
-                        longreprtext=test_row[8] or "",
+                        caplog=test_row[7] or "",
+                        capstderr=test_row[8] or "",
+                        capstdout=test_row[9] or "",
+                        has_warning=bool(test_row[10]),
+                        longreprtext=test_row[11] or "",
+                        rerun_count=test_row[12] or 0
                     )
-                    result.test_results.append(test_result)
+                    test_results.append(test_result)
 
+                # Create full Results object
+                result = Results(
+                    session_metadata=session_metadata,
+                    session_stats=session_stats,
+                    report_stats=ReportBasedStats(),
+                    test_results=test_results,
+                    rerun_test_groups=rerun_groups,
+                )
                 self.results.append(result)
 
     def add_run(self, result: Results) -> None:
@@ -673,12 +437,14 @@ class TestHistory:
     def save(self, file_path: Path) -> None:
         """Save test history to a file."""
         with open(file_path, "wb") as f:
+            import pickle
             pickle.dump(self, f)
 
     @classmethod
     def load(cls, file_path: Path) -> "TestHistory":
         """Load test history from a file."""
         with open(file_path, "rb") as f:
+            import pickle
             return pickle.load(f)
 
     def to_dict(self) -> Dict[str, Any]:

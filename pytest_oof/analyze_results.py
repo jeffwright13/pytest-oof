@@ -223,6 +223,11 @@ def analyze_results(
                 click.echo(f"XPasses: {session.get('num_xpasses')}")
             if session.get("num_reruns", 0) > 0:
                 click.echo(f"Reruns: {session.get('num_reruns')}")
+                click.echo(f"Rerun Groups: {session.get('num_rerun_groups')}")
+                if result.get("rerun_test_groups"):
+                    click.echo("\nRerun Test Groups:")
+                    for group in result["rerun_test_groups"]:
+                        click.echo(f"  - {group}")
             if session.get("num_warnings", 0) > 0:
                 click.echo(f"Warnings: {session.get('num_warnings')}")
             if session.get("num_deselected", 0) > 0:
