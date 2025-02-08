@@ -1,99 +1,128 @@
 """Data models for pytest-oof."""
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional, Union
+
+from sqlalchemy import Column, Integer, String, JSON, DateTime, ForeignKey
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import relationship
+
+Base = declarative_base()
 
 
+# SQLAlchemy Models
+class SQLTestSession(Base):
+    """SQLAlchemy model for test sessions."""
+    __tablename__ = "sessions"
+
+    session_id = Column(String, primary_key=True)
+    sut_id = Column(String, nullable=False)
+    start_time = Column(DateTime, nullable=False)
+    end_time = Column(DateTime, nullable=True)
+    duration = Column(Integer, nullable=True)  # Store duration in seconds
+    total_tests = Column(Integer, default=0)
+    passed_tests = Column(Integer, default=0)
+    failed_tests = Column(Integer, default=0)
+    skipped_tests = Column(Integer, default=0)
+    xfailed_tests = Column(Integer, default=0)
+    xpassed_tests = Column(Integer, default=0)
+    warnings = Column(Integer, default=0)
+    errors = Column(Integer, default=0)
+    rerun = Column(Integer, default=0)
+
+
+class SQLTestResult(Base):
+    """SQLAlchemy model for test results."""
+    __tablename__ = 'test_results'
+    
+    id = Column(Integer, primary_key=True)
+    session_id = Column(String, ForeignKey('sessions.session_id'))  # Reference to test session
+    test_id = Column(String)
+    outcome = Column(String)
+    duration = Column(Integer)  # Duration in milliseconds
+    error_data = Column(JSON)
+    warnings = Column(JSON)
+    rerun_count = Column(Integer, default=0)
+    environment = Column(JSON)
+    timestamp = Column(DateTime, default=datetime.utcnow)
+    test_session = relationship("SQLTestSession", backref="test_results")
+
+
+# Dataclass Models
 @dataclass
 class TestResult:
-    """'TestResult': a single test result, which is a single test run of a single test.
-
-    Fields:
-    'nodeid': pytest 'node_id' (test identifier)
-    'outcome': outcome of the test (PASSED, FAILED, SKIPPED, etc.)
-    'start_time': datetime object for the start time of the test
-    'duration': duration of the test in microseconds
-    'error_message': error message if test failed
-    'error_type': type of error if test failed
-    'error_traceback': error traceback if test failed
-    'has_warning': whether the test resulted in a warning
-    'longreprtext': full representation of test failure or error
-    'rerun_count': number of times this test was rerun (0 if not rerun)
-    """
-
-    sut_id: str = ""
-    sut_metadata: Dict[str, Any] = field(default_factory=dict)
-    nodeid: str = ""
-    outcome: str = ""
-    start_time: datetime = None
-    duration: float = 0.0
-    stop_time: datetime = None
-    error_message: str = ""
-    error_type: str = ""
-    error_traceback: str = ""
-    has_warning: bool = False
-    longreprtext: str = ""
-    caplog: str = ""
-    capstdout: str = ""
-    capstderr: str = ""
+    """Class to hold test result data."""
+    test_id: str
+    outcome: str
+    duration: float = 0
+    error_data: Optional[Union[str, Dict[str, Any]]] = None
+    environment: Dict[str, Any] = field(default_factory=dict)
+    warnings: List[str] = field(default_factory=list)
     rerun_count: int = 0
+    session_id: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
-        return {
-            "sut_id": self.sut_id,
-            "sut_metadata": self.sut_metadata,
-            "nodeid": self.nodeid,
-            "outcome": self.outcome,
-            "start_time": self.start_time,
-            "duration": self.duration,
-            "stop_time": self.stop_time,
-            "error_message": self.error_message,
-            "error_type": self.error_type,
-            "error_traceback": self.error_traceback,
-            "has_warning": self.has_warning,
-            "longreprtext": self.longreprtext,
-            "caplog": self.caplog,
-            "capstdout": self.capstdout,
-            "capstderr": self.capstderr,
-            "rerun_count": self.rerun_count,
+        """Convert TestResult to dictionary."""
+        result = {
+            'test_id': self.test_id,
+            'outcome': self.outcome,
+            'duration': self.duration,
+            'environment': self.environment,
+            'warnings': self.warnings,
+            'rerun_count': self.rerun_count,
+            'session_id': self.session_id
         }
+
+        # Handle ExceptionInfo and ExceptionChainRepr objects
+        if self.error_data:
+            if hasattr(self.error_data, 'typename') and hasattr(self.error_data, 'value'):
+                # Handle ExceptionInfo
+                result['error_data'] = {
+                    'type': self.error_data.typename,
+                    'message': str(self.error_data.value),
+                    'traceback': str(self.error_data.getrepr())
+                }
+            elif hasattr(self.error_data, 'reprtraceback'):
+                # Handle ExceptionChainRepr
+                result['error_data'] = {
+                    'type': self.error_data.reprtraceback.extraline,
+                    'message': str(self.error_data.reprtraceback.reprcrash.message),
+                    'traceback': str(self.error_data)
+                }
+            else:
+                result['error_data'] = str(self.error_data)
+
+        return result
 
 
 @dataclass
 class TestSessionStats:
-    """'TestSessionStats': cumulative statistics for the entire test session."""
-
-    num_tests: int = 0
-    num_tests_without_rerun: int = 0
-    num_tests_total: int = 0
-    num_passes: int = 0
-    num_failures: int = 0
-    num_errors: int = 0
-    num_skips: int = 0
-    num_xfails: int = 0
-    num_xpasses: int = 0
-    num_reruns: int = 0
-    num_rerun_groups: int = 0
+    """Test session statistics."""
+    num_passed: int = 0
+    num_failed: int = 0
+    num_skipped: int = 0
+    num_xfailed: int = 0
+    num_xpassed: int = 0
     num_warnings: int = 0
-    num_warnings_unique: int = 0
-    num_deselected: int = 0
+    num_errors: int = 0
+    num_rerun: int = 0
+    end_time: Optional[datetime] = None
+    duration: Optional[timedelta] = None
 
     def to_dict(self) -> Dict[str, Any]:
+        """Convert TestSessionStats to a dictionary."""
         return {
-            "num_tests": self.num_tests,
-            "num_tests_without_rerun": self.num_tests_without_rerun,
-            "num_tests_total": self.num_tests_total,
-            "num_passes": self.num_passes,
-            "num_failures": self.num_failures,
-            "num_errors": self.num_errors,
-            "num_skips": self.num_skips,
-            "num_xfails": self.num_xfails,
-            "num_xpasses": self.num_xpasses,
-            "num_reruns": self.num_reruns,
-            "num_rerun_groups": self.num_rerun_groups,
-            "num_warnings": self.num_warnings,
-            "num_warnings_unique": self.num_warnings_unique,
-            "num_deselected": self.num_deselected,
+            'total_tests': self.num_passed + self.num_failed + self.num_skipped + self.num_xfailed + self.num_xpassed,
+            'passed_tests': self.num_passed,
+            'failed_tests': self.num_failed,
+            'skipped_tests': self.num_skipped,
+            'xfailed_tests': self.num_xfailed,
+            'xpassed_tests': self.num_xpassed,
+            'warnings': self.num_warnings,
+            'errors': self.num_errors,
+            'rerun': self.num_rerun,
+            'end_time': self.end_time,
+            'duration': self.duration
         }
 
 
@@ -173,6 +202,44 @@ class SessionMetadata:
             "os_info": self.os_info,
             "pytest_version": self.pytest_version,
             "command_line": self.command_line,
+        }
+
+
+@dataclass
+class TestSession:
+    """Test session information."""
+    session_id: str
+    sut_id: str
+    start_time: datetime
+    end_time: Optional[datetime] = None
+    duration: Optional[timedelta] = None
+    total_tests: int = 0
+    passed_tests: int = 0
+    failed_tests: int = 0
+    skipped_tests: int = 0
+    xfailed_tests: int = 0
+    xpassed_tests: int = 0
+    warnings: int = 0
+    errors: int = 0
+    rerun: int = 0
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary."""
+        return {
+            "session_id": self.session_id,
+            "sut_id": self.sut_id,
+            "start_time": self.start_time.isoformat() if self.start_time else None,
+            "end_time": self.end_time.isoformat() if self.end_time else None,
+            "duration": str(self.duration) if self.duration else None,
+            "total_tests": self.total_tests,
+            "passed_tests": self.passed_tests,
+            "failed_tests": self.failed_tests,
+            "skipped_tests": self.skipped_tests,
+            "xfailed_tests": self.xfailed_tests,
+            "xpassed_tests": self.xpassed_tests,
+            "warnings": self.warnings,
+            "errors": self.errors,
+            "rerun": self.rerun
         }
 
 

@@ -1,58 +1,206 @@
 """Database operations for pytest-oof."""
-import json
-import sqlite3
+import logging
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Iterator, Optional, Union, Dict, Any, List
+import sqlite3
+from sqlite3 import Connection
+import json
+import sys
 
-from pytest_oof.models import TestResult, TestSessionStats
+from sqlalchemy import create_engine
+from sqlalchemy.engine import Connection
+from sqlalchemy.orm import Session, sessionmaker
 
+from pytest_oof.models import (
+    Base,
+    SQLTestResult,
+    SQLTestSession,
+    TestResult,
+    TestSession,
+    TestSessionStats
+)
+
+
+class DBClient:
+    """Database client for pytest-oof."""
+
+    def __init__(self, session: Session):
+        """Initialize database client."""
+        self.session = session
+
+    def add_session(self, session_data: Union[TestSession, Dict[str, Any]]) -> None:
+        """Add test session to database."""
+        try:
+            if isinstance(session_data, TestSession):
+                db_session = SQLTestSession(
+                    session_id=session_data.session_id,
+                    sut_id=session_data.sut_id,
+                    start_time=session_data.start_time,
+                    end_time=session_data.end_time,
+                    duration=int(session_data.duration.total_seconds()) if session_data.duration else None,
+                    total_tests=session_data.total_tests,
+                    passed_tests=session_data.passed_tests,
+                    failed_tests=session_data.failed_tests,
+                    skipped_tests=session_data.skipped_tests,
+                    xfailed_tests=session_data.xfailed_tests,
+                    xpassed_tests=session_data.xpassed_tests,
+                    warnings=session_data.warnings,
+                    errors=session_data.errors,
+                    rerun=session_data.rerun
+                )
+            else:
+                db_session = SQLTestSession(
+                    session_id=session_data['session_id'],
+                    sut_id=session_data['sut_id'],
+                    start_time=session_data.get('start_time'),
+                    end_time=session_data.get('end_time'),
+                    duration=int(session_data.get('duration', timedelta(0)).total_seconds()) if session_data.get('duration') else None,
+                    total_tests=session_data.get('total_tests', 0),
+                    passed_tests=session_data.get('passed_tests', 0),
+                    failed_tests=session_data.get('failed_tests', 0),
+                    skipped_tests=session_data.get('skipped_tests', 0),
+                    xfailed_tests=session_data.get('xfailed_tests', 0),
+                    xpassed_tests=session_data.get('xpassed_tests', 0),
+                    warnings=session_data.get('warnings', 0),
+                    errors=session_data.get('errors', 0),
+                    rerun=session_data.get('rerun', 0)
+                )
+
+            self.session.add(db_session)
+            self.session.commit()
+
+        except Exception as e:
+            print(f"Error adding session to database: {e}", file=sys.stderr)
+            self.session.rollback()
+            raise
+
+    def add_test_result(self, result: TestResult, session_id: str):
+        """Add a test result to the database.
+        
+        Args:
+            result: TestResult object containing test result data
+            session_id: ID of the test session
+        """
+        try:
+            result_dict = result.to_dict()
+            result_dict['session_id'] = session_id
+
+            db_result = SQLTestResult(
+                session_id=session_id,
+                test_id=result.test_id,
+                outcome=result.outcome,
+                duration=result.duration,
+                error_data=result_dict.get('error_data'),
+                warnings=result.warnings,
+                environment=result.environment,
+                rerun_count=result.rerun_count
+            )
+
+            self.session.add(db_result)
+            self.session.commit()
+            return db_result
+        except Exception as e:
+            self.session.rollback()
+            print(f"Error adding test result: {e}", file=sys.stderr)
+            raise e
+
+    def get_test_results(self, session_id=None):
+        query = self.session.query(SQLTestResult)
+        if session_id:
+            query = query.filter(SQLTestResult.session_id == session_id)
+        return query.all()
+
+    def update_test_result(self, test_id, update_data):
+        result = self.session.query(SQLTestResult).filter(
+            SQLTestResult.test_id == test_id
+        ).first()
+        if result:
+            for key, value in update_data.items():
+                setattr(result, key, value)
+            self.session.commit()
+            return True
+        return False
+
+    def delete_test_result(self, test_id):
+        result = self.session.query(SQLTestResult).filter(
+            SQLTestResult.test_id == test_id
+        ).first()
+        if result:
+            self.session.delete(result)
+            self.session.commit()
+            return True
+        return False
+
+    def update_session_stats(self, session_id: str, stats: TestSessionStats):
+        """Update session statistics in the database.
+        
+        Args:
+            session_id: The ID of the session to update
+            stats: TestSessionStats object containing the statistics
+        """
+        try:
+            session = self.session.query(SQLTestSession).filter(
+                SQLTestSession.session_id == session_id
+            ).first()
+            
+            if session:
+                stats_dict = stats.to_dict()
+                for key, value in stats_dict.items():
+                    if hasattr(session, key):
+                        if key == 'duration' and isinstance(value, timedelta):
+                            value = int(value.total_seconds())
+                        setattr(session, key, value)
+                self.session.commit()
+                return True
+            return False
+        except Exception as e:
+            self.session.rollback()
+            print(f"Error updating session stats: {e}", file=sys.stderr)
+            raise e
+
+def init_db(db_path: str = "oof/oof-results.db") -> Session:
+    """Initialize the database."""
+    connection_string = f"sqlite:///{db_path}"
+    engine = create_engine(connection_string)
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    return Session()
 
 @contextmanager
-def db_connection(db_path: Path):
+def db_connection(db_path: Path) -> Iterator[Connection]:
     """Context manager for database connections."""
     conn = sqlite3.connect(db_path)
     try:
-        # Enable foreign key support
-        conn.execute("PRAGMA foreign_keys = ON")
         yield conn
     finally:
         conn.close()
 
 
-def init_db(db_path: Path) -> None:
+def init_sqlite_db(db_path: Path) -> None:
     """Initialize the SQLite database with required tables."""
     with db_connection(db_path) as conn:
         cursor = conn.cursor()
 
-        # Create test_sessions table
+        # Create sessions table
         cursor.execute(
             """
-            CREATE TABLE IF NOT EXISTS test_sessions (
-                id TEXT PRIMARY KEY,
-                sut_id TEXT NOT NULL CHECK (sut_id <> ''),
-                sut_type TEXT,
-                sut_version TEXT,
-                sut_env TEXT,
-                sut_metadata TEXT,
+            CREATE TABLE IF NOT EXISTS sessions (
+                session_id TEXT PRIMARY KEY,
+                sut_id TEXT NOT NULL,
                 start_time TIMESTAMP NOT NULL,
-                stop_time TIMESTAMP,
-                duration REAL,
-                num_tests INTEGER NOT NULL DEFAULT 0,
-                num_tests_without_rerun INTEGER DEFAULT 0,
-                num_tests_total INTEGER DEFAULT 0,
-                num_passes INTEGER DEFAULT 0,
-                num_failures INTEGER DEFAULT 0,
-                num_errors INTEGER DEFAULT 0,
-                num_skips INTEGER DEFAULT 0,
-                num_xfails INTEGER DEFAULT 0,
-                num_xpasses INTEGER DEFAULT 0,
-                num_reruns INTEGER DEFAULT 0,
-                num_rerun_groups INTEGER DEFAULT 0,
-                num_warnings INTEGER DEFAULT 0,
-                num_warnings_unique INTEGER DEFAULT 0,
-                num_deselected INTEGER DEFAULT 0
+                end_time TIMESTAMP,
+                duration INTEGER,
+                total_tests INTEGER DEFAULT 0,
+                passed_tests INTEGER DEFAULT 0,
+                failed_tests INTEGER DEFAULT 0,
+                skipped_tests INTEGER DEFAULT 0,
+                xfailed_tests INTEGER DEFAULT 0,
+                xpassed_tests INTEGER DEFAULT 0,
+                warnings INTEGER DEFAULT 0,
+                errors INTEGER DEFAULT 0,
+                rerun INTEGER DEFAULT 0
             )
             """
         )
@@ -63,32 +211,15 @@ def init_db(db_path: Path) -> None:
             CREATE TABLE IF NOT EXISTS test_results (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 session_id TEXT NOT NULL,
-                nodeid TEXT NOT NULL,
+                test_id TEXT NOT NULL,
                 outcome TEXT NOT NULL,
-                start_time TIMESTAMP NOT NULL,
-                duration REAL,
-                error_message TEXT,
-                error_type TEXT,
-                error_traceback TEXT,
-                has_warning BOOLEAN DEFAULT FALSE,
-                longreprtext TEXT,
-                caplog TEXT,
-                capstdout TEXT,
-                capstderr TEXT,
+                duration INTEGER,
+                error_data JSON,
+                warnings JSON,
                 rerun_count INTEGER DEFAULT 0,
-                FOREIGN KEY (session_id) REFERENCES test_sessions(id)
-            )
-            """
-        )
-
-        # Create rerun_groups table
-        cursor.execute(
-            """
-            CREATE TABLE IF NOT EXISTS rerun_groups (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                session_id TEXT NOT NULL,
-                group_name TEXT NOT NULL,
-                FOREIGN KEY (session_id) REFERENCES test_sessions(id)
+                environment JSON,
+                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (session_id) REFERENCES sessions(session_id)
             )
             """
         )

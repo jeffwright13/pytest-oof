@@ -582,3 +582,25 @@ def test_concurrent_access(db_path, mock_datetime):
         session = results[0]["session"]
         test_count = len([r for r in test_results if r[0] <= test_id])
         assert session["num_tests"] == test_count
+
+
+@pytest.fixture
+def db_session():
+    engine = create_engine("sqlite:///:memory:")
+    Session = sessionmaker(bind=engine)
+    session = Session()
+    TestResult.metadata.create_all(engine)
+    return DBClient(session)
+
+
+def test_add_and_retrieve_result(db_session):
+    test_data = {
+        'session_id': 'test1',
+        'test_id': 'test_1',
+        'outcome': 'passed',
+        'duration': 1.5
+    }
+    db_session.add_test_result(test_data)
+    results = db_session.get_test_results()
+    assert len(results) == 1
+    assert results[0].test_id == 'test_1'
