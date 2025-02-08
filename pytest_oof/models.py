@@ -1,7 +1,7 @@
 """Data models for pytest-oof."""
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 
 @dataclass
@@ -27,6 +27,7 @@ class TestResult:
     outcome: str = ""
     start_time: datetime = None
     duration: float = 0.0
+    stop_time: datetime = None
     error_message: str = ""
     error_type: str = ""
     error_traceback: str = ""
@@ -45,6 +46,7 @@ class TestResult:
             "outcome": self.outcome,
             "start_time": self.start_time,
             "duration": self.duration,
+            "stop_time": self.stop_time,
             "error_message": self.error_message,
             "error_type": self.error_type,
             "error_traceback": self.error_traceback,

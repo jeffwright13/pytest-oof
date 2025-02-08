@@ -20,6 +20,18 @@ The API is included with pytest-oof. If you haven't already installed it:
 pip install pytest-oof
 ```
 
+### Required Configuration
+
+When running tests with pytest-oof, you must specify a System Under Test (SUT) ID using the `--oof-sut-id` option. This ensures that all test results can be properly attributed to specific systems or components:
+
+```bash
+# Basic usage
+pytest --oof --oof-sut-id=my-service
+
+# With additional SUT metadata
+pytest --oof --oof-sut-id=auth-service --oof-sut-type=microservice --oof-sut-version=1.2.3
+```
+
 ### Basic Usage
 
 ```python
@@ -28,11 +40,14 @@ from pytest_oof.analyzer import TestDataAnalyzer
 # Initialize with your database path
 analyzer = TestDataAnalyzer("path/to/your/test_results.db")
 
-# Get a list of all SUTs
+# Get a list of all SUTs (each test session requires a valid SUT ID)
 suts = analyzer.get_all_suts()
 
 # Get statistics for a specific SUT
 stats = analyzer.get_sut_stats(sut_id="my-service")
+
+# Note: All test results will have an associated SUT ID
+# There is no concept of "tests without a SUT" in pytest-oof
 ```
 
 ## API Reference
@@ -188,7 +203,7 @@ def get_recent_failures(hours=24, min_failures=1):
         start_time=start_time,
         outcome="failed"
     )
-    
+
     # Group and analyze failures
     failure_counts = {}
     for result in results:
@@ -199,12 +214,12 @@ def get_recent_failures(hours=24, min_failures=1):
                 "error_types": set(),
                 "environments": set()
             }
-        
+
         failure_counts[test_id]["count"] += 1
         if result.get("error_type"):
             failure_counts[test_id]["error_types"].add(result["error_type"])
         failure_counts[test_id]["environments"].add(result.get("sut_env", "unknown"))
-    
+
     return failure_counts
 
 # Usage example
@@ -224,21 +239,21 @@ def find_fixed_tests(hours=24):
     analyzer = TestDataAnalyzer(Path("oof/oof-results.db"))
     start_time = datetime.now() - timedelta(hours=hours)
     results = analyzer.get_test_results(start_time=start_time)
-    
+
     test_status = {}
     for result in results:
         test_id = result["nodeid"]
         if test_id not in test_status:
             test_status[test_id] = {"last_failure": None, "last_pass": None}
-        
+
         if result["outcome"] == "failed":
             test_status[test_id]["last_failure"] = result["start_time"]
         elif result["outcome"] == "passed":
             test_status[test_id]["last_pass"] = result["start_time"]
-    
+
     fixed_tests = {
-        test_id: data 
-        for test_id, data in test_status.items() 
+        test_id: data
+        for test_id, data in test_status.items()
         if data["last_failure"] and data["last_pass"] and data["last_pass"] > data["last_failure"]
     }
     return fixed_tests
@@ -258,7 +273,7 @@ Compare test results across multiple SUTs:
 def compare_suts(sut_ids, days=7):
     analyzer = TestDataAnalyzer(Path("oof/oof-results.db"))
     start_time = datetime.now() - timedelta(days=days)
-    
+
     comparisons = {}
     for sut_id in sut_ids:
         stats = analyzer.get_sut_stats(
@@ -271,7 +286,7 @@ def compare_suts(sut_ids, days=7):
                 "failure_rate": stats[0].total_failures / stats[0].total_tests,
                 "avg_reruns": stats[0].total_reruns / stats[0].total_tests
             }
-    
+
     return comparisons
 
 # Usage example
@@ -292,7 +307,7 @@ def analyze_environment_impact(days=30):
     analyzer = TestDataAnalyzer(Path("oof/oof-results.db"))
     start_time = datetime.now() - timedelta(days=days)
     results = analyzer.get_test_results(start_time=start_time)
-    
+
     env_stats = {}
     for result in results:
         env = result.get("sut_env", "unknown")
@@ -303,14 +318,14 @@ def analyze_environment_impact(days=30):
                 "failures": 0,
                 "reruns": 0
             }
-        
+
         env_stats[env]["total"] += 1
         if result["outcome"] == "passed":
             env_stats[env]["passes"] += 1
         elif result["outcome"] == "failed":
             env_stats[env]["failures"] += 1
         env_stats[env]["reruns"] += result.get("rerun_count", 0)
-    
+
     return env_stats
 
 # Usage example
@@ -333,14 +348,14 @@ def analyze_duration_trends(test_id, days=30):
         start_time=start_time,
         test_id=test_id
     )
-    
+
     durations = [
         (result["start_time"], result["duration"])
         for result in results
         if result["outcome"] == "passed"  # Only consider successful runs
     ]
     durations.sort(key=lambda x: x[0])
-    
+
     return durations
 
 # Usage example
@@ -358,7 +373,7 @@ def analyze_rerun_effectiveness(days=30, min_reruns=5):
     analyzer = TestDataAnalyzer(Path("oof/oof-results.db"))
     start_time = datetime.now() - timedelta(days=days)
     results = analyzer.get_test_results(start_time=start_time)
-    
+
     rerun_stats = {}
     for result in results:
         test_id = result["nodeid"]
@@ -368,20 +383,20 @@ def analyze_rerun_effectiveness(days=30, min_reruns=5):
                 "needed_rerun": 0,
                 "recovered": 0
             }
-        
+
         rerun_stats[test_id]["total_runs"] += 1
         if result.get("rerun_count", 0) > 0:
             rerun_stats[test_id]["needed_rerun"] += 1
             if result["outcome"] == "passed":
                 rerun_stats[test_id]["recovered"] += 1
-    
+
     # Filter for tests with significant rerun history
     significant_reruns = {
         test_id: stats
         for test_id, stats in rerun_stats.items()
         if stats["needed_rerun"] >= min_reruns
     }
-    
+
     return significant_reruns
 
 # Usage example
@@ -404,10 +419,10 @@ from pytest_oof.analyzer import TestDataAnalyzer
 def generate_weekly_report(db_path):
     analyzer = TestDataAnalyzer(db_path)
     start_time = datetime.now() - timedelta(days=7)
-    
+
     # Get stats for all SUTs
     stats = analyzer.get_sut_stats(start_time=start_time)
-    
+
     print("=== Weekly Test Health Report ===")
     for stat in stats:
         print(f"\nSUT: {stat.sut_id} v{stat.sut_version}")
@@ -423,14 +438,14 @@ def generate_weekly_report(db_path):
 ```python
 def analyze_test_stability(db_path, test_name):
     analyzer = TestDataAnalyzer(db_path)
-    
+
     # Look at trends over the last month
     start_time = datetime.now() - timedelta(days=30)
     trends = analyzer.analyze_test_trends(
         nodeid=test_name,
         start_time=start_time
     )
-    
+
     for trend in trends:
         print(f"Test: {trend.nodeid}")
         print(f"Pass Rate: {trend.pass_rate:.1%}")
@@ -442,7 +457,7 @@ def analyze_test_stability(db_path, test_name):
 ```python
 def compare_environments(db_path, sut_id):
     analyzer = TestDataAnalyzer(db_path)
-    
+
     # Get stats for each environment
     prod_stats = analyzer.get_sut_stats(
         sut_id=sut_id,
@@ -452,7 +467,7 @@ def compare_environments(db_path, sut_id):
         sut_id=sut_id,
         environment="staging"
     )
-    
+
     print("=== Environment Comparison ===")
     print("Production vs Staging")
     print(f"Total Tests: {prod_stats[0].total_tests} vs {staging_stats[0].total_tests}")

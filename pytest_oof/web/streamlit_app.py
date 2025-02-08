@@ -185,19 +185,34 @@ def load_session_data():
 
             # Convert numeric columns to native Python int
             int_columns = [
-                "num_tests", "num_tests_without_rerun", "num_tests_total",
-                "num_passes", "num_failures", "num_errors", "num_skips",
-                "num_xfails", "num_xpasses", "num_reruns",
-                "num_rerun_groups", "num_warnings", "num_warnings_unique",
-                "num_deselected"
+                "num_tests",
+                "num_tests_without_rerun",
+                "num_tests_total",
+                "num_passes",
+                "num_failures",
+                "num_errors",
+                "num_skips",
+                "num_xfails",
+                "num_xpasses",
+                "num_reruns",
+                "num_rerun_groups",
+                "num_warnings",
+                "num_warnings_unique",
+                "num_deselected",
             ]
             for col in int_columns:
                 df[col] = df[col].fillna(0).astype("int32").astype(int)
 
             # Calculate metrics
-            df["pass_rate"] = (df["num_passes"] / df["num_tests"] * 100).fillna(0).astype(float)
-            df["rerun_rate"] = (df["num_reruns"] / df["num_tests"] * 100).fillna(0).astype(float)
-            df["warning_rate"] = (df["num_warnings"] / df["num_tests"] * 100).fillna(0).astype(float)
+            df["pass_rate"] = (
+                (df["num_passes"] / df["num_tests"] * 100).fillna(0).astype(float)
+            )
+            df["rerun_rate"] = (
+                (df["num_reruns"] / df["num_tests"] * 100).fillna(0).astype(float)
+            )
+            df["warning_rate"] = (
+                (df["num_warnings"] / df["num_tests"] * 100).fillna(0).astype(float)
+            )
 
             return df
     except Exception as e:
@@ -304,7 +319,9 @@ def plot_test_results_trend(df, viz_settings, view_type="aggregate"):
                         x=sut_data["start_time"],
                         y=sut_data[metric],
                         name=f"{sut_id} - {name}",
-                        mode="lines+markers" if viz_settings["show_markers"] else "lines",
+                        mode="lines+markers"
+                        if viz_settings["show_markers"]
+                        else "lines",
                         line=dict(
                             color=OUTCOME_COLORS[color],
                             width=viz_settings["line_width"],
@@ -672,7 +689,9 @@ def plot_metric_trends(df, metrics):
     fig = go.Figure()
 
     df_sorted = df.sort_values("start_time")
-    df_sorted['start_time'] = df_sorted['start_time'].dt.tz_localize(None)  # Remove timezone info
+    df_sorted["start_time"] = df_sorted["start_time"].dt.tz_localize(
+        None
+    )  # Remove timezone info
     for metric, label, color in metrics:
         fig.add_trace(
             go.Scatter(
@@ -1047,9 +1066,222 @@ def create_test_scatter(df, metric="failures", colorscale="viridis"):
     return fig
 
 
+def create_flexible_visualization(
+    df, selected_suts, metrics, view_type="line", normalize=False
+):
+    """Create a flexible visualization that supports multiple SUTs and metrics."""
+    # First, resample the data to daily frequency to avoid duplicate timestamps
+    df_sorted = df.copy()
+    df_sorted["date"] = df_sorted["start_time"].dt.date
+
+    # Ensure all required columns exist
+    metrics = [m for m in metrics if m in df_sorted.columns]
+
+    df_sorted = df_sorted.groupby(["date", "sut_id"])[metrics].sum().reset_index()
+    df_sorted["start_time"] = pd.to_datetime(df_sorted["date"])
+    df_sorted = df_sorted.sort_values("start_time")
+
+    fig = go.Figure()
+
+    # Define metric properties
+    metric_props = {
+        "num_passes": ("Passed", "passed"),
+        "num_failures": ("Failed", "failed"),
+        "num_errors": ("Errors", "error"),
+        "num_skips": ("Skipped", "skipped"),
+        "num_xfails": ("Expected Failures", "xfailed"),
+        "num_xpasses": ("Unexpected Passes", "xpassed"),
+    }
+
+    if view_type == "line":
+        for sut_id in selected_suts:
+            sut_data = df_sorted[df_sorted["sut_id"] == sut_id]
+
+            if normalize:
+                # Calculate percentages
+                total = sut_data[[m for m in metrics]].sum(axis=1)
+                sut_data = sut_data.copy()
+                for metric in metrics:
+                    sut_data[f"{metric}_pct"] = sut_data[metric] / total * 100
+                plot_metrics = [f"{m}_pct" for m in metrics]
+            else:
+                plot_metrics = metrics
+
+            for metric in plot_metrics:
+                base_metric = metric.replace("_pct", "")
+                name, color = metric_props[base_metric]
+                fig.add_trace(
+                    go.Scatter(
+                        x=sut_data["start_time"],
+                        y=sut_data[metric],
+                        name=f"{sut_id} - {name}",
+                        mode="lines+markers",
+                        line=dict(color=OUTCOME_COLORS[color]),
+                        legendgroup=sut_id,
+                    )
+                )
+
+    elif view_type == "area":
+        for sut_id in selected_suts:
+            sut_data = df_sorted[df_sorted["sut_id"] == sut_id]
+
+            if normalize:
+                # Calculate percentages
+                total = sut_data[[m for m in metrics]].sum(axis=1)
+                sut_data = sut_data.copy()
+                for metric in metrics:
+                    sut_data[f"{metric}_pct"] = sut_data[metric] / total * 100
+                plot_metrics = [f"{m}_pct" for m in metrics]
+            else:
+                plot_metrics = metrics
+
+            for metric in plot_metrics:
+                base_metric = metric.replace("_pct", "")
+                name, color = metric_props[base_metric]
+                fig.add_trace(
+                    go.Scatter(
+                        x=sut_data["start_time"],
+                        y=sut_data[metric],
+                        name=f"{sut_id} - {name}",
+                        mode="none",
+                        stackgroup=sut_id,
+                        fillcolor=OUTCOME_COLORS[color],
+                        line=dict(width=0),
+                        legendgroup=sut_id,
+                    )
+                )
+
+    elif view_type == "heatmap":
+        # Create a matrix of values for the heatmap
+        all_dates = pd.date_range(
+            df_sorted["start_time"].min(), df_sorted["start_time"].max(), freq="D"
+        )
+
+        # Prepare data for heatmap
+        heatmap_data = []
+        y_labels = []
+
+        for sut_id in selected_suts:
+            sut_data = df_sorted[df_sorted["sut_id"] == sut_id].set_index("start_time")
+            for metric in metrics:
+                # Resample to daily frequency and forward fill missing values
+                daily_values = sut_data[metric].resample("D").sum()
+                daily_values = daily_values.reindex(all_dates).fillna(0)
+
+                if normalize:
+                    total = sut_data[metrics].resample("D").sum().sum(axis=1)
+                    daily_values = (daily_values / total * 100).fillna(0)
+
+                heatmap_data.append(daily_values.values)
+                y_labels.append(f"{sut_id} - {metric_props[metric][0]}")
+
+        fig = go.Figure(
+            data=go.Heatmap(
+                z=heatmap_data,
+                x=all_dates,
+                y=y_labels,
+                colorscale="Viridis",
+                colorbar=dict(title="Percentage" if normalize else "Count"),
+            )
+        )
+
+    # Update layout
+    title_suffix = " (%)" if normalize else ""
+    fig.update_layout(
+        title=f"Test Results by SUT{title_suffix}",
+        xaxis_title="Time",
+        yaxis_title="Percentage" if normalize else "Count",
+        hovermode="x unified",
+        legend=dict(
+            groupclick="toggleitem",
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="right",
+            x=1,
+        ),
+        **PLOTLY_LAYOUT,
+    )
+
+    return fig
+
+
+def create_sut_comparison_chart(
+    df, selected_suts, selected_metrics, start_date=None, end_date=None
+):
+    """Create a longitudinal comparison chart for multiple SUTs."""
+    df = df.copy()
+
+    # Convert start_time to datetime if it isn't already
+    df["start_time"] = pd.to_datetime(df["start_time"])
+
+    # Filter by date range if provided
+    if start_date and end_date:
+        # Convert dates to timezone-aware datetime
+        start_datetime = pd.Timestamp(start_date).tz_localize("UTC")
+        end_datetime = (
+            pd.Timestamp(end_date) + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)
+        ).tz_localize("UTC")
+
+        # Filter using timezone-aware comparison
+        mask = (df["start_time"] >= start_datetime) & (df["start_time"] <= end_datetime)
+        df = df[mask]
+
+    # Debug info
+    print(f"Data shape after date filter: {df.shape}")
+    print(f"Selected SUTs: {selected_suts}")
+    print(f"Selected metrics: {selected_metrics}")
+
+    # Prepare the plot
+    fig = go.Figure()
+
+    # Define line styles and colors for metrics
+
+    # Create a line for each SUT and metric combination
+    for sut_id in selected_suts:
+        sut_data = df[df["sut_id"] == sut_id].sort_values("start_time")
+        print(f"\nSUT {sut_id} data shape: {sut_data.shape}")
+
+        if len(sut_data) == 0:
+            print(f"No data found for SUT {sut_id}")
+            continue
+
+        for metric in selected_metrics:
+            if metric in sut_data.columns:
+                fig.add_trace(
+                    go.Scatter(
+                        x=sut_data["start_time"],
+                        y=sut_data[metric],
+                        name=f"{sut_id} - {metric}",
+                        mode="lines+markers",
+                    )
+                )
+                print(
+                    f"Added trace for {sut_id} - {metric} with {len(sut_data)} points"
+                )
+
+    # Update layout
+    fig.update_layout(
+        title="Test Results Comparison Across SUTs",
+        xaxis_title="Time",
+        yaxis_title="Count",
+        hovermode="x unified",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        **PLOTLY_LAYOUT,
+    )
+
+    return fig
+
+
 # Load data first
 df = load_session_data()
 test_results_df = load_test_results()
+
+# Initialize session states if they don't exist
+if "active_tab" not in st.session_state:
+    st.session_state.active_tab = 0
+if "viz_type" not in st.session_state:
+    st.session_state.viz_type = "line"
 
 # Common settings in sidebar
 with st.sidebar:
@@ -1062,243 +1294,626 @@ with st.sidebar:
 
 # Filter data based on selected SUT
 df_sut = df if selected_sut == "All SUTs" else df[df["sut_id"] == selected_sut]
-test_results_df_sut = test_results_df if selected_sut == "All SUTs" else test_results_df[test_results_df["sut_id"] == selected_sut]
+test_results_df_sut = (
+    test_results_df
+    if selected_sut == "All SUTs"
+    else test_results_df[test_results_df["sut_id"] == selected_sut]
+)
 
 # Main content with tabs
 st.title("pytest-oof Test Analysis")
-tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs(
-    [
-        "Overview",
-        "Session View",
-        "Session Details",
-        "Session Comparison",
-        "Test Transitions",
-        "Rerun Analysis",
-        "Flaky Tests",
-        "3D Visualization",
-    ]
-)
 
-with tab1:
-    st.header("Overview")
+tab_names = [
+    "Overview",
+    "Session View",
+    "Session Details",
+    "Session Comparison",
+    "Test Stability Analysis",
+    "Rerun Analysis",
+    "3D Visualization",
+    "Flaky Tests",
+    "Flexible Analysis",
+    "SUT Comparison Analysis",
+]
 
-    # Add view type selector
-    view_type = st.radio(
-        "View Type",
-        ["Aggregate Stats", "By SUT", "Stacked Area"],
-        horizontal=True,
-        help=(
-            "Aggregate: Show total stats across all SUTs\n"
-            "By SUT: Show each SUT with different line styles\n"
-            "Stacked Area: Show contribution of each SUT"
-        ),
-    )
+# Create tabs and handle tab selection
+tabs = st.tabs(tab_names)
 
-    st.subheader("Test Results Trend")
-    trend_fig = plot_test_results_trend(
-        df_sut,
-        {"show_markers": True, "line_width": 2, "line_shape": "linear"},
-        view_type=view_type.lower().replace(" ", "_")
-    )
-    if trend_fig:
-        st.plotly_chart(trend_fig, use_container_width=True)
+# Handle tab changes
+for i, tab in enumerate(tabs):
+    if tab.id != st.session_state.get("last_tab_id"):
+        st.session_state.active_tab = i
+        st.session_state.last_tab_id = tab.id
+        break
 
-with tab2:
-    st.header("Session View")
-    daily_stats_fig = plot_daily_stats(df_sut)
-    if daily_stats_fig:
-        st.plotly_chart(daily_stats_fig, use_container_width=True)
-
-with tab3:
-    st.header("Session Details")
-    if not df_sut.empty:
-        st.dataframe(
-            df_sut[["start_time", "sut_id", "num_tests", "num_passes", "num_failures", "num_errors", "duration"]],
-            use_container_width=True
-        )
-    else:
-        st.info("No session data available for the selected SUT.")
-
-with tab4:
-    st.header("Session Comparison")
-    if len(df_sut) >= 2:
-        # st.write("Debug - DataFrame columns:", df_sut.columns.tolist())
-        metrics = [
-            ("num_tests", "Total Tests", "total"),
-            ("num_passes", "Passes", "passed"),
-            ("num_failures", "Failures", "failed"),
-            ("num_errors", "Errors", "error"),
+with tabs[st.session_state.active_tab]:
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10 = st.tabs(
+        [
+            "Overview",
+            "Session View",
+            "Session Details",
+            "Session Comparison",
+            "Test Stability Analysis",
+            "Rerun Analysis",
+            "3D Visualization",
+            "Flaky Tests",
+            "Flexible Analysis",
+            "SUT Comparison Analysis",
         ]
-        metric_fig = plot_metric_trends(df_sut, metrics)
-        if metric_fig:
-            st.plotly_chart(metric_fig, use_container_width=True)
-    else:
-        st.info("Need at least 2 sessions to compare.")
+    )
 
-with tab5:
-    st.header("Test Transitions")
-    # st.write("Debug - Test Results DataFrame columns:", test_results_df_sut.columns.tolist())
-    fail_to_pass, pass_to_fail = identify_test_transitions(test_results_df_sut)
-    transitions_fig = plot_test_transitions(fail_to_pass, pass_to_fail)
-    if transitions_fig:
-        st.plotly_chart(transitions_fig, use_container_width=True)
+    with tab1:
+        st.header("Overview")
 
-with tab6:
-    st.header("Rerun Analysis")
-    if not test_results_df_sut.empty:
-        rerun_stats_fig, rerun_outcomes_fig = analyze_rerun_patterns(test_results_df_sut)
-        if rerun_stats_fig:
-            st.plotly_chart(rerun_stats_fig, use_container_width=True)
-        if rerun_outcomes_fig:
-            st.plotly_chart(rerun_outcomes_fig, use_container_width=True)
-    else:
-        st.info("No rerun data available for the selected SUT.")
+        # Add view type selector
+        view_type = st.radio(
+            "View Type",
+            ["Aggregate Stats", "By SUT", "Stacked Area"],
+            horizontal=True,
+            help=(
+                "Aggregate: Show total stats across all SUTs\n"
+                "By SUT: Show each SUT with different line styles\n"
+                "Stacked Area: Show contribution of each SUT"
+            ),
+        )
 
-with tab7:
-    st.header("Flaky Tests")
-    if not test_results_df_sut.empty:
-        flaky_tests = identify_flaky_tests(test_results_df_sut)
-        if not flaky_tests.empty:
-            st.dataframe(flaky_tests, use_container_width=True)
+        st.subheader("Test Results Trend")
+        trend_fig = plot_test_results_trend(
+            df_sut,
+            {"show_markers": True, "line_width": 2, "line_shape": "linear"},
+            view_type=view_type.lower().replace(" ", "_"),
+        )
+        if trend_fig:
+            st.plotly_chart(trend_fig, use_container_width=True)
+
+    with tab2:
+        st.header("Session View")
+        daily_stats_fig = plot_daily_stats(df_sut)
+        if daily_stats_fig:
+            st.plotly_chart(daily_stats_fig, use_container_width=True)
+
+    with tab3:
+        st.header("Session Details")
+        if not test_results_df_sut.empty:
+            st.dataframe(
+                test_results_df_sut.sort_values("start_time", ascending=False),
+                use_container_width=True,
+                hide_index=True,
+            )
         else:
-            st.info("No flaky tests identified for the selected SUT.")
-    else:
-        st.info("No test data available for the selected SUT.")
+            st.info("No test data available for the selected SUT.")
 
-with tab8:
-    st.header("3D Test Result Visualization")
+    with tab4:
+        st.header("Session Comparison")
+        if len(df_sut) >= 2:
+            # st.write("Debug - DataFrame columns:", df_sut.columns.tolist())
+            metrics = [
+                ("num_tests", "Total Tests", "total"),
+                ("num_passes", "Passes", "passed"),
+                ("num_failures", "Failures", "failed"),
+                ("num_errors", "Errors", "error"),
+            ]
+            metric_fig = plot_metric_trends(df_sut, metrics)
+            if metric_fig:
+                st.plotly_chart(metric_fig, use_container_width=True)
+        else:
+            st.info("Need at least 2 sessions to compare.")
 
-    col1, col2 = st.columns(2)
-    with col1:
-        metric = st.selectbox(
-            "Select Metric to Visualize",
-            ["failures", "flaky", "new_failures", "passes"],
-            help="Choose which test metric to visualize across SUTs and time",
-        )
+    with tab5:
+        st.header("Test Stability Analysis")
 
-        view_mode = st.selectbox(
-            "View Mode",
-            ["surface", "heatmap", "scatter"],
-            help="Choose how to visualize the data",
-        )
+        col1, col2 = st.columns(2)
 
-    with col2:
-        smoothing = st.slider(
-            "Smoothing Factor",
-            min_value=0.0,
-            max_value=1.0,
-            value=0.0,
-            step=0.1,
-            help="Apply smoothing to the surface (0 = none, 1 = maximum)",
-        )
-
-        color_scale = st.selectbox(
-            "Color Scale",
-            ["Viridis", "Plasma", "Inferno", "Magma", "RdYlBu"],
-            help="Choose the color scheme for the visualization",
-        )
-
-    # Create date range selector
-    col1, col2 = st.columns(2)
-    with col1:
-        start_date = st.date_input(
-            "Start Date",
-            value=pd.to_datetime(df["start_time"]).min().date(),
-            min_value=pd.to_datetime(df["start_time"]).min().date(),
-            max_value=pd.to_datetime(df["start_time"]).max().date(),
-        )
-    with col2:
-        end_date = st.date_input(
-            "End Date",
-            value=pd.to_datetime(df["start_time"]).max().date(),
-            min_value=pd.to_datetime(df["start_time"]).min().date(),
-            max_value=pd.to_datetime(df["start_time"]).max().date(),
-        )
-
-    # Filter data by date range and add date column
-    filtered_df = df.copy()
-    filtered_df["date"] = pd.to_datetime(filtered_df["start_time"]).dt.date
-    mask = (filtered_df["date"] >= start_date) & (filtered_df["date"] <= end_date)
-    filtered_df = filtered_df[mask]
-
-    if not filtered_df.empty:
-        # with st.expander("Debug Information", expanded=False):
-        #     st.write(f"Total rows: {len(filtered_df)}")
-        #     st.write(f"Unique SUTs: {filtered_df['sut_id'].nunique()}")
-        #     st.write(
-        #         f"Date range: {filtered_df['date'].min()} to {filtered_df['date'].max()}"
-        #     )
-        #     st.write(f"Selected metric: {metric}")
-        #     st.write("DataFrame columns:", filtered_df.columns.tolist())
-
-        #     # Show sample of aggregated data
-        #     daily_stats = filtered_df.copy()
-        #     if metric == "failures":
-        #         daily_stats["count"] = (
-        #             daily_stats["num_failures"] + daily_stats["num_errors"]
-        #         )
-        #     elif metric == "passes":
-        #         daily_stats["count"] = daily_stats["num_passes"]
-        #     elif metric == "flaky":
-        #         daily_stats["count"] = (
-        #             daily_stats["num_xpasses"] + daily_stats["num_xfails"]
-        #         )
-        #     else:  # new_failures - this will show total failures for now
-        #         daily_stats["count"] = daily_stats["num_failures"]
-
-        #     daily_stats = (
-        #         daily_stats.groupby(["sut_id", "date"])["count"].sum().reset_index()
-        #     )
-        #     st.write("\nAggregated data sample:")
-        #     st.dataframe(daily_stats.head())
-
-        # Create the visualization based on view mode
-        if view_mode == "surface":
-            fig = create_3d_test_surface(
-                filtered_df, metric, smoothing=smoothing, colorscale=color_scale.lower()
+        with col1:
+            st.subheader("Test Transitions Settings")
+            lookback_window = st.slider(
+                "Lookback Window (days)",
+                1,
+                30,
+                7,
+                help="Number of days to look back for transitions",
             )
-        elif view_mode == "heatmap":
-            fig = create_test_heatmap(
-                filtered_df, metric, colorscale=color_scale.lower()
+            min_transition_runs = st.slider(
+                "Minimum Runs for Transitions",
+                2,
+                10,
+                3,
+                help="Minimum number of runs required to consider a transition",
             )
-        else:  # scatter
-            fig = create_test_scatter(
-                filtered_df, metric, colorscale=color_scale.lower()
+            failure_threshold = st.slider(
+                "Failure Threshold (%)",
+                50,
+                100,
+                60,
+                help="Percentage of failures required to consider a test as failing",
+            )
+            success_threshold = st.slider(
+                "Success Threshold (%)",
+                50,
+                100,
+                60,
+                help="Percentage of successes required to consider a test as passing",
             )
 
-        if fig:
+        with col2:
+            st.subheader("Flaky Tests Settings")
+            min_flaky_runs = st.slider(
+                "Minimum Runs for Flaky",
+                2,
+                10,
+                3,
+                help="Minimum number of runs required to consider a test flaky",
+            )
+            flaky_threshold = st.slider(
+                "Flaky Threshold (%)",
+                10,
+                50,
+                20,
+                help="Minimum percentage of both passes and fails to consider a test flaky",
+            )
+
+        # Test Transitions Analysis
+        st.subheader("Test Transitions")
+        fail_to_pass, pass_to_fail = identify_test_transitions(
+            test_results_df_sut,
+            lookback_window=lookback_window,
+            min_runs=min_transition_runs,
+            failure_threshold=failure_threshold / 100,  # Convert to decimal
+            success_threshold=success_threshold / 100,  # Convert to decimal
+        )
+
+        if not fail_to_pass.empty or not pass_to_fail.empty:
+            transitions_fig = plot_test_transitions(fail_to_pass, pass_to_fail)
+            if transitions_fig:
+                st.plotly_chart(transitions_fig, use_container_width=True)
+        else:
+            st.info(
+                "No test transitions detected with current settings. Try adjusting the thresholds."
+            )
+
+        # Flaky Tests Analysis
+        st.subheader("Flaky Tests")
+        flaky_df = identify_flaky_tests(
+            test_results_df_sut,
+            min_runs=min_flaky_runs,
+            flaky_threshold=flaky_threshold / 100,  # Convert to decimal
+        )
+
+        if not flaky_df.empty:
+            st.write(f"Found {len(flaky_df)} flaky tests:")
+            for _, test in flaky_df.iterrows():
+                with st.expander(
+                    f"{test['id']} (Pass Rate: {test['pass_rate']:.1f}%, Fail Rate: {test['fail_rate']:.1f}%)"
+                ):
+                    st.write(f"Total Runs: {test['total_runs']}")
+                    st.write(f"SUTs Affected: {test['suts_affected']}")
+                    st.write(f"Duration: {test['duration_days']} days")
+                    st.write(f"First Seen: {test['first_seen']}")
+                    st.write(f"Last Seen: {test['last_seen']}")
+        else:
+            st.info(
+                "No flaky tests identified with current settings. Try adjusting the thresholds."
+            )
+
+    with tab6:
+        st.header("Rerun Analysis")
+        if not test_results_df_sut.empty:
+            rerun_stats_fig, rerun_outcomes_fig = analyze_rerun_patterns(
+                test_results_df_sut
+            )
+            if rerun_stats_fig:
+                st.plotly_chart(rerun_stats_fig, use_container_width=True)
+            if rerun_outcomes_fig:
+                st.plotly_chart(rerun_outcomes_fig, use_container_width=True)
+        else:
+            st.info("No rerun data available for the selected SUT.")
+
+    with tab7:
+        st.header("3D Test Result Visualization")
+
+        col1, col2 = st.columns(2)
+        with col1:
+            metric = st.selectbox(
+                "Select Metric to Visualize",
+                ["failures", "flaky", "new_failures", "passes"],
+                help="Choose which test metric to visualize across SUTs and time",
+            )
+
+            view_mode = st.selectbox(
+                "View Mode",
+                ["surface", "heatmap", "scatter"],
+                help="Choose how to visualize the data",
+            )
+
+        with col2:
+            smoothing = st.slider(
+                "Smoothing Factor",
+                min_value=0.0,
+                max_value=1.0,
+                value=0.0,
+                step=0.1,
+                help="Apply smoothing to the surface (0 = none, 1 = maximum)",
+            )
+
+            color_scale = st.selectbox(
+                "Color Scale",
+                ["Viridis", "Plasma", "Inferno", "Magma", "RdYlBu"],
+                help="Choose the color scheme for the visualization",
+            )
+
+        # Create date range selector
+        col1, col2 = st.columns(2)
+        with col1:
+            start_date = st.date_input(
+                "Start Date",
+                value=pd.to_datetime(df["start_time"]).min().date(),
+                min_value=pd.to_datetime(df["start_time"]).min().date(),
+                max_value=pd.to_datetime(df["start_time"]).max().date(),
+                key="test_stability_start_date",  # Added unique key
+            )
+        with col2:
+            end_date = st.date_input(
+                "End Date",
+                value=pd.to_datetime(df["start_time"]).max().date(),
+                min_value=pd.to_datetime(df["start_time"]).min().date(),
+                max_value=pd.to_datetime(df["start_time"]).max().date(),
+                key="test_stability_end_date",  # Added unique key
+            )
+
+        # Filter data by date range and add date column
+        filtered_df = df.copy()
+        filtered_df["date"] = pd.to_datetime(filtered_df["start_time"]).dt.date
+        mask = (filtered_df["date"] >= start_date) & (filtered_df["date"] <= end_date)
+        filtered_df = filtered_df[mask]
+
+        if not filtered_df.empty:
+            # with st.expander("Debug Information", expanded=False):
+            #     st.write(f"Total rows: {len(filtered_df)}")
+            #     st.write(f"Unique SUTs: {filtered_df['sut_id'].nunique()}")
+            #     st.write(
+            #         f"Date range: {filtered_df['date'].min()} to {filtered_df['date'].max()}"
+            #     )
+            #     st.write(f"Selected metric: {metric}")
+            #     st.write("DataFrame columns:", filtered_df.columns.tolist())
+
+            #     # Show sample of aggregated data
+            #     daily_stats = filtered_df.copy()
+            #     if metric == "failures":
+            #         daily_stats["count"] = (
+            #             daily_stats["num_failures"] + daily_stats["num_errors"]
+            #         )
+            #     elif metric == "passes":
+            #         daily_stats["count"] = daily_stats["num_passes"]
+            #     elif metric == "flaky":
+            #         daily_stats["count"] = (
+            #             daily_stats["num_xpasses"] + daily_stats["num_xfails"]
+            #         )
+            #     else:  # new_failures - this will show total failures for now
+            #         daily_stats["count"] = daily_stats["num_failures"]
+
+            #     daily_stats = (
+            #         daily_stats.groupby(["sut_id", "date"])["count"].sum().reset_index()
+            #     )
+            #     st.write("\nAggregated data sample:")
+            #     st.dataframe(daily_stats.head())
+
+            # Create the visualization based on view mode
+            if view_mode == "surface":
+                fig = create_3d_test_surface(
+                    filtered_df,
+                    metric,
+                    smoothing=smoothing,
+                    colorscale=color_scale.lower(),
+                )
+            elif view_mode == "heatmap":
+                fig = create_test_heatmap(
+                    filtered_df, metric, colorscale=color_scale.lower()
+                )
+            else:  # scatter
+                fig = create_test_scatter(
+                    filtered_df, metric, colorscale=color_scale.lower()
+                )
+
+            if fig:
+                st.plotly_chart(fig, use_container_width=True)
+
+                st.markdown(
+                    """
+                ### How to Interact with the Plot:
+                - **Rotate** (3D only): Click and drag
+                - **Zoom**: Mouse wheel or pinch gesture
+                - **Pan**: Right-click and drag
+                - **Reset View**: Double-click
+
+                ### Understanding the Visualization:
+                - **X-axis**: Different SUTs (Test Systems)
+                - **Y-axis**: Time progression
+                - **Z-axis/Color**: Intensity of the selected metric
+                """
+                )
+
+                # Add statistics table
+                st.header("Summary Statistics")
+                stats_df = (
+                    filtered_df.groupby("sut_id")
+                    .agg(
+                        {
+                            "num_tests": "sum",
+                            "num_passes": lambda x: (
+                                x.sum() / filtered_df["num_tests"].sum() * 100
+                            ),
+                        }
+                    )
+                    .round(2)
+                )
+                stats_df.columns = ["Total Tests", "Pass Rate (%)"]
+                st.dataframe(stats_df)
+        else:
+            st.warning("No data available for the selected date range.")
+
+    with tab8:
+        st.header("Flaky Tests")
+        if not test_results_df_sut.empty:
+            flaky_df = identify_flaky_tests(
+                test_results_df_sut,
+                min_runs=3,
+                flaky_threshold=0.2,
+            )
+            if not flaky_df.empty:
+                st.write(f"Found {len(flaky_df)} flaky tests:")
+                for _, test in flaky_df.iterrows():
+                    with st.expander(
+                        f"{test['id']} (Pass Rate: {test['pass_rate']:.1f}%, Fail Rate: {test['fail_rate']:.1f}%)"
+                    ):
+                        st.write(f"Total Runs: {test['total_runs']}")
+                        st.write(f"SUTs Affected: {test['suts_affected']}")
+                        st.write(f"Duration: {test['duration_days']} days")
+                        st.write(f"First Seen: {test['first_seen']}")
+                        st.write(f"Last Seen: {test['last_seen']}")
+            else:
+                st.info(
+                    "No flaky tests identified with current settings. Try adjusting the thresholds."
+                )
+        else:
+            st.info("No test data available for the selected SUT.")
+
+    with tab9:
+        st.header("Flexible Test Analysis")
+
+        # Controls in columns
+        col1, col2, col3 = st.columns(3)
+
+        with col1:
+            # SUT selection
+            all_suts = sorted(df["sut_id"].unique())
+            selected_suts = st.multiselect(
+                "Select SUTs",
+                options=all_suts,
+                default=[all_suts[0]] if all_suts else None,
+                key="flex_suts",  # Add unique key
+                help="Choose one or more SUTs to analyze",
+            )
+
+        with col2:
+            # Metric selection - only show available metrics
+            available_metrics = [
+                ("num_passes", "Passes"),
+                ("num_failures", "Failures"),
+                ("num_errors", "Errors"),
+                ("num_skips", "Skipped"),
+                ("num_xfails", "Expected Failures"),
+                ("num_xpasses", "Unexpected Passes"),
+            ]
+            # Filter to only show metrics that exist in the DataFrame
+            available_metrics = [
+                (m, n) for m, n in available_metrics if m in df.columns
+            ]
+
+            selected_metrics = st.multiselect(
+                "Select Metrics",
+                options=[m[0] for m in available_metrics],
+                default=[
+                    m[0] for m in available_metrics[:2]
+                ],  # Select first two available metrics
+                format_func=lambda x: dict(available_metrics)[x],
+                key="flex_metrics",  # Add unique key
+                help="Choose which metrics to display",
+            )
+
+        with col3:
+            # Visualization options
+            view_type = st.selectbox(
+                "Visualization Type",
+                options=["line", "area", "heatmap"],
+                key="flex_viz_type",  # Add unique key
+                help="Choose how to display the data",
+            )
+
+            normalize = st.checkbox(
+                "Show Percentages",
+                value=False,
+                key="flex_normalize",  # Add unique key
+                help="Display values as percentages instead of absolute counts",
+            )
+
+        if selected_suts and selected_metrics:
+            # Create and display visualization
+            fig = create_flexible_visualization(
+                df,
+                selected_suts=selected_suts,
+                metrics=selected_metrics,
+                view_type=view_type,
+                normalize=normalize,
+            )
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.info("Please select at least one SUT and one metric to display.")
+
+    with tab10:
+        st.header("SUT Comparison Analysis")
+
+        col1, col2 = st.columns([2, 1])
+
+        with col1:
+            # Debug info
+            st.write("Debug Info:")
+            st.write(f"Total records: {len(df_sut)}")
+            st.write(f"Available SUTs: {sorted(df_sut['sut_id'].unique())}")
+            if "start_time" in df_sut.columns:
+                st.write(
+                    f"Date range in data: {pd.to_datetime(df_sut['start_time']).min()} to {pd.to_datetime(df_sut['start_time']).max()}"
+                )
+
+            # SUT selection
+            all_suts = sorted(df_sut["sut_id"].unique())
+            selected_suts = st.multiselect(
+                "Select SUTs to Compare",
+                options=all_suts,
+                default=[all_suts[0]] if all_suts else None,
+                key="compare_suts",
+                help="Choose one or more SUTs to compare",
+            )
+
+            # Metric selection
+            metric_options = [
+                ("num_passes", "Passes"),
+                ("num_failures", "Failures"),
+                ("num_errors", "Errors"),
+                ("num_skips", "Skips"),
+                ("num_xfails", "Expected Failures"),
+                ("num_xpasses", "Unexpected Passes"),
+            ]
+
+            # Show available columns
+            st.write("Available columns:", df_sut.columns.tolist())
+
+            # Only show metrics that exist in the data
+            metric_options = [(m, n) for m, n in metric_options if m in df_sut.columns]
+            st.write("Available metrics:", [n for m, n in metric_options])
+
+            selected_metrics = st.multiselect(
+                "Select Metrics to Display",
+                options=[m[0] for m in metric_options],
+                default=[
+                    m[0] for m in metric_options[:3]
+                ],  # Default to first 3 metrics
+                format_func=lambda x: dict(metric_options)[x],
+                key="compare_metrics",
+                help="Choose which metrics to display for each SUT",
+            )
+
+            st.write("Selected metrics:", selected_metrics)
+
+        with col2:
+            # Date range selection
+            st.write("Date Range")
+
+            # Get date range
+            dates = pd.to_datetime(df_sut["start_time"])
+            min_datetime = dates.min()
+            max_datetime = dates.max()
+
+            # Show available range
+            st.caption(
+                f"Data available from {min_datetime:%Y-%m-%d %H:%M %Z} to {max_datetime:%Y-%m-%d %H:%M %Z}"
+            )
+
+            # Quick selection options
+            date_range_option = st.selectbox(
+                "Quick Select",
+                options=[
+                    "Last hour",
+                    "Last 4 hours",
+                    "Last 24 hours",
+                    "Last 7 days",
+                    "Last 30 days",
+                    "All time",
+                    "Custom range",
+                ],
+                key="date_range_option",
+            )
+
+            from datetime import timedelta
+
+            if date_range_option == "Custom range":
+                # Custom date inputs
+                start_date_str = st.text_input(
+                    "Start Date (YYYY-MM-DD)",
+                    value=(max_datetime - timedelta(days=1)).strftime("%Y-%m-%d"),
+                    key="start_date_str",
+                )
+                try:
+                    start_date = pd.to_datetime(start_date_str).tz_localize(None).date()
+                except:
+                    st.error("Please enter date in YYYY-MM-DD format")
+                    start_date = (
+                        (max_datetime - timedelta(days=1)).tz_localize(None).date()
+                    )
+
+                end_date_str = st.text_input(
+                    "End Date (YYYY-MM-DD)",
+                    value=max_datetime.strftime("%Y-%m-%d"),
+                    key="end_date_str",
+                )
+                try:
+                    end_date = pd.to_datetime(end_date_str).tz_localize(None).date()
+                except:
+                    st.error("Please enter date in YYYY-MM-DD format")
+                    end_date = max_datetime.tz_localize(None).date()
+            else:
+                # Calculate date range based on selection
+                end_date = max_datetime.tz_localize(None).date()
+                if date_range_option == "Last hour":
+                    start_date = (
+                        (max_datetime - timedelta(hours=1)).tz_localize(None).date()
+                    )
+                elif date_range_option == "Last 4 hours":
+                    start_date = (
+                        (max_datetime - timedelta(hours=4)).tz_localize(None).date()
+                    )
+                elif date_range_option == "Last 24 hours":
+                    start_date = (
+                        (max_datetime - timedelta(hours=24)).tz_localize(None).date()
+                    )
+                elif date_range_option == "Last 7 days":
+                    start_date = (
+                        (max_datetime - timedelta(days=7)).tz_localize(None).date()
+                    )
+                elif date_range_option == "Last 30 days":
+                    start_date = (
+                        (max_datetime - timedelta(days=30)).tz_localize(None).date()
+                    )
+                else:  # All time
+                    start_date = min_datetime.tz_localize(None).date()
+
+            # Ensure dates are within valid range
+            start_date = max(
+                min_datetime.tz_localize(None).date(),
+                min(max_datetime.tz_localize(None).date(), start_date),
+            )
+            end_date = max(
+                start_date, min(max_datetime.tz_localize(None).date(), end_date)
+            )
+
+            # Show selected range
+            st.caption(f"Selected range: {start_date:%Y-%m-%d} to {end_date:%Y-%m-%d}")
+
+        if selected_suts and selected_metrics:
+            fig = create_sut_comparison_chart(
+                df_sut,
+                selected_suts=selected_suts,
+                selected_metrics=selected_metrics,
+                start_date=start_date,
+                end_date=end_date,
+            )
             st.plotly_chart(fig, use_container_width=True)
 
-            st.markdown(
-                """
-            ### How to Interact with the Plot:
-            - **Rotate** (3D only): Click and drag
-            - **Zoom**: Mouse wheel or pinch gesture
-            - **Pan**: Right-click and drag
-            - **Reset View**: Double-click
-
-            ### Understanding the Visualization:
-            - **X-axis**: Different SUTs (Test Systems)
-            - **Y-axis**: Time progression
-            - **Z-axis/Color**: Intensity of the selected metric
-            """
+            st.info(
+                "**Interaction Tips:**\n"
+                "- Click on legend items to show/hide individual lines\n"
+                "- Double-click to isolate a single item\n"
+                "- Click on a SUT name to toggle all metrics for that SUT\n"
+                "- Drag to zoom, double-click to reset view"
             )
-
-            # Add statistics table
-            st.header("Summary Statistics")
-            stats_df = (
-                filtered_df.groupby("sut_id")
-                .agg(
-                    {
-                        "num_tests": "sum",
-                        "num_passes": lambda x: (
-                            x.sum() / filtered_df["num_tests"].sum() * 100
-                        ),
-                    }
-                )
-                .round(2)
-            )
-            stats_df.columns = ["Total Tests", "Pass Rate (%)"]
-            st.dataframe(stats_df)
-    else:
-        st.warning("No data available for the selected date range.")
+        else:
+            st.info("Please select at least one SUT and one metric to display.")

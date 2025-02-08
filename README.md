@@ -63,14 +63,39 @@
 
 # Usage
 
+## Required Configuration
+
+### System Under Test (SUT) ID
+
+The `--oof-sut-id` option is **required** when running tests. This identifies which system or component is being tested, ensuring that all test results can be properly attributed and analyzed. For example:
+
+```bash
+# Running tests for the authentication service
+pytest --oof --oof-sut-id=auth-service
+
+# Running tests for a specific environment
+pytest --oof --oof-sut-id=qa-ref-dist-core
+```
+
+The SUT ID cannot be empty and must be provided. This helps maintain data quality and makes it easier to:
+- Track test results across different systems
+- Compare performance between components
+- Generate accurate visualizations and reports
+- Identify trends and issues specific to each system
 
 ## Demo Script
 
-First, run your pytest campaign with the `--oof` option:
+First, run your pytest campaign with the required options:
 
-`$ pytest --oof`
+```bash
+# Basic usage with required SUT ID
+pytest --oof --oof-sut-id=my-system
 
-This generates two files in the `/oof` directory:
+# Full example with all SUT-related options
+pytest --oof --oof-sut-id=auth-service --oof-sut-type=microservice --oof-sut-version=1.2.3 --oof-sut-env=qa
+```
+
+This generates several files in the `/oof` directory:
 - oof/oof-results.db: a SQLite database containing test results
 - oof/oof-terminal_output.ansi: a copy of the entire terminal output from your test session, encoded in ANSI escape codes
 - oof/oof-results.pickle: a pickled collection of dataclasses representing all results in an easy-to-consume format
@@ -95,9 +120,15 @@ Go ahead - compare the results with the last line of output from `pytest --oof` 
 
 ## As an Importable Module
 
-Run your pytest campaign with the `--oof` option:
+Run your pytest campaign with the required options:
 
-`$ pytest --oof`
+```bash
+# Basic usage with required SUT ID
+pytest --oof --oof-sut-id=my-system
+
+# Full example with all SUT-related options
+pytest --oof --oof-sut-id=auth-service --oof-sut-type=microservice --oof-sut-version=1.2.3 --oof-sut-env=qa
+```
 
 Now use as you wish:
 

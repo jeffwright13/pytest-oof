@@ -1,27 +1,21 @@
-import json
-import os
 import platform
 import sys
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import List
 
 import pytest
 from _pytest.config import Config, PytestPluginManager
 from _pytest.config.argparsing import Parser
-from _pytest.main import Session
-from _pytest.nodes import Item
-from _pytest.reports import TestReport
 
 from pytest_oof import hooks
-from pytest_oof.utils import (
+from pytest_oof.models import (
     ReportBasedStats,
     Results,
     SessionMetadata,
     TestResult,
     TestSessionStats,
-    generate_timestamp_uuid,
 )
 
 from .db import (
@@ -49,8 +43,8 @@ def pytest_addoption(parser: Parser) -> None:
         "--oof-sut-id",
         action="store",
         dest="oof_sut_id",
-        help="SUT (system under test) unique identifier",
-        default="",
+        help="SUT (system under test) unique identifier (required)",
+        required=True,
     )
     group.addoption(
         "--oof-sut-type",
@@ -79,14 +73,6 @@ def pytest_addoption(parser: Parser) -> None:
         dest="oof_sut_metadata",
         help="Additional metadata for the system under test (as JSON string)",
         default="{}",
-    )
-    group.addoption(
-        "--oof-max-history",
-        action="store",
-        dest="oof_max_history",
-        help="Maximum number of test runs to keep in history (default: 100, 0 for unlimited)",
-        type=int,
-        default=100,
     )
     group.addoption(
         "--oof-db-path",
@@ -144,8 +130,6 @@ def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo) -> None:
         else:
             test_outcome = report.outcome.upper()
 
-    now = datetime.now(timezone.utc)
-
     # Get error details
     error_message = getattr(report, "longreprtext", "")
     error_type = str(getattr(report, "longrepr", ""))  # Convert to string
@@ -168,7 +152,7 @@ def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo) -> None:
     test_result = TestResult(
         nodeid=report.nodeid,
         outcome=test_outcome,
-        start_time=now,
+        start_time=datetime.now(timezone.utc),
         duration=report.duration,
         error_message=error_message,
         error_type=error_type,
@@ -178,17 +162,16 @@ def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo) -> None:
         capstdout=capstdout,
         has_warning=has_warning,
         longreprtext=longreprtext,
-        rerun_count=rerun_count,  # Store rerun count in test result
+        rerun_count=rerun_count,
     )
     item.config._oof_test_results.test_results.append(test_result)
 
     # Update session stats based on test outcome
     stats = item.config._oof_test_results.session_stats
-    
+
     # Update rerun stats if this is a rerun
     if is_rerun:
         stats.num_reruns += 1
-        # Add test to rerun group if not already there
         rerun_group = f"{report.nodeid}::rerun_{rerun_count}"
         if rerun_group not in item.config._oof_test_results.rerun_test_groups:
             item.config._oof_test_results.rerun_test_groups.append(rerun_group)
@@ -209,26 +192,11 @@ def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo) -> None:
         stats.num_errors += 1
 
     # Update database
-    with db_connection(item.config.option.oof_db_path) as conn:
-        test_result = TestResult(
-            nodeid=report.nodeid,
-            outcome=test_outcome,
-            start_time=now,
-            duration=report.duration,
-            error_message=error_message,
-            error_type=error_type,
-            error_traceback=error_traceback,
-            caplog=caplog,
-            capstderr=capstderr,
-            capstdout=capstdout,
-            has_warning=has_warning,
-            longreprtext=longreprtext,
-            rerun_count=0  # This will be updated by the rerunfailures plugin if needed
-        )
+    with db_connection(item.config.option.oof_db_path):
         add_test_result(
             db_path=item.config.option.oof_db_path,
             session_id=item.config._oof_test_results.session_metadata.db_session_id,
-            test_result=test_result
+            test_result=test_result,
         )
 
 
@@ -278,19 +246,19 @@ def pytest_configure(config: Config) -> None:
             num_rerun_groups=0,
             num_warnings=0,
             num_warnings_unique=0,
-            num_deselected=0
+            num_deselected=0,
         )
 
         session_metadata = SessionMetadata(
             session_id=session_id,
             start_time=start_time,
-            stop_time=start_time,  # Will be updated in pytest_unconfigure
+            stop_time=None,  # Will be updated in pytest_unconfigure
             duration=timedelta(0),  # Will be updated in pytest_unconfigure
             python_version=platform.python_version(),
             os_info=platform.platform(),
             pytest_version=pytest.__version__,
             command_line=" ".join(sys.argv[1:]),
-            sut_id=config.getoption("--oof-sut-id") or "",
+            sut_id=config.getoption("--oof-sut-id"),
             sut_type=config.getoption("--oof-sut-type") or "",
             sut_version=config.getoption("--oof-sut-version") or "",
             sut_environment=config.getoption("--oof-sut-env") or "",
@@ -356,5 +324,5 @@ def pytest_unconfigure(config: Config) -> None:
             db_path=config.option.oof_db_path,
             session_id=config._oof_test_results.session_metadata.db_session_id,
             stats=config._oof_session_stats,
-            rerun_groups=config._oof_test_results.rerun_test_groups
+            rerun_groups=config._oof_test_results.rerun_test_groups,
         )

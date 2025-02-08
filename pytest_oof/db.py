@@ -31,28 +31,28 @@ def init_db(db_path: Path) -> None:
             """
             CREATE TABLE IF NOT EXISTS test_sessions (
                 id TEXT PRIMARY KEY,
-                sut_id TEXT,
+                sut_id TEXT NOT NULL CHECK (sut_id <> ''),
                 sut_type TEXT,
                 sut_version TEXT,
                 sut_env TEXT,
                 sut_metadata TEXT,
-                start_time TIMESTAMP,
+                start_time TIMESTAMP NOT NULL,
                 stop_time TIMESTAMP,
                 duration REAL,
-                num_tests INTEGER,
-                num_tests_without_rerun INTEGER,
-                num_tests_total INTEGER,
-                num_passes INTEGER,
-                num_failures INTEGER,
-                num_errors INTEGER,
-                num_skips INTEGER,
-                num_xfails INTEGER,
-                num_xpasses INTEGER,
-                num_reruns INTEGER,
-                num_rerun_groups INTEGER,
-                num_warnings INTEGER,
-                num_warnings_unique INTEGER,
-                num_deselected INTEGER
+                num_tests INTEGER NOT NULL DEFAULT 0,
+                num_tests_without_rerun INTEGER DEFAULT 0,
+                num_tests_total INTEGER DEFAULT 0,
+                num_passes INTEGER DEFAULT 0,
+                num_failures INTEGER DEFAULT 0,
+                num_errors INTEGER DEFAULT 0,
+                num_skips INTEGER DEFAULT 0,
+                num_xfails INTEGER DEFAULT 0,
+                num_xpasses INTEGER DEFAULT 0,
+                num_reruns INTEGER DEFAULT 0,
+                num_rerun_groups INTEGER DEFAULT 0,
+                num_warnings INTEGER DEFAULT 0,
+                num_warnings_unique INTEGER DEFAULT 0,
+                num_deselected INTEGER DEFAULT 0
             )
             """
         )
@@ -62,15 +62,15 @@ def init_db(db_path: Path) -> None:
             """
             CREATE TABLE IF NOT EXISTS test_results (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                session_id TEXT,
-                nodeid TEXT,
-                outcome TEXT,
-                start_time TIMESTAMP,
+                session_id TEXT NOT NULL,
+                nodeid TEXT NOT NULL,
+                outcome TEXT NOT NULL,
+                start_time TIMESTAMP NOT NULL,
                 duration REAL,
                 error_message TEXT,
                 error_type TEXT,
                 error_traceback TEXT,
-                has_warning BOOLEAN,
+                has_warning BOOLEAN DEFAULT FALSE,
                 longreprtext TEXT,
                 caplog TEXT,
                 capstdout TEXT,
@@ -86,8 +86,8 @@ def init_db(db_path: Path) -> None:
             """
             CREATE TABLE IF NOT EXISTS rerun_groups (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                session_id TEXT,
-                group_name TEXT,
+                session_id TEXT NOT NULL,
+                group_name TEXT NOT NULL,
                 FOREIGN KEY (session_id) REFERENCES test_sessions(id)
             )
             """
@@ -98,7 +98,7 @@ def add_session(
     db_path: Path,
     start_time: datetime,
     session_id: str,
-    sut_id: str = "",
+    sut_id: str,
     sut_type: str = "",
     sut_version: str = "",
     sut_env: str = "",
@@ -166,11 +166,11 @@ def add_test_result(
     """Add a test result to the database."""
     with db_connection(db_path) as conn:
         cursor = conn.cursor()
-        
+
         # Convert TestResult to dict if needed
         if isinstance(test_result, TestResult):
             test_result = test_result.to_dict()
-            
+
         cursor.execute(
             """
             INSERT INTO test_results (
@@ -361,23 +361,19 @@ def get_test_results(
             session_dict = {
                 "session": {
                     "id": row[0],  # Use single ID field
-                    "timing": {
-                        "start": row[5],
-                        "stop": row[6],
-                        "duration": row[7]
-                    },
+                    "timing": {"start": row[5], "stop": row[6], "duration": row[7]},
                     "sut": {
                         "id": row[1],
                         "type": row[2],
                         "version": row[3],
                         "environment": row[4],
-                        "metadata": json.loads(row[5]) if row[5] else None
+                        "metadata": json.loads(row[5]) if row[5] else None,
                     },
                     "statistics": {
                         "tests": {
                             "total": row[8],
                             "without_rerun": row[9],
-                            "with_rerun": row[10]
+                            "with_rerun": row[10],
                         },
                         "outcomes": {
                             "passed": row[11],
@@ -385,20 +381,14 @@ def get_test_results(
                             "error": row[13],
                             "skipped": row[14],
                             "xfailed": row[15],
-                            "xpassed": row[16]
+                            "xpassed": row[16],
                         },
-                        "reruns": {
-                            "total": row[17],
-                            "groups": row[18]
-                        },
-                        "warnings": {
-                            "total": row[19],
-                            "unique": row[20]
-                        },
-                        "deselected": row[21]
-                    }
+                        "reruns": {"total": row[17], "groups": row[18]},
+                        "warnings": {"total": row[19], "unique": row[20]},
+                        "deselected": row[21],
+                    },
                 },
-                "test_results": []
+                "test_results": [],
             }
             print(f"Session stats: {session_dict['session']['statistics']}")  # Debug
 
@@ -422,7 +412,9 @@ def get_test_results(
                 WHERE session_id = ?
                 ORDER BY start_time ASC
             """
-            print(f"Fetching test results with query: {query} and session_id: {session_dict['session']['id']}")  # Debug
+            print(
+                f"Fetching test results with query: {query} and session_id: {session_dict['session']['id']}"
+            )  # Debug
             c.execute(query, (session_dict["session"]["id"],))
             rows = c.fetchall()
             print(f"Found {len(rows)} test results: {rows}")  # Debug
@@ -435,10 +427,7 @@ def get_test_results(
 
                 result = {
                     "id": test_row[0],  # nodeid
-                    "timing": {
-                        "start": test_row[2],
-                        "duration": test_row[3]
-                    }
+                    "timing": {"start": test_row[2], "duration": test_row[3]},
                 }
 
                 # Only include error info if present
@@ -446,7 +435,7 @@ def get_test_results(
                     result["error"] = {
                         "message": test_row[4],
                         "type": test_row[5],
-                        "traceback": test_row[6]
+                        "traceback": test_row[6],
                     }
 
                 # Only include output if present
@@ -572,20 +561,20 @@ def export_results(
                     "timing": {
                         "start": session[6],
                         "stop": session[7],
-                        "duration": session[8]
+                        "duration": session[8],
                     },
                     "sut": {
                         "id": session[1],
                         "type": session[2],
                         "version": session[3],
                         "environment": session[4],
-                        "metadata": json.loads(session[5]) if session[5] else None
+                        "metadata": json.loads(session[5]) if session[5] else None,
                     },
                     "statistics": {
                         "tests": {
                             "total": session[9],
                             "without_rerun": session[10],
-                            "with_rerun": session[11]
+                            "with_rerun": session[11],
                         },
                         "outcomes": {
                             "passed": session[12],
@@ -593,20 +582,14 @@ def export_results(
                             "error": session[14],
                             "skipped": session[15],
                             "xfailed": session[16],
-                            "xpassed": session[17]
+                            "xpassed": session[17],
                         },
-                        "reruns": {
-                            "total": session[18],
-                            "groups": session[19]
-                        },
-                        "warnings": {
-                            "total": session[20],
-                            "unique": session[21]
-                        },
-                        "deselected": session[22]
-                    }
+                        "reruns": {"total": session[18], "groups": session[19]},
+                        "warnings": {"total": session[20], "unique": session[21]},
+                        "deselected": session[22],
+                    },
                 },
-                "test_results": []
+                "test_results": [],
             }
 
             # Organize test results by outcome for easier analysis
@@ -618,10 +601,7 @@ def export_results(
 
                 result = {
                     "id": tr[0],  # nodeid
-                    "timing": {
-                        "start": tr[2],
-                        "duration": tr[3]
-                    }
+                    "timing": {"start": tr[2], "duration": tr[3]},
                 }
 
                 # Only include error info if present
@@ -629,7 +609,7 @@ def export_results(
                     result["error"] = {
                         "message": tr[4],
                         "type": tr[5],
-                        "traceback": tr[6]
+                        "traceback": tr[6],
                     }
 
                 # Only include output if present
