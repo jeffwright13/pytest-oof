@@ -2,6 +2,8 @@
 
 ## a pytest plugin providing structured, programmatic access to a test run's results, as rendered in console
 
+# NOTE: THIS DOCUMENT IS OUT OF DATE. PLEASE REFER TO [API Documentation](docs/api.md) FOR MORE INFORMATION.
+
 ### Test Outcomes:
 - Passes
 - Failures
@@ -28,7 +30,9 @@
 
 ### SQLite Database Integration:
 - Persistent storage of test results in SQLite database
-- Comprehensive schema for test sessions, results, metrics, and more
+- Efficient schema with two main tables:
+  - `sessions`: Stores test session metadata and aggregate statistics
+  - `test_results`: Stores individual test results with JSON-based error and warning data
 - Advanced querying capabilities with flexible filtering options
 - Support for time-based analysis and historical trends
 - Built-in foreign key constraints for data integrity
@@ -96,15 +100,17 @@ pytest --oof --oof-sut-id=auth-service --oof-sut-type=microservice --oof-sut-ver
 ```
 
 This generates several files in the `/oof` directory:
-- oof/oof-results.db: a SQLite database containing test results
-- oof/oof-terminal_output.ansi: a copy of the entire terminal output from your test session, encoded in ANSI escape codes
-- oof/oof-results.pickle: a pickled collection of dataclasses representing all results in an easy-to-consume format
-- oof/oof-results.json: JSON format test results
-   - Human-readable format of test results
-   - Suitable for external tools and integrations
-   - Available in two formats:
-     - `json`: Pretty-printed JSON with indentation (default)
-     - `jsonl`: JSON Lines format, one result per line, more compact and streamable
+- `oof/oof-results.db`: SQLite database containing test results in two tables:
+  - `sessions`: Test session metadata and statistics
+  - `test_results`: Individual test results with JSON-formatted error data
+- `oof/oof-terminal_output.ansi`: Copy of the entire terminal output from your test session
+- `oof/oof-results.pickle`: Pickled collection of dataclasses for easy consumption
+- `oof/oof-results.json`: JSON format test results with:
+  - Test session metadata (SUT info, timing, statistics)
+  - Individual test results with error data and warnings
+  - Available in two formats:
+    - `json`: Pretty-printed JSON with indentation (default)
+    - `jsonl`: JSON Lines format, one result per line
 
 Now run the included console script `oofda`:
 
@@ -443,26 +449,21 @@ Output field content:
 
 When running tests with pytest-oof, several files are created in the `/oof` directory:
 
-1. `oof/oof-results.db` - SQLite database containing:
-   - Test session metadata (timing, SUT info)
-   - Test results (outcomes, durations, error messages)
-   - Console output sections
-   - Historical test data for trend analysis
-
-2. `oof/oof-terminal_output.ansi` - Raw terminal output with ANSI escape codes
+1. `oof/oof-results.db`: SQLite database containing test results in two tables:
+  - `sessions`: Test session metadata and statistics
+  - `test_results`: Individual test results with JSON-formatted error data
+2. `oof/oof-terminal_output.ansi`: Raw terminal output with ANSI escape codes
    - Complete console output from the test session
    - Used for detailed debugging and output field analysis
-
-3. `oof/oof-results.pickle` - Serialized Results object
+3. `oof/oof-results.pickle`: Serialized Results object
    - Contains structured test results and metadata
    - Used by analysis tools and scripts
-
-4. `oof/oof-results.json` - JSON format test results
-   - Human-readable format of test results
-   - Suitable for external tools and integrations
+4. `oof/oof-results.json`: JSON format test results with:
+   - Test session metadata (SUT info, timing, statistics)
+   - Individual test results with error data and warnings
    - Available in two formats:
      - `json`: Pretty-printed JSON with indentation (default)
-     - `jsonl`: JSON Lines format, one result per line, more compact and streamable
+     - `jsonl`: JSON Lines format, one result per line
 
 5. `oof/html/` - Directory containing HTML reports
    - Generated when using `--html` option
@@ -685,3 +686,5 @@ for stat in stats:
 ```
 
 For detailed API documentation and examples, see [API Documentation](docs/api.md).
+
+```

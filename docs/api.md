@@ -50,6 +50,99 @@ stats = analyzer.get_sut_stats(sut_id="my-service")
 # There is no concept of "tests without a SUT" in pytest-oof
 ```
 
+## Database Schema
+
+### Tables
+
+#### sessions
+Stores test session metadata and aggregate statistics.
+
+Fields:
+- `session_id` (TEXT): Unique identifier for the test session
+- `sut_id` (TEXT): System Under Test identifier
+- `start_time` (TIMESTAMP): Session start time
+- `end_time` (TIMESTAMP): Session end time
+- `duration` (INTEGER): Total session duration in seconds
+- `total_tests` (INTEGER): Total number of tests run
+- `passed_tests` (INTEGER): Number of passed tests
+- `failed_tests` (INTEGER): Number of failed tests
+- `skipped_tests` (INTEGER): Number of skipped tests
+- `xfailed_tests` (INTEGER): Number of expected failures
+- `xpassed_tests` (INTEGER): Number of unexpected passes
+- `warnings` (INTEGER): Number of test warnings
+- `errors` (INTEGER): Number of test errors
+- `rerun` (INTEGER): Number of test reruns
+
+#### test_results
+Stores individual test results with JSON-formatted error and warning data.
+
+Fields:
+- `id` (INTEGER): Auto-incrementing primary key
+- `session_id` (TEXT): Foreign key to sessions table
+- `test_id` (TEXT): Test identifier (e.g., test file path and name)
+- `outcome` (TEXT): Test result (e.g., passed, failed, skipped)
+- `duration` (INTEGER): Test duration in seconds
+- `error_data` (JSON): Structured error information including:
+  - `message`: Error message
+  - `type`: Error type
+  - `traceback`: Full error traceback
+- `warnings` (JSON): List of test warnings
+- `rerun_count` (INTEGER): Number of times the test was rerun
+- `environment` (JSON): Test environment data
+- `timestamp` (TIMESTAMP): When the test was run
+
+### Export Formats
+
+#### JSON/JSONL Format
+The exported data follows this structure:
+
+```json
+{
+  "session": {
+    "id": "session-uuid",
+    "timing": {
+      "start": "2025-02-08T10:00:00",
+      "stop": "2025-02-08T10:01:00",
+      "duration": 60
+    },
+    "sut": {
+      "id": "auth-service"
+    },
+    "statistics": {
+      "tests": {
+        "total": 100,
+        "passed": 95,
+        "failed": 5
+      },
+      "warnings": {
+        "total": 2
+      }
+    }
+  },
+  "test_results": {
+    "passed": [{
+      "id": "test_auth::test_login",
+      "timing": {
+        "start": "2025-02-08T10:00:01",
+        "duration": 0.5
+      }
+    }],
+    "failed": [{
+      "id": "test_auth::test_logout",
+      "timing": {
+        "start": "2025-02-08T10:00:02",
+        "duration": 0.3
+      },
+      "error": {
+        "message": "AssertionError",
+        "type": "AssertionError",
+        "traceback": "..."
+      }
+    }]
+  }
+}
+```
+
 ## API Reference
 
 ### TestDataAnalyzer

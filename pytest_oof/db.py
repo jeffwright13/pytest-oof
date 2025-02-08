@@ -446,29 +446,21 @@ def get_test_results(
         # Build query conditions for sessions
         query = """
             SELECT
-                ts.id as session_id,
+                ts.session_id,
                 ts.sut_id,
-                ts.sut_type,
-                ts.sut_version,
-                ts.sut_env,
                 ts.start_time,
-                ts.stop_time,
+                ts.end_time,
                 ts.duration,
-                ts.num_tests,
-                ts.num_tests_without_rerun,
-                ts.num_tests_total,
-                ts.num_passes,
-                ts.num_failures,
-                ts.num_errors,
-                ts.num_skips,
-                ts.num_xfails,
-                ts.num_xpasses,
-                ts.num_reruns,
-                ts.num_rerun_groups,
-                ts.num_warnings,
-                ts.num_warnings_unique,
-                ts.num_deselected
-            FROM test_sessions ts
+                ts.total_tests,
+                ts.passed_tests,
+                ts.failed_tests,
+                ts.skipped_tests,
+                ts.xfailed_tests,
+                ts.xpassed_tests,
+                ts.warnings,
+                ts.errors,
+                ts.rerun
+            FROM sessions ts
             WHERE 1=1
         """
         params = []
@@ -477,7 +469,7 @@ def get_test_results(
             query += " AND ts.start_time >= ?"
             params.append(start_time)
         if end_time:
-            query += " AND ts.stop_time <= ?"
+            query += " AND ts.end_time <= ?"
             params.append(end_time)
         if last_n_sessions:
             query += " ORDER BY ts.start_time DESC LIMIT ?"
@@ -492,31 +484,31 @@ def get_test_results(
             session_dict = {
                 "session": {
                     "id": row[0],  # Use single ID field
-                    "timing": {"start": row[5], "stop": row[6], "duration": row[7]},
+                    "timing": {"start": row[2], "stop": row[3], "duration": row[4]},
                     "sut": {
                         "id": row[1],
-                        "type": row[2],
-                        "version": row[3],
-                        "environment": row[4],
-                        "metadata": json.loads(row[5]) if row[5] else None,
+                        "type": "",  # These fields no longer exist in schema
+                        "version": "",
+                        "environment": "",
+                        "metadata": None,
                     },
                     "statistics": {
                         "tests": {
-                            "total": row[8],
-                            "without_rerun": row[9],
-                            "with_rerun": row[10],
+                            "total": row[5],
+                            "without_rerun": 0,  # These fields no longer exist
+                            "with_rerun": 0,
                         },
                         "outcomes": {
-                            "passed": row[11],
-                            "failed": row[12],
-                            "error": row[13],
-                            "skipped": row[14],
-                            "xfailed": row[15],
-                            "xpassed": row[16],
+                            "passed": row[6],
+                            "failed": row[7],
+                            "error": row[12],
+                            "skipped": row[8],
+                            "xfailed": row[9],
+                            "xpassed": row[10],
                         },
-                        "reruns": {"total": row[17], "groups": row[18]},
-                        "warnings": {"total": row[19], "unique": row[20]},
-                        "deselected": row[21],
+                        "reruns": {"total": row[13], "groups": []},  # These fields no longer exist
+                        "warnings": {"total": row[11], "unique": 0},
+                        "deselected": 0,
                     },
                 },
                 "test_results": [],
@@ -524,69 +516,53 @@ def get_test_results(
             print(f"Session stats: {session_dict['session']['statistics']}")  # Debug
 
             # Get test results for this session
-            query = """
+            test_results_query = """
                 SELECT
-                    nodeid,
+                    test_id,
                     outcome,
-                    start_time,
+                    timestamp,
                     duration,
-                    error_message,
-                    error_type,
-                    error_traceback,
-                    has_warning,
-                    longreprtext,
-                    caplog,
-                    capstdout,
-                    capstderr,
-                    rerun_count
+                    error_data,
+                    warnings,
+                    rerun_count,
+                    environment
                 FROM test_results
                 WHERE session_id = ?
-                ORDER BY start_time ASC
+                ORDER BY timestamp
             """
-            print(
-                f"Fetching test results with query: {query} and session_id: {session_dict['session']['id']}"
-            )  # Debug
-            c.execute(query, (session_dict["session"]["id"],))
-            rows = c.fetchall()
-            print(f"Found {len(rows)} test results: {rows}")  # Debug
+            c.execute(test_results_query, [session[0]])
+            test_results = c.fetchall()
 
+            # Organize test results by outcome for easier analysis
             results_by_outcome = {}
-            for test_row in rows:
-                outcome = test_row[1].lower()
+            for tr in test_results:
+                outcome = tr[1].lower()
                 if outcome not in results_by_outcome:
                     results_by_outcome[outcome] = []
 
                 result = {
-                    "id": test_row[0],  # nodeid
-                    "timing": {"start": test_row[2], "duration": test_row[3]},
+                    "id": tr[0],  # test_id
+                    "timing": {"start": tr[2], "duration": tr[3]},
                 }
 
                 # Only include error info if present
-                if any([test_row[4], test_row[5], test_row[6]]):
-                    result["error"] = {
-                        "message": test_row[4],
-                        "type": test_row[5],
-                        "traceback": test_row[6],
-                    }
+                error_data = json.loads(tr[4]) if tr[4] else None
+                if error_data:
+                    result["error"] = error_data
 
-                # Only include output if present
-                outputs = {}
-                if test_row[9]:  # caplog
-                    outputs["log"] = test_row[9]
-                if test_row[10]:  # stdout
-                    outputs["stdout"] = test_row[10]
-                if test_row[11]:  # stderr
-                    outputs["stderr"] = test_row[11]
-                if outputs:
-                    result["output"] = outputs
+                # Include warnings if present
+                warnings = json.loads(tr[5]) if tr[5] else None
+                if warnings:
+                    result["warnings"] = warnings
 
-                # Include other relevant fields
-                if test_row[7]:  # has_warning
-                    result["has_warning"] = True
-                if test_row[8]:  # longreprtext
-                    result["long_repr"] = test_row[8]
-                if test_row[12]:  # rerun_count
-                    result["rerun_count"] = test_row[12]
+                # Include environment if present
+                env = json.loads(tr[7]) if tr[7] else None
+                if env:
+                    result["environment"] = env
+
+                # Include rerun count if present
+                if tr[6]:  # rerun_count
+                    result["rerun_count"] = tr[6]
 
                 results_by_outcome[outcome].append(result)
 
@@ -617,19 +593,18 @@ def export_results(
         # Build the base query for test sessions
         query = """
             SELECT DISTINCT s.*
-            FROM test_sessions s
+            FROM sessions s
         """
 
         # Add join with test_results if filtering by outcome or test_id
         if outcome is not None or test_id is not None:
-            query += " LEFT JOIN test_results r ON s.id = r.session_id"
-
+            query += " LEFT JOIN test_results r ON s.session_id = r.session_id"
         query += " WHERE 1=1"
         params = []
 
         # Add filters
         if session_id is not None:
-            query += " AND s.id = ?"
+            query += " AND s.session_id = ?"
             params.append(session_id)
         if start_time is not None:
             query += " AND s.start_time >= ?"
@@ -653,7 +628,7 @@ def export_results(
             query += " AND r.outcome = ?"
             params.append(outcome.upper())  # Convert outcome filter to uppercase
         if test_id is not None:
-            query += " AND r.nodeid = ?"
+            query += " AND r.test_id = ?"
             params.append(test_id)
 
         query += " ORDER BY s.start_time DESC"
@@ -665,22 +640,17 @@ def export_results(
             # Get test results for this session
             test_results_query = """
                 SELECT
-                    nodeid,
+                    test_id,
                     outcome,
-                    start_time,
+                    timestamp,
                     duration,
-                    error_message,
-                    error_type,
-                    error_traceback,
-                    has_warning,
-                    longreprtext,
-                    caplog,
-                    capstdout,
-                    capstderr,
-                    rerun_count
+                    error_data,
+                    warnings,
+                    rerun_count,
+                    environment
                 FROM test_results
                 WHERE session_id = ?
-                ORDER BY start_time
+                ORDER BY timestamp
             """
             c.execute(test_results_query, [session[0]])
             test_results = c.fetchall()
@@ -690,34 +660,34 @@ def export_results(
                 "session": {
                     "id": session[0],  # Use single ID field
                     "timing": {
-                        "start": session[6],
-                        "stop": session[7],
-                        "duration": session[8],
+                        "start": session[2],
+                        "stop": session[3],
+                        "duration": session[4],
                     },
                     "sut": {
                         "id": session[1],
-                        "type": session[2],
-                        "version": session[3],
-                        "environment": session[4],
-                        "metadata": json.loads(session[5]) if session[5] else None,
+                        "type": "",  # These fields no longer exist in schema
+                        "version": "",
+                        "environment": "",
+                        "metadata": None,
                     },
                     "statistics": {
                         "tests": {
-                            "total": session[9],
-                            "without_rerun": session[10],
-                            "with_rerun": session[11],
+                            "total": session[5],
+                            "without_rerun": 0,  # These fields no longer exist
+                            "with_rerun": 0,
                         },
                         "outcomes": {
-                            "passed": session[12],
-                            "failed": session[13],
-                            "error": session[14],
-                            "skipped": session[15],
-                            "xfailed": session[16],
-                            "xpassed": session[17],
+                            "passed": session[6],
+                            "failed": session[7],
+                            "error": session[12],
+                            "skipped": session[8],
+                            "xfailed": session[9],
+                            "xpassed": session[10],
                         },
-                        "reruns": {"total": session[18], "groups": session[19]},
-                        "warnings": {"total": session[20], "unique": session[21]},
-                        "deselected": session[22],
+                        "reruns": {"total": session[13], "groups": []},  # These fields no longer exist
+                        "warnings": {"total": session[11], "unique": 0},
+                        "deselected": 0,
                     },
                 },
                 "test_results": [],
@@ -731,36 +701,28 @@ def export_results(
                     results_by_outcome[outcome] = []
 
                 result = {
-                    "id": tr[0],  # nodeid
+                    "id": tr[0],  # test_id
                     "timing": {"start": tr[2], "duration": tr[3]},
                 }
 
                 # Only include error info if present
-                if any([tr[4], tr[5], tr[6]]):
-                    result["error"] = {
-                        "message": tr[4],
-                        "type": tr[5],
-                        "traceback": tr[6],
-                    }
+                error_data = json.loads(tr[4]) if tr[4] else None
+                if error_data:
+                    result["error"] = error_data
 
-                # Only include output if present
-                outputs = {}
-                if tr[9]:  # caplog
-                    outputs["log"] = tr[9]
-                if tr[10]:  # stdout
-                    outputs["stdout"] = tr[10]
-                if tr[11]:  # stderr
-                    outputs["stderr"] = tr[11]
-                if outputs:
-                    result["output"] = outputs
+                # Include warnings if present
+                warnings = json.loads(tr[5]) if tr[5] else None
+                if warnings:
+                    result["warnings"] = warnings
 
-                # Include other relevant fields
-                if tr[7]:  # has_warning
-                    result["has_warning"] = True
-                if tr[8]:  # longreprtext
-                    result["long_repr"] = tr[8]
-                if tr[12]:  # rerun_count
-                    result["rerun_count"] = tr[12]
+                # Include environment if present
+                env = json.loads(tr[7]) if tr[7] else None
+                if env:
+                    result["environment"] = env
+
+                # Include rerun count if present
+                if tr[6]:  # rerun_count
+                    result["rerun_count"] = tr[6]
 
                 results_by_outcome[outcome].append(result)
 
@@ -811,7 +773,7 @@ def delete_results(
             # Delete all test results first
             cursor.execute("DELETE FROM test_results")
             # Then delete all sessions
-            cursor.execute("DELETE FROM test_sessions")
+            cursor.execute("DELETE FROM sessions")
             deleted_count = cursor.rowcount
             conn.commit()
             return deleted_count
@@ -835,7 +797,7 @@ def delete_results(
         if last_n_sessions:
             cursor.execute(
                 """
-                SELECT id FROM test_sessions
+                SELECT session_id FROM sessions
                 ORDER BY start_time DESC
                 LIMIT ?
                 """,
@@ -843,11 +805,11 @@ def delete_results(
             )
             session_ids = [row[0] for row in cursor.fetchall()]
             if session_ids:
-                where_clauses.append(f"id IN ({','.join('?' * len(session_ids))})")
+                where_clauses.append(f"session_id IN ({','.join('?' * len(session_ids))})")
                 params.extend(session_ids)
 
         # Build base query for getting session IDs to delete
-        query = "SELECT id FROM test_sessions"
+        query = "SELECT session_id FROM sessions"
         if where_clauses:
             query += " WHERE " + " AND ".join(where_clauses)
 
@@ -864,7 +826,7 @@ def delete_results(
 
             # Then delete the sessions
             cursor.execute(
-                f"DELETE FROM test_sessions WHERE id IN ({','.join('?' * len(session_ids_to_delete))})",
+                f"DELETE FROM sessions WHERE session_id IN ({','.join('?' * len(session_ids_to_delete))})",
                 session_ids_to_delete,
             )
             deleted_count = cursor.rowcount
@@ -880,7 +842,7 @@ def get_db_id_from_session_id(db_path: Path, session_id: str) -> Optional[int]:
         c = conn.cursor()
         c.execute(
             """
-            SELECT id FROM test_sessions WHERE id = ?
+            SELECT session_id FROM sessions WHERE session_id = ?
             """,
             (session_id,),
         )
