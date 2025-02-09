@@ -66,9 +66,6 @@ setup(
     entry_points={
         "console_scripts": [
             "oof = pytest_oof.__main__:main",
-            "oof-console = pytest_oof.clients.console_gen:main",
-            "oof-html = pytest_oof.clients.html_gen:main",
-            "oof-tui = pytest_oof.clients.tui_gen:main",
             "oof-gui = pytest_oof.gui.longitudinal_view:main",
         ],
         "pytest11": [

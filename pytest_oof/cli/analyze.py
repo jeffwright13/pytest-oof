@@ -1,6 +1,7 @@
 """CLI commands for analyzing test results."""
 import json
 from typing import Optional
+from pathlib import Path
 
 import click
 from rich.console import Console
@@ -9,6 +10,8 @@ from rich.table import Table
 from pytest_oof.analyzer import TestDataAnalyzer
 
 console = Console()
+
+DEFAULT_DB_PATH = Path("./.oof/oof-results.db")
 
 @click.group()
 def analyze():
@@ -27,7 +30,7 @@ def trends():
 @click.option('--format', type=click.Choice(['text', 'json']), default='text')
 def failed(hours: int, min_failures: int, sut_id: Optional[str], format: str):
     """Show recently failed tests."""
-    analyzer = TestDataAnalyzer()
+    analyzer = TestDataAnalyzer(db_path=DEFAULT_DB_PATH)
     failed_tests = analyzer.get_recently_failed_tests(
         hours=hours,
         min_failures=min_failures,
@@ -61,7 +64,7 @@ def failed(hours: int, min_failures: int, sut_id: Optional[str], format: str):
 @click.option('--format', type=click.Choice(['text', 'json']), default='text')
 def durations(days: int, min_runs: int, sut_id: Optional[str], format: str):
     """Show test execution time trends."""
-    analyzer = TestDataAnalyzer()
+    analyzer = TestDataAnalyzer(db_path=DEFAULT_DB_PATH)
     trends = analyzer.get_duration_trends(
         days=days,
         min_runs=min_runs,
@@ -109,7 +112,7 @@ def reports():
 @click.option('--format', type=click.Choice(['text', 'json']), default='text')
 def stability(days: int, sut_id: Optional[str], granularity: str, format: str):
     """Track test stability over time."""
-    analyzer = TestDataAnalyzer()
+    analyzer = TestDataAnalyzer(db_path=DEFAULT_DB_PATH)
     report = analyzer.get_stability_report(
         days=days,
         sut_id=sut_id,

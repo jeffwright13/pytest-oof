@@ -15,7 +15,7 @@ from pytest_oof.db import init_db
 
 def get_db_path() -> str:
     """Get path to SQLite database."""
-    return str(Path("/Users/jwr003/coding/pytest-oof/oof/oof-results.db"))
+    return str(Path("/Users/jwr003/coding/pytest-oof/.oof/oof-results.db"))
 
 
 def db_connection(db_path: str):
@@ -41,10 +41,10 @@ def ensure_tables_exist():
     db_path = get_db_path()
     with db_connection(db_path) as conn:
         cursor = conn.cursor()
-        
+
         # Drop existing tables to ensure clean schema
         drop_tables()
-        
+
         cursor.execute(
             """
             CREATE TABLE IF NOT EXISTS sessions (
@@ -98,7 +98,7 @@ def ensure_tables_exist():
         # Check if we need to add new columns
         cursor.execute("PRAGMA table_info(test_results)")
         columns = {col[1] for col in cursor.fetchall()}
-        
+
         # Add missing columns if they don't exist
         if "environment" not in columns:
             cursor.execute("ALTER TABLE test_results ADD COLUMN environment TEXT")
@@ -106,16 +106,16 @@ def ensure_tables_exist():
             cursor.execute("ALTER TABLE test_results ADD COLUMN warnings TEXT")
         if "is_rerun" not in columns:
             cursor.execute("ALTER TABLE test_results ADD COLUMN is_rerun BOOLEAN")
-        
+
         conn.commit()
 
 
 def get_db_path() -> Path:
     """Get the database path."""
     package_dir = Path(__file__).parent.parent
-    db_path = package_dir / "oof/oof-results.db"
+    db_path = package_dir / ".oof/oof-results.db"
     if not db_path.exists():
-        db_path = Path("oof/oof-results.db")
+        db_path = Path("./.oof/oof-results.db")
         # Initialize the database if it doesn't exist
         db_path.parent.mkdir(parents=True, exist_ok=True)
         init_db(db_path)
@@ -229,11 +229,11 @@ def get_test_templates():
             "error_traceback": """
 >       assert not auth.login(username="test_user", password="wrong_pass")
 E       AssertionError: Login should have failed with invalid password
-E       
+E
 E       During handling of the above exception, another exception occurred:
-E       
+E
 E       auth.AuthenticationError: Invalid credentials provided
-E       
+E
 test_login.py:45: AssertionError
             """.strip(),
             "longreprtext": "Expected login to fail but it succeeded",
@@ -261,13 +261,13 @@ test_login.py:45: AssertionError
 def test_database_connection():
 >       with db.connect() as conn:
 E       ConnectionError: Could not connect to database
-E       
+E
 E       The above exception was the direct cause of the following exception:
-E       
+E
 E       ConnectionError: Database connection failed after 3 retries
-E       
+E
 E       Detailed error: Connection timed out after 30000ms
-E       
+E
 test_db.py:25: ConnectionError
             """.strip(),
             "longreprtext": "Database connection timed out after multiple retries",
@@ -303,14 +303,14 @@ def test_api_performance():
     start_time = time.time()
 >   response = api.get_large_dataset()
 E   PerformanceError: Response time (5.2s) exceeded threshold (5.0s)
-E   
+E
 E   Response timing breakdown:
 E   - DNS resolution: 0.1s
 E   - TCP connection: 0.2s
 E   - TLS handshake: 0.3s
 E   - Time to first byte: 1.5s
 E   - Data transfer: 3.1s
-E   
+E
 test_perf.py:95: PerformanceError
             """.strip(),
             "longreprtext": "API response time exceeded acceptable threshold",
@@ -344,12 +344,12 @@ test_perf.py:95: PerformanceError
 def test_data_validation():
 >   result = validate_input({"name": "测试"})
 E   ValidationError: Invalid data format
-E   
+E
 E   Validation errors:
 E   - Field 'name': Invalid UTF-8 encoding
 E   - Field 'age': Required field missing
 E   - Field 'email': Invalid email format
-E   
+E
 test_validation.py:112: ValidationError
             """.strip(),
             "longreprtext": "Data validation failed due to encoding issues",
@@ -379,7 +379,7 @@ def generate_test_results(session_id: str, num_tests: int, base_time: datetime):
     """Generate test results for a session."""
     test_results = []
     test_templates = get_test_templates()
-    
+
     # Track flaky tests to ensure consistent behavior within session
     flaky_tests = {
         "test_database_connection": random.random() < 0.3,  # 30% chance of being flaky in this session
@@ -390,7 +390,7 @@ def generate_test_results(session_id: str, num_tests: int, base_time: datetime):
         test_template = random.choice(list(test_templates.items()))
         test_id = test_template[0]
         template_data = test_template[1]
-        
+
         # Handle flaky tests
         if test_id in flaky_tests and flaky_tests[test_id]:
             # If test is flaky in this session, randomly fail some runs

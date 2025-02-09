@@ -1,13 +1,23 @@
-"""Streamlit dashboard for pytest-oof test analysis."""
+import plotly.graph_objects as go
+import pandas as pd
+import streamlit as st
 import sqlite3
 from pathlib import Path
+import json
+from collections import defaultdict
 
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 import streamlit as st
 
-from pytest_oof.db import init_db
+from pytest_oof.db import (
+    init_sqlite_db,
+    get_rerun_patterns,
+    get_xfail_trends,
+    get_flaky_tests,
+)
 
 st.set_page_config(
     page_title="pytest-oof Analysis",
@@ -36,6 +46,19 @@ OUTCOME_COLORS = {
     "xpassed": "#FFE4B5",  # Light yellow
     "warnings": "#ffa500",  # Orange
 }
+
+TABS = [
+    "Overview",
+    "Session View",
+    "Test Results",
+    "Test Transitions",
+    "Daily Stats",
+    "Rerun Analysis",
+    "Flaky Tests",
+    "Flexible Analysis",
+    "SUT Comparison Analysis",
+    "Test Analysis"
+]
 
 # Define which outcomes should have white text for better contrast
 WHITE_TEXT_OUTCOMES = ["failed", "error", "total"]
@@ -131,10 +154,10 @@ st.markdown(
 
 def ensure_db_exists():
     """Ensure the database exists and is initialized."""
-    db_path = Path("oof/oof-results.db")
+    db_path = Path("./.oof/oof-results.db")
 
     try:
-        init_db(db_path)  # Always call init_db to ensure schema is up to date
+        init_sqlite_db(db_path)  # Initialize using SQLite directly
     except Exception as e:
         st.error(f"Failed to initialize database: {str(e)}")
         raise
@@ -155,14 +178,29 @@ def load_session_data():
     db_path = ensure_db_exists()
     query = """
         SELECT
-            id, start_time, stop_time as end_time, duration,
-            sut_id, sut_type, sut_version, sut_env,
-            num_tests, num_tests_without_rerun, num_tests_total,
-            num_passes, num_failures, num_errors, num_skips,
-            num_xfails, num_xpasses, num_reruns,
-            num_rerun_groups, num_warnings, num_warnings_unique,
-            num_deselected
-        FROM test_sessions
+            session_id as id,
+            start_time,
+            end_time,
+            duration,
+            sut_id,
+            sut_type,
+            sut_version,
+            sut_env,
+            total_tests as num_tests,
+            total_tests as num_tests_without_rerun,
+            total_tests as num_tests_total,
+            passed_tests as num_passes,
+            failed_tests as num_failures,
+            errors as num_errors,
+            skipped_tests as num_skips,
+            xfailed_tests as num_xfails,
+            xpassed_tests as num_xpasses,
+            rerun as num_reruns,
+            0 as num_rerun_groups,
+            warnings as num_warnings,
+            warnings as num_warnings_unique,
+            0 as num_deselected
+        FROM sessions
         ORDER BY start_time DESC
     """
 
@@ -228,7 +266,7 @@ def load_test_results():
         SELECT
             tr.id,
             tr.session_id,
-            tr.nodeid,
+            tr.test_id as nodeid,
             tr.outcome,
             tr.start_time,
             tr.duration,
@@ -236,18 +274,23 @@ def load_test_results():
             tr.error_type,
             tr.has_warning,
             tr.rerun_count,
-            ts.sut_id,
-            ts.sut_type,
-            ts.sut_version,
-            ts.sut_env
+            s.sut_id,
+            s.sut_type,
+            s.sut_version,
+            s.sut_env
         FROM test_results tr
-        JOIN test_sessions ts ON tr.session_id = ts.id
+        JOIN sessions s ON tr.session_id = s.session_id
         ORDER BY tr.start_time DESC
     """
 
     try:
         with sqlite3.connect(db_path) as conn:
             df = pd.read_sql_query(query, conn, parse_dates=["start_time"])
+
+            # Return empty DataFrame if no results
+            if df.empty:
+                st.warning("No test results found in the database. Please run some tests first.")
+                return pd.DataFrame(columns=["sut_id", "start_time", "outcome", "duration"])
 
             # Ensure timezone awareness
             if df["start_time"].dt.tz is None:
@@ -267,8 +310,22 @@ def load_test_results():
             return df
     except Exception as e:
         st.error(f"Error loading test results: {str(e)}")
-        return pd.DataFrame()  # Return empty DataFrame on error
+        return pd.DataFrame(columns=["sut_id", "start_time", "outcome", "duration"])  # Return empty DataFrame with required columns
 
+def get_db_path():
+    """Get the path to the SQLite database."""
+    return Path("./.oof/oof-results.db")
+
+def get_unique_sut_ids(db_path):
+    """Get unique SUT IDs from the database."""
+    try:
+        with sqlite3.connect(db_path) as conn:
+            query = "SELECT DISTINCT sut_id FROM sessions ORDER BY sut_id"
+            df = pd.read_sql_query(query, conn)
+            return df['sut_id'].unique()
+    except Exception as e:
+        st.error(f"Failed to get unique SUT IDs: {str(e)}")
+        return []
 
 def plot_test_results_trend(df, viz_settings, view_type="aggregate"):
     """Plot test results trend over time."""
@@ -721,7 +778,8 @@ def plot_test_transitions(fail_to_pass, pass_to_fail):
 
     if fail_to_pass.empty and pass_to_fail.empty:
         st.info("No test transitions detected with current settings.")
-        return
+# ERROR: Misplaced return - commented out
+#         return
 
     # Combine transitions into one dataframe
     transitions = []
@@ -750,7 +808,8 @@ def plot_test_transitions(fail_to_pass, pass_to_fail):
 
     if not transitions:
         st.info("No test transitions detected with current settings.")
-        return
+# ERROR: Misplaced return - commented out
+#         return
 
     df = pd.DataFrame(transitions)
 
@@ -815,9 +874,12 @@ def analyze_rerun_patterns(df):
         return None, None
 
     # Calculate rerun statistics
-    rerun_df = df[df["rerun_count"] > 0]
+    rerun_df = df[df["rerun_count"] > 0].copy()  # Make a copy to avoid SettingWithCopyWarning
     if rerun_df.empty:
         return None, None
+
+    # Calculate total rerun time (duration * rerun_count)
+    rerun_df["total_rerun_time"] = rerun_df["duration"] * rerun_df["rerun_count"]
 
     rerun_stats = rerun_df.agg(
         {"rerun_count": ["count", "mean", "max"], "total_rerun_time": ["sum", "mean"]}
@@ -865,51 +927,23 @@ def analyze_rerun_patterns(df):
         grid={"rows": 2, "columns": 2}, height=400, **PLOTLY_LAYOUT
     )
 
-    # Analyze rerun outcomes
-    rerun_outcomes = []
-    for _, row in rerun_df.iterrows():
-        try:
-            if pd.isna(row["rerun_outcomes"]) or row["rerun_outcomes"] == "[]":
-                continue
-            outcomes = eval(row["rerun_outcomes"])  # Convert string list to actual list
-            for i, outcome in enumerate(outcomes, 1):
-                rerun_outcomes.append(
-                    {"id": row["id"], "rerun_number": i, "outcome": outcome}
-                )
-        except (ValueError, SyntaxError):
-            continue
+    # Create rerun outcomes figure showing final outcomes for tests with reruns
+    outcome_counts = rerun_df["outcome"].value_counts()
 
-    rerun_outcomes_df = pd.DataFrame(rerun_outcomes)
-
-    # Create rerun outcomes figure
-    if not rerun_outcomes_df.empty:
-        outcome_counts = (
-            rerun_outcomes_df.groupby(["rerun_number", "outcome"])
-            .size()
-            .unstack(fill_value=0)
+    rerun_outcomes_fig = go.Figure()
+    rerun_outcomes_fig.add_trace(
+        go.Pie(
+            labels=outcome_counts.index,
+            values=outcome_counts.values,
+            hole=0.4,
+            marker=dict(colors=[OUTCOME_COLORS.get(o, "#808080") for o in outcome_counts.index])
         )
-
-        rerun_outcomes_fig = go.Figure()
-        for outcome in outcome_counts.columns:
-            rerun_outcomes_fig.add_trace(
-                go.Bar(
-                    name=outcome,
-                    x=outcome_counts.index,
-                    y=outcome_counts[outcome],
-                    marker_color=OUTCOME_COLORS.get(outcome.lower(), "#808080"),
-                )
-            )
-
-        rerun_outcomes_fig.update_layout(
-            barmode="stack",
-            title="Test Outcomes by Rerun Number",
-            xaxis_title="Rerun Number",
-            yaxis_title="Number of Tests",
-            height=400,
-            **PLOTLY_LAYOUT,
-        )
-    else:
-        rerun_outcomes_fig = None
+    )
+    rerun_outcomes_fig.update_layout(
+        title="Final Outcomes for Tests with Reruns",
+        height=400,
+        **PLOTLY_LAYOUT
+    )
 
     return rerun_stats_fig, rerun_outcomes_fig
 
@@ -923,42 +957,63 @@ def create_3d_test_surface(df, metric="failures", smoothing=0.0, colorscale="vir
     daily_stats = df.copy()
     daily_stats["date"] = pd.to_datetime(daily_stats["start_time"]).dt.date
 
+    # Calculate metric values
     if metric == "failures":
-        daily_stats["count"] = daily_stats["num_failures"] + daily_stats["num_errors"]
+        daily_stats["metric_value"] = daily_stats["num_failures"] + daily_stats["num_errors"]
     elif metric == "passes":
-        daily_stats["count"] = daily_stats["num_passes"]
+        daily_stats["metric_value"] = daily_stats["num_passes"]
     elif metric == "flaky":
-        daily_stats["count"] = daily_stats["num_xpasses"] + daily_stats["num_xfails"]
-    else:  # new_failures - this will show total failures for now
-        daily_stats["count"] = daily_stats["num_failures"]
+        daily_stats["metric_value"] = daily_stats["num_xpasses"] + daily_stats["num_xfails"]
 
-    # Group by date and SUT
-    daily_stats = daily_stats.groupby(["sut_id", "date"])["count"].sum().reset_index()
+    # Pivot data to create surface
+    pivot_df = daily_stats.pivot_table(
+        values="metric_value",
+        index="sut_id",
+        columns="date",
+        aggfunc="sum",
+        fill_value=0,
+    )
 
-    # Create pivot table
-    pivot_table = daily_stats.pivot(
-        index="date", columns="sut_id", values="count"
-    ).fillna(0)
-
-    # Create surface plot
+    # Create 3D surface plot
     fig = go.Figure(
         data=[
             go.Surface(
-                z=pivot_table.values,
-                x=pivot_table.columns,  # SUTs
-                y=[str(d) for d in pivot_table.index],  # Dates
+                z=pivot_df.values,
+                x=pivot_df.columns,
+                y=pivot_df.index,
                 colorscale=colorscale,
+# smoothing=smoothing,  # Removed invalid 'smoothing' parameter
+                colorbar=dict(title=metric.capitalize()),
             )
         ]
     )
 
-    # Update layout
     fig.update_layout(
-        title=f"Test {metric.title()} Surface",
+        title=f"{metric.capitalize()} Over Time by SUT",
         scene=dict(
-            xaxis_title="SUT ID", yaxis_title="Date", zaxis_title=metric.title()
+            xaxis_title="Date",
+            yaxis_title="SUT",
+            zaxis_title=metric.capitalize(),
+            camera=dict(
+                up=dict(x=0, y=0, z=1),
+                center=dict(x=0, y=0, z=0),
+                eye=dict(x=1.5, y=1.5, z=1.5)
+            ),
+            aspectmode='manual',
+            aspectratio=dict(x=2, y=1, z=1)
         ),
+        width=1000,  # Increased width
+        height=800,  # Increased height
+        margin=dict(l=0, r=0, b=0, t=30),  # Reduced margins
         **PLOTLY_LAYOUT,
+    )
+
+    # Add hover template for better tooltips
+    fig.data[0].hovertemplate = (
+        "Date: %{x}<br>"
+        "SUT: %{y}<br>"
+        f"{metric.capitalize()}: %{{z:,.0f}}<br>"
+        "<extra></extra>"
     )
 
     return fig
@@ -1083,124 +1138,111 @@ def create_flexible_visualization(
 
     fig = go.Figure()
 
-    # Define metric properties
+    # Define metric properties with consistent colors per metric across SUTs
     metric_props = {
-        "num_passes": ("Passed", "passed"),
-        "num_failures": ("Failed", "failed"),
-        "num_errors": ("Errors", "error"),
-        "num_skips": ("Skipped", "skipped"),
-        "num_xfails": ("Expected Failures", "xfailed"),
-        "num_xpasses": ("Unexpected Passes", "xpassed"),
+        "num_passes": ("Passed", "#2ecc71"),  # Green
+        "num_failures": ("Failed", "#e74c3c"),  # Red
+        "num_errors": ("Errors", "#c0392b"),  # Dark Red
+        "num_skips": ("Skipped", "#95a5a6"),  # Gray
+        "num_xfails": ("Expected Failures", "#f1c40f"),  # Yellow
+        "num_xpasses": ("Unexpected Passes", "#3498db"),  # Blue
+    }
+
+    # Create color variations for different SUTs
+    sut_opacities = {
+        sut: 0.5 + (i * 0.5 / len(selected_suts))
+        for i, sut in enumerate(selected_suts)
     }
 
     if view_type == "line":
-        for sut_id in selected_suts:
-            sut_data = df_sorted[df_sorted["sut_id"] == sut_id]
+        # Create a subplot for each metric
+        fig = make_subplots(
+            rows=len(metrics),
+            cols=1,
+            shared_xaxes=True,
+            vertical_spacing=0.05,
+            subplot_titles=[metric_props[m][0] for m in metrics]
+        )
 
-            if normalize:
-                # Calculate percentages
-                total = sut_data[[m for m in metrics]].sum(axis=1)
-                sut_data = sut_data.copy()
-                for metric in metrics:
-                    sut_data[f"{metric}_pct"] = sut_data[metric] / total * 100
-                plot_metrics = [f"{m}_pct" for m in metrics]
-            else:
-                plot_metrics = metrics
+        for i, metric in enumerate(metrics, 1):
+            name, base_color = metric_props[metric]
+            
+            for sut_id in selected_suts:
+                sut_data = df_sorted[df_sorted["sut_id"] == sut_id]
+                
+                if normalize:
+                    total = sut_data[metrics].sum(axis=1)
+                    y_values = sut_data[metric] / total * 100
+                else:
+                    y_values = sut_data[metric]
 
-            for metric in plot_metrics:
-                base_metric = metric.replace("_pct", "")
-                name, color = metric_props[base_metric]
                 fig.add_trace(
                     go.Scatter(
                         x=sut_data["start_time"],
-                        y=sut_data[metric],
+                        y=y_values,
                         name=f"{sut_id} - {name}",
                         mode="lines+markers",
-                        line=dict(color=OUTCOME_COLORS[color]),
-                        legendgroup=sut_id,
-                    )
+                        line=dict(
+                            color=base_color,
+                            width=2,
+                            dash="solid" if i == 1 else "dot",
+                        ),
+                        opacity=sut_opacities[sut_id],
+                        showlegend=i == 1,  # Only show legend for first subplot
+                    ),
+                    row=i,
+                    col=1
                 )
 
     elif view_type == "area":
-        for sut_id in selected_suts:
-            sut_data = df_sorted[df_sorted["sut_id"] == sut_id]
+        for metric in metrics:
+            name, base_color = metric_props[metric]
+            
+            for sut_id in selected_suts:
+                sut_data = df_sorted[df_sorted["sut_id"] == sut_id]
+                
+                if normalize:
+                    total = sut_data[metrics].sum(axis=1)
+                    y_values = sut_data[metric] / total * 100
+                else:
+                    y_values = sut_data[metric]
 
-            if normalize:
-                # Calculate percentages
-                total = sut_data[[m for m in metrics]].sum(axis=1)
-                sut_data = sut_data.copy()
-                for metric in metrics:
-                    sut_data[f"{metric}_pct"] = sut_data[metric] / total * 100
-                plot_metrics = [f"{m}_pct" for m in metrics]
-            else:
-                plot_metrics = metrics
-
-            for metric in plot_metrics:
-                base_metric = metric.replace("_pct", "")
-                name, color = metric_props[base_metric]
                 fig.add_trace(
                     go.Scatter(
                         x=sut_data["start_time"],
-                        y=sut_data[metric],
+                        y=y_values,
                         name=f"{sut_id} - {name}",
                         mode="none",
+                        fill="tonexty",
                         stackgroup=sut_id,
-                        fillcolor=OUTCOME_COLORS[color],
-                        line=dict(width=0),
-                        legendgroup=sut_id,
+                        line=dict(color=base_color),
+                        opacity=sut_opacities[sut_id],
                     )
                 )
 
-    elif view_type == "heatmap":
-        # Create a matrix of values for the heatmap
-        all_dates = pd.date_range(
-            df_sorted["start_time"].min(), df_sorted["start_time"].max(), freq="D"
-        )
-
-        # Prepare data for heatmap
-        heatmap_data = []
-        y_labels = []
-
-        for sut_id in selected_suts:
-            sut_data = df_sorted[df_sorted["sut_id"] == sut_id].set_index("start_time")
-            for metric in metrics:
-                # Resample to daily frequency and forward fill missing values
-                daily_values = sut_data[metric].resample("D").sum()
-                daily_values = daily_values.reindex(all_dates).fillna(0)
-
-                if normalize:
-                    total = sut_data[metrics].resample("D").sum().sum(axis=1)
-                    daily_values = (daily_values / total * 100).fillna(0)
-
-                heatmap_data.append(daily_values.values)
-                y_labels.append(f"{sut_id} - {metric_props[metric][0]}")
-
-        fig = go.Figure(
-            data=go.Heatmap(
-                z=heatmap_data,
-                x=all_dates,
-                y=y_labels,
-                colorscale="Viridis",
-                colorbar=dict(title="Percentage" if normalize else "Count"),
-            )
-        )
-
     # Update layout
-    title_suffix = " (%)" if normalize else ""
+    title = "Test Results Over Time"
+    if normalize:
+        title += " (Percentage)"
+        y_axis_title = "Percentage"
+    else:
+        y_axis_title = "Count"
+
     fig.update_layout(
-        title=f"Test Results by SUT{title_suffix}",
-        xaxis_title="Time",
-        yaxis_title="Percentage" if normalize else "Count",
-        hovermode="x unified",
+        title=title,
+        xaxis_title="Date",
+        yaxis_title=y_axis_title,
         legend=dict(
-            groupclick="toggleitem",
             orientation="h",
             yanchor="bottom",
             y=1.02,
             xanchor="right",
-            x=1,
+            x=1
         ),
-        **PLOTLY_LAYOUT,
+        height=200 * max(len(metrics), 2),  # Adjust height based on number of metrics
+        margin=dict(t=30, l=10, r=10, b=10),
+        hovermode="x unified",
+        **PLOTLY_LAYOUT
     )
 
     return fig
@@ -1283,6 +1325,11 @@ if "active_tab" not in st.session_state:
 if "viz_type" not in st.session_state:
     st.session_state.viz_type = "line"
 
+# Display database path
+db_path = Path("./.oof/oof-results.db").resolve()
+st.sidebar.markdown("### Database Location")
+st.sidebar.code(str(db_path), language="text")
+
 # Common settings in sidebar
 with st.sidebar:
     st.markdown("### Data Settings")
@@ -1314,10 +1361,11 @@ tab_names = [
     "Flaky Tests",
     "Flexible Analysis",
     "SUT Comparison Analysis",
+    "Test Analysis"
 ]
 
 # Create tabs and handle tab selection
-tabs = st.tabs(tab_names)
+tabs = st.tabs(TABS)
 
 # Handle tab changes
 for i, tab in enumerate(tabs):
@@ -1327,7 +1375,7 @@ for i, tab in enumerate(tabs):
         break
 
 with tabs[st.session_state.active_tab]:
-    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10 = st.tabs(
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11 = st.tabs(
         [
             "Overview",
             "Session View",
@@ -1339,6 +1387,7 @@ with tabs[st.session_state.active_tab]:
             "Flaky Tests",
             "Flexible Analysis",
             "SUT Comparison Analysis",
+            "Test Analysis"
         ]
     )
 
@@ -1511,146 +1560,52 @@ with tabs[st.session_state.active_tab]:
     with tab7:
         st.header("3D Test Result Visualization")
 
-        col1, col2 = st.columns(2)
+        # Load session data
+        daily_stats_df = load_session_data()
+        if daily_stats_df is None or daily_stats_df.empty:
+            st.warning("No session data available.")
+# ERROR: Misplaced return - commented out
+#             return
+
+        col1, col2, col3 = st.columns(3)
         with col1:
             metric = st.selectbox(
-                "Select Metric to Visualize",
-                ["failures", "flaky", "new_failures", "passes"],
-                help="Choose which test metric to visualize across SUTs and time",
+                "Metric",
+                ["failures", "passes", "flaky"],
+                key="surface_metric"
             )
-
-            view_mode = st.selectbox(
-                "View Mode",
-                ["surface", "heatmap", "scatter"],
-                help="Choose how to visualize the data",
-            )
-
         with col2:
             smoothing = st.slider(
-                "Smoothing Factor",
+                "Surface Smoothing",
                 min_value=0.0,
                 max_value=1.0,
                 value=0.0,
                 step=0.1,
-                help="Apply smoothing to the surface (0 = none, 1 = maximum)",
+                key="surface_smoothing"
             )
-
-            color_scale = st.selectbox(
+        with col3:
+            colorscale = st.selectbox(
                 "Color Scale",
-                ["Viridis", "Plasma", "Inferno", "Magma", "RdYlBu"],
-                help="Choose the color scheme for the visualization",
+                ["viridis", "plasma", "inferno", "magma", "RdYlBu"],
+                key="surface_colorscale"
             )
 
-        # Create date range selector
-        col1, col2 = st.columns(2)
-        with col1:
-            start_date = st.date_input(
-                "Start Date",
-                value=pd.to_datetime(df["start_time"]).min().date(),
-                min_value=pd.to_datetime(df["start_time"]).min().date(),
-                max_value=pd.to_datetime(df["start_time"]).max().date(),
-                key="test_stability_start_date",  # Added unique key
-            )
-        with col2:
-            end_date = st.date_input(
-                "End Date",
-                value=pd.to_datetime(df["start_time"]).max().date(),
-                min_value=pd.to_datetime(df["start_time"]).min().date(),
-                max_value=pd.to_datetime(df["start_time"]).max().date(),
-                key="test_stability_end_date",  # Added unique key
-            )
+        surface_fig = create_3d_test_surface(
+            daily_stats_df,
+            metric=metric,
+            smoothing=smoothing,
+            colorscale=colorscale.lower()
+        )
+        if surface_fig:
+            st.plotly_chart(surface_fig, use_container_width=True)
 
-        # Filter data by date range and add date column
-        filtered_df = df.copy()
-        filtered_df["date"] = pd.to_datetime(filtered_df["start_time"]).dt.date
-        mask = (filtered_df["date"] >= start_date) & (filtered_df["date"] <= end_date)
-        filtered_df = filtered_df[mask]
-
-        if not filtered_df.empty:
-            # with st.expander("Debug Information", expanded=False):
-            #     st.write(f"Total rows: {len(filtered_df)}")
-            #     st.write(f"Unique SUTs: {filtered_df['sut_id'].nunique()}")
-            #     st.write(
-            #         f"Date range: {filtered_df['date'].min()} to {filtered_df['date'].max()}"
-            #     )
-            #     st.write(f"Selected metric: {metric}")
-            #     st.write("DataFrame columns:", filtered_df.columns.tolist())
-
-            #     # Show sample of aggregated data
-            #     daily_stats = filtered_df.copy()
-            #     if metric == "failures":
-            #         daily_stats["count"] = (
-            #             daily_stats["num_failures"] + daily_stats["num_errors"]
-            #         )
-            #     elif metric == "passes":
-            #         daily_stats["count"] = daily_stats["num_passes"]
-            #     elif metric == "flaky":
-            #         daily_stats["count"] = (
-            #             daily_stats["num_xpasses"] + daily_stats["num_xfails"]
-            #         )
-            #     else:  # new_failures - this will show total failures for now
-            #         daily_stats["count"] = daily_stats["num_failures"]
-
-            #     daily_stats = (
-            #         daily_stats.groupby(["sut_id", "date"])["count"].sum().reset_index()
-            #     )
-            #     st.write("\nAggregated data sample:")
-            #     st.dataframe(daily_stats.head())
-
-            # Create the visualization based on view mode
-            if view_mode == "surface":
-                fig = create_3d_test_surface(
-                    filtered_df,
-                    metric,
-                    smoothing=smoothing,
-                    colorscale=color_scale.lower(),
-                )
-            elif view_mode == "heatmap":
-                fig = create_test_heatmap(
-                    filtered_df, metric, colorscale=color_scale.lower()
-                )
-            else:  # scatter
-                fig = create_test_scatter(
-                    filtered_df, metric, colorscale=color_scale.lower()
-                )
-
-            if fig:
-                st.plotly_chart(fig, use_container_width=True)
-
-                st.markdown(
-                    """
-                ### How to Interact with the Plot:
-                - **Rotate** (3D only): Click and drag
-                - **Zoom**: Mouse wheel or pinch gesture
-                - **Pan**: Right-click and drag
-                - **Reset View**: Double-click
-
-                ### Understanding the Visualization:
-                - **X-axis**: Different SUTs (Test Systems)
-                - **Y-axis**: Time progression
-                - **Z-axis/Color**: Intensity of the selected metric
-                """
-                )
-
-                # Add statistics table
-                st.header("Summary Statistics")
-                stats_df = (
-                    filtered_df.groupby("sut_id")
-                    .agg(
-                        {
-                            "num_tests": "sum",
-                            "num_passes": lambda x: (
-                                x.sum() / filtered_df["num_tests"].sum() * 100
-                            ),
-                        }
-                    )
-                    .round(2)
-                )
-                stats_df.columns = ["Total Tests", "Pass Rate (%)"]
-                st.dataframe(stats_df)
-        else:
-            st.warning("No data available for the selected date range.")
-
+            st.markdown("""
+            ### How to Interact with the 3D Plot:
+            - **Rotate**: Click and drag
+            - **Zoom**: Mouse wheel or pinch gesture
+            - **Pan**: Right-click and drag
+            - **Reset View**: Double-click
+            """)
     with tab8:
         st.header("Flaky Tests")
         if not test_results_df_sut.empty:
@@ -1917,3 +1872,226 @@ with tabs[st.session_state.active_tab]:
             )
         else:
             st.info("Please select at least one SUT and one metric to display.")
+
+    with tab11:
+        def get_rerun_patterns(db_path, days, min_reruns, sut_filter=None):
+            """Get rerun patterns from the database.
+            
+            Args:
+                db_path: Path to the SQLite database
+                days: Number of days to look back
+                min_reruns: Minimum number of reruns required
+                sut_filter: Optional SUT ID to filter by
+            
+            Returns:
+                dict: Dictionary containing recovery metrics and patterns
+            """
+            try:
+                with sqlite3.connect(db_path) as conn:
+                    # Base query to get test results with reruns
+                    query = """
+                        SELECT 
+                            tr.test_id,
+                            tr.outcome,
+                            tr.rerun_outcomes,
+                            tr.rerun_count,
+                            s.start_time
+                        FROM test_results tr
+                        JOIN sessions s ON tr.session_id = s.session_id
+                        WHERE s.start_time >= datetime('now', ?)
+                    """
+                    params = [f'-{days} days']
+                    
+                    if sut_filter:
+                        query += " AND s.sut_id = ?"
+                        params.append(sut_filter)
+                        
+                    query += " ORDER BY s.start_time"
+                    
+                    df = pd.read_sql_query(query, conn, params=params)
+                    
+                    if df.empty:
+                        return {
+                            "recovery_rate": 0.0,
+                            "avg_attempts": 0.0,
+                            "success_patterns": [],
+                            "failure_patterns": []
+                        }
+                    
+                    # Process the results
+                    success_patterns = defaultdict(int)
+                    failure_patterns = defaultdict(int)
+                    total_attempts = []
+                    
+                    for _, row in df.iterrows():
+                        test_id = row['test_id']
+                        outcome = row['outcome']
+                        rerun_outcomes = json.loads(row['rerun_outcomes']) if row['rerun_outcomes'] else []
+                        rerun_count = row['rerun_count']
+                        
+                        if rerun_count >= min_reruns:
+                            full_sequence = [outcome] + rerun_outcomes
+                            sequence = tuple(full_sequence)
+                            if outcome == 'PASSED':
+                                success_patterns[sequence] += 1
+                            else:
+                                failure_patterns[sequence] += 1
+                            
+                            total_attempts.append(rerun_count)
+                    
+                    successful_reruns = len([x for x in df['outcome'] if x == 'PASSED'])
+                    total_reruns = len(df)
+                    
+                    return {
+                        "success_patterns": sorted(
+                            [(list(k), v) for k, v in success_patterns.items()],
+                            key=lambda x: x[1],
+                            reverse=True
+                        )[:5],
+                        "failure_patterns": sorted(
+                            [(list(k), v) for k, v in failure_patterns.items()],
+                            key=lambda x: x[1],
+                            reverse=True
+                        )[:5],
+                        "recovery_rate": (successful_reruns / total_reruns * 100) if total_reruns > 0 else 0.0,
+                        "avg_attempts": sum(total_attempts) / len(total_attempts) if total_attempts else 0.0
+                    }
+                    
+            except Exception as e:
+                st.error(f"Failed to get rerun patterns: {str(e)}")
+                return {
+                    "recovery_rate": 0.0,
+                    "avg_attempts": 0.0,
+                    "success_patterns": [],
+                    "failure_patterns": []
+                }
+
+        def display_test_analysis():
+            """Display test analysis section."""
+            # Add filters
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                days = st.number_input("Analysis Period (days)", min_value=1, value=30)
+            with col2:
+                min_runs = st.number_input("Minimum Runs", min_value=1, value=5)
+            with col3:
+                sut_id = st.selectbox(
+                    "Filter by SUT",
+                    options=["All"] + list(get_unique_sut_ids(get_db_path())),
+                    index=0
+                )
+
+            sut_filter = None if sut_id == "All" else sut_id
+
+            # Create tabs for different analyses
+            tab1, tab2, tab3 = st.tabs(["Rerun Analysis", "XFail Trends", "Flaky Tests"])
+
+            with tab1:
+                st.subheader("Rerun Pattern Analysis")
+                min_reruns = st.number_input("Minimum Reruns", min_value=1, value=3)
+                patterns = get_rerun_patterns(get_db_path(), days, min_reruns, sut_filter)
+
+                # Display recovery metrics
+                col1, col2 = st.columns(2)
+                col1.metric("Recovery Rate", f"{patterns['recovery_rate']:.1f}%")
+                col2.metric("Average Attempts", f"{patterns['avg_attempts']:.1f}")
+
+                # Show success patterns
+                if patterns["success_patterns"]:
+                    st.subheader("Successful Recovery Patterns")
+                    for sequence, count in patterns["success_patterns"]:
+                        st.write(f"• {' → '.join(sequence)} ({count} occurrences)")
+
+                # Show failure patterns
+                if patterns["failure_patterns"]:
+                    st.subheader("Failed Recovery Patterns")
+                    for sequence, count in patterns["failure_patterns"]:
+                        st.write(f"• {' → '.join(sequence)} ({count} occurrences)")
+
+            with tab2:
+                st.subheader("XFail/XPass Trends")
+                granularity = st.selectbox(
+                    "Time Grouping",
+                    options=["hour", "day", "week"],
+                    index=1
+                )
+
+                trends = get_xfail_trends(get_db_path(), days, granularity, sut_filter)
+                if trends:
+                    # Create DataFrame for plotting
+                    df = pd.DataFrame(trends)
+                    df['timestamp'] = pd.to_datetime(df['timestamp'])
+
+                    # Plot trends
+                    fig = go.Figure()
+                    fig.add_trace(go.Scatter(
+                        x=df['timestamp'],
+                        y=df['xfail_rate'],
+                        name='XFail Rate',
+                        line=dict(color='orange')
+                    ))
+                    fig.add_trace(go.Scatter(
+                        x=df['timestamp'],
+                        y=df['xpass_rate'],
+                        name='XPass Rate',
+                        line=dict(color='green')
+                    ))
+
+                    fig.update_layout(
+                        title='XFail/XPass Trends Over Time',
+                        xaxis_title='Time',
+                        yaxis_title='Rate (%)',
+                        height=500
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
+
+                    # Show current stats
+                    if len(df) > 0:
+                        latest = df.iloc[-1]
+                        col1, col2 = st.columns(2)
+                        col1.metric("Current XFail Rate", f"{latest['xfail_rate']:.1f}%")
+                        col2.metric("Current XPass Rate", f"{latest['xpass_rate']:.1f}%")
+
+            with tab3:
+                st.subheader("Flaky Test Detection")
+                threshold = st.slider(
+                    "Flakiness Threshold",
+                    min_value=0.0,
+                    max_value=1.0,
+                    value=0.1,
+                    step=0.05,
+                    help="Minimum ratio of outcome changes to total runs"
+                )
+
+                flaky_tests = get_flaky_tests(
+                    get_db_path(), days, min_runs, threshold, sut_filter
+                )
+
+                if flaky_tests:
+                    for test in flaky_tests:
+                        with st.expander(
+                            f"{test['test_id']} (Score: {test['flakiness_score']:.2f})"
+                        ):
+                            # Show test details
+                            st.write("Run Count:", test['run_count'])
+                            st.write("Unique Outcomes:", ", ".join(test['unique_outcomes']))
+
+                            # Create pie chart of outcomes
+                            fig = go.Figure(data=[go.Pie(
+                                labels=list(test['outcome_counts'].keys()),
+                                values=list(test['outcome_counts'].values())
+                            )])
+                            fig.update_layout(
+                                title='Outcome Distribution',
+                                height=300
+                            )
+                            st.plotly_chart(fig, use_container_width=True)
+
+                            # Show common transitions
+                            st.write("Common Outcome Transitions:")
+                            for (from_outcome, to_outcome), count in test['common_transitions']:
+                                st.write(f"• {from_outcome} → {to_outcome} ({count} times)")
+                else:
+                    st.info("No flaky tests found with the current criteria")
+
+        display_test_analysis()

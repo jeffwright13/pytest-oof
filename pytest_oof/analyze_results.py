@@ -51,15 +51,19 @@ def list_recent_sessions(db_path: Path, limit: int = 10) -> List[Dict[str, Any]]
         )
         columns = [desc[0] for desc in c.description]
         sessions = [dict(zip(columns, row)) for row in c.fetchall()]
-        
+
         # Format the output for better readability
         for session in sessions:
             session["id_short"] = get_short_session_id(session["id"])
             if session["start_time"]:
-                session["start_time"] = datetime.fromisoformat(session["start_time"]).strftime("%Y-%m-%d %H:%M:%S")
+                session["start_time"] = datetime.fromisoformat(
+                    session["start_time"]
+                ).strftime("%Y-%m-%d %H:%M:%S")
             if session["stop_time"]:
-                session["stop_time"] = datetime.fromisoformat(session["stop_time"]).strftime("%Y-%m-%d %H:%M:%S")
-        
+                session["stop_time"] = datetime.fromisoformat(
+                    session["stop_time"]
+                ).strftime("%Y-%m-%d %H:%M:%S")
+
         return sessions
 
 
@@ -517,7 +521,7 @@ def analyze_results(
 @click.option(
     "--db-path",
     type=click.Path(exists=True, dir_okay=False, path_type=Path),
-    default=Path("oof/oof-results.db"),
+    default=Path("./.oof/oof-results.db"),
     help="Path to the SQLite database file",
 )
 @click.option("--delete-all", is_flag=True, help="Delete all test results")
@@ -538,7 +542,9 @@ def analyze_results(
     default=10,
     help="Number of sessions to list (default: 10)",
 )
-@click.option("--list-suts", is_flag=True, help="List all unique SUT IDs in the database")
+@click.option(
+    "--list-suts", is_flag=True, help="List all unique SUT IDs in the database"
+)
 @click.option("--id", help="Show details for a specific session ID")
 @click.option(
     "--export",
@@ -657,15 +663,17 @@ def main(
 
         click.echo("\nRecent Test Sessions:")
         click.echo("=" * 80)
-        
+
         for session in sessions:
             # Header with session ID and timestamp
             session_id = session["id"]
             short_id = get_short_session_id(session_id)
-            start_time = datetime.fromisoformat(session["start_time"]).strftime("%Y-%m-%d %H:%M:%S")
-            
+            start_time = datetime.fromisoformat(session["start_time"]).strftime(
+                "%Y-%m-%d %H:%M:%S"
+            )
+
             click.echo(f"\nSession: {short_id} ({start_time})")
-            
+
             # SUT information
             sut_info = []
             if session["sut_id"]:
@@ -676,10 +684,10 @@ def main(
                 sut_info.append(f"version: {session['sut_version']}")
             if session["sut_env"]:
                 sut_info.append(f"env: {session['sut_env']}")
-            
+
             if sut_info:
                 click.echo(f"SUT: {', '.join(sut_info)}")
-            
+
             # Test results summary
             total = session["num_tests"]
             passes = session["num_passes"]
@@ -688,18 +696,18 @@ def main(
             skips = session["num_skips"]
             xfails = session["num_xfails"]
             xpasses = session["num_xpasses"]
-            
+
             click.echo("Results:")
             click.echo(f"  Total Tests: {total}")
             click.echo(f"  Passed: {passes}, Failed: {failures}, Error: {errors}")
             if skips or xfails or xpasses:
                 click.echo(f"  Skipped: {skips}, XFailed: {xfails}, XPassed: {xpasses}")
-            
+
             # Duration if available
             if session["duration"]:
                 duration = f"{session['duration']:.1f}s"
                 click.echo(f"Duration: {duration}")
-            
+
             click.echo("-" * 80)
         return
 
@@ -707,7 +715,8 @@ def main(
     if list_suts:
         with db_connection(db_path) as conn:
             c = conn.cursor()
-            c.execute("""
+            c.execute(
+                """
                 SELECT 
                     sut_id,
                     sut_type,
@@ -721,31 +730,32 @@ def main(
                 WHERE sut_id IS NOT NULL
                 GROUP BY sut_id, sut_type, sut_version, sut_env
                 ORDER BY sut_id, sut_type, last_seen DESC
-            """)
+            """
+            )
             suts = c.fetchall()
-            
+
             if not suts:
                 click.echo("\nNo SUTs found in database")
                 return
-                
+
             click.echo("\nSystem Under Test (SUT) Summary:")
             click.echo("=" * 80)
-            
+
             current_sut = None
             for row in suts:
                 sut_id, sut_type, version, env, sessions, tests, first, last = row
-                
+
                 if sut_id != current_sut:
                     if current_sut:
                         click.echo("-" * 80)
                     current_sut = sut_id
                     click.echo(f"\nSUT: {sut_id}")
-                
+
                 env_str = f" ({env})" if env else ""
                 version_str = f" v{version}" if version else ""
                 first_date = datetime.fromisoformat(first).strftime("%Y-%m-%d")
                 last_date = datetime.fromisoformat(last).strftime("%Y-%m-%d")
-                
+
                 click.echo(
                     f"  {sut_type or 'unknown type'}{version_str}{env_str}:"
                     f" {sessions} sessions,"
@@ -753,6 +763,7 @@ def main(
                     f" {first_date} to {last_date}"
                 )
         return
+
 
 if __name__ == "__main__":
     main()
