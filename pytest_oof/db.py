@@ -15,8 +15,6 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from pytest_oof.models import (
     Base,
-    SQLTestResult,
-    SQLTestSession,
     TestResult,
     TestSession,
     TestSessionStats
@@ -34,7 +32,7 @@ class DBClient:
         """Add test session to database."""
         try:
             if isinstance(session_data, TestSession):
-                db_session = SQLTestSession(
+                db_session = TestSession(
                     session_id=session_data.session_id,
                     sut_id=session_data.sut_id,
                     start_time=session_data.start_time,
@@ -51,7 +49,7 @@ class DBClient:
                     rerun=session_data.rerun
                 )
             else:
-                db_session = SQLTestSession(
+                db_session = TestSession(
                     session_id=session_data['session_id'],
                     sut_id=session_data['sut_id'],
                     start_time=session_data.get('start_time'),
@@ -87,7 +85,7 @@ class DBClient:
             result_dict = result.to_dict()
             result_dict['session_id'] = session_id
 
-            db_result = SQLTestResult(
+            db_result = TestResult(
                 session_id=session_id,
                 test_id=result.test_id,
                 outcome=result.outcome,
@@ -107,14 +105,14 @@ class DBClient:
             raise e
 
     def get_test_results(self, session_id=None):
-        query = self.session.query(SQLTestResult)
+        query = self.session.query(TestResult)
         if session_id:
-            query = query.filter(SQLTestResult.session_id == session_id)
+            query = query.filter(TestResult.session_id == session_id)
         return query.all()
 
     def update_test_result(self, test_id, update_data):
-        result = self.session.query(SQLTestResult).filter(
-            SQLTestResult.test_id == test_id
+        result = self.session.query(TestResult).filter(
+            TestResult.test_id == test_id
         ).first()
         if result:
             for key, value in update_data.items():
@@ -124,8 +122,8 @@ class DBClient:
         return False
 
     def delete_test_result(self, test_id):
-        result = self.session.query(SQLTestResult).filter(
-            SQLTestResult.test_id == test_id
+        result = self.session.query(TestResult).filter(
+            TestResult.test_id == test_id
         ).first()
         if result:
             self.session.delete(result)
@@ -141,8 +139,8 @@ class DBClient:
             stats: TestSessionStats object containing the statistics
         """
         try:
-            session = self.session.query(SQLTestSession).filter(
-                SQLTestSession.session_id == session_id
+            session = self.session.query(TestSession).filter(
+                TestSession.session_id == session_id
             ).first()
             
             if session:
@@ -189,6 +187,9 @@ def init_sqlite_db(db_path: Path) -> None:
             CREATE TABLE IF NOT EXISTS sessions (
                 session_id TEXT PRIMARY KEY,
                 sut_id TEXT NOT NULL,
+                sut_type TEXT,
+                sut_version TEXT,
+                sut_env TEXT,
                 start_time TIMESTAMP NOT NULL,
                 end_time TIMESTAMP,
                 duration INTEGER,
@@ -210,15 +211,23 @@ def init_sqlite_db(db_path: Path) -> None:
             """
             CREATE TABLE IF NOT EXISTS test_results (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                session_id TEXT NOT NULL,
+                session_id TEXT,
                 test_id TEXT NOT NULL,
-                outcome TEXT NOT NULL,
-                duration INTEGER,
-                error_data JSON,
-                warnings JSON,
-                rerun_count INTEGER DEFAULT 0,
-                environment JSON,
-                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                outcome TEXT,
+                start_time TIMESTAMP,
+                duration REAL,
+                error_message TEXT,
+                error_type TEXT,
+                error_traceback TEXT,
+                has_warning BOOLEAN,
+                longreprtext TEXT,
+                caplog TEXT,
+                capstdout TEXT,
+                capstderr TEXT,
+                rerun_count INTEGER,
+                environment TEXT,
+                warnings TEXT,
+                is_rerun BOOLEAN,
                 FOREIGN KEY (session_id) REFERENCES sessions(session_id)
             )
             """
@@ -233,34 +242,29 @@ def add_session(
     sut_type: str = "",
     sut_version: str = "",
     sut_env: str = "",
-) -> int:
+) -> str:
     """Add a new test session to the database and return its ID."""
     with db_connection(db_path) as conn:
         c = conn.cursor()
         c.execute(
             """
-            INSERT INTO test_sessions (
-                id,
+            INSERT INTO sessions (
+                session_id,
                 sut_id,
                 sut_type,
                 sut_version,
                 sut_env,
                 start_time,
-                num_tests,
-                num_tests_without_rerun,
-                num_tests_total,
-                num_passes,
-                num_failures,
-                num_errors,
-                num_skips,
-                num_xfails,
-                num_xpasses,
-                num_reruns,
-                num_rerun_groups,
-                num_warnings,
-                num_warnings_unique,
-                num_deselected
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                total_tests,
+                passed_tests,
+                failed_tests,
+                skipped_tests,
+                xfailed_tests,
+                xpassed_tests,
+                warnings,
+                errors,
+                rerun
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 session_id,
@@ -269,20 +273,15 @@ def add_session(
                 sut_version,
                 sut_env,
                 start_time,
-                0,  # num_tests
-                0,  # num_tests_without_rerun
-                0,  # num_tests_total
-                0,  # num_passes
-                0,  # num_failures
-                0,  # num_errors
-                0,  # num_skips
-                0,  # num_xfails
-                0,  # num_xpasses
-                0,  # num_reruns
-                0,  # num_rerun_groups
-                0,  # num_warnings
-                0,  # num_warnings_unique
-                0,  # num_deselected
+                0,  # total_tests
+                0,  # passed_tests
+                0,  # failed_tests
+                0,  # skipped_tests
+                0,  # xfailed_tests
+                0,  # xpassed_tests
+                0,  # warnings
+                0,  # errors
+                0,  # rerun
             ),
         )
         conn.commit()
@@ -292,43 +291,60 @@ def add_session(
 def add_test_result(
     db_path: Path,
     session_id: str,
-    test_result: Union[Dict[str, Any], TestResult],
+    test_id: str,
+    outcome: str,
+    duration: float = 0.0,
+    error_data: Optional[Dict[str, Any]] = None,
+    environment: Optional[Dict[str, Any]] = None,
+    warnings: Optional[List[str]] = None,
+    rerun_count: int = 0,
+    timestamp: Optional[datetime] = None,
 ) -> None:
     """Add a test result to the database."""
     with db_connection(db_path) as conn:
-        cursor = conn.cursor()
+        c = conn.cursor()
 
-        # Convert TestResult to dict if needed
-        if isinstance(test_result, TestResult):
-            test_result = test_result.to_dict()
+        result = TestResult(
+            test_id=test_id,
+            outcome=outcome,
+            duration=duration,
+            error_data=error_data,
+            environment=environment,
+            warnings=warnings,
+            rerun_count=rerun_count,
+            session_id=session_id,
+        )
 
-        cursor.execute(
+        if timestamp:
+            result.timestamp = timestamp
+
+        c.execute(
             """
             INSERT INTO test_results (
-                session_id, nodeid, outcome, start_time, duration,
-                error_message, error_type, error_traceback,
-                has_warning, longreprtext, caplog, capstdout, capstderr,
-                rerun_count
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                session_id,
+                test_id,
+                outcome,
+                duration,
+                error_data,
+                warnings,
+                environment,
+                rerun_count,
+                timestamp
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 session_id,
-                test_result["nodeid"],
-                test_result["outcome"],
-                test_result["start_time"],
-                test_result["duration"],
-                test_result["error_message"],
-                test_result["error_type"],
-                test_result["error_traceback"],
-                test_result["has_warning"],
-                test_result["longreprtext"],
-                test_result["caplog"],
-                test_result["capstdout"],
-                test_result["capstderr"],
-                test_result["rerun_count"],
+                test_id,
+                outcome,
+                duration,
+                json.dumps(error_data) if error_data else None,
+                json.dumps(warnings) if warnings else "[]",
+                json.dumps(environment) if environment else "{}",
+                rerun_count,
+                timestamp or datetime.now(),
             ),
         )
-        conn.commit()  # Make sure changes are committed
+        conn.commit()
 
 
 def add_rerun_group(
@@ -366,38 +382,28 @@ def update_session_stats(
 
         cursor.execute(
             """
-            UPDATE test_sessions SET
-                num_tests = ?,
-                num_tests_without_rerun = ?,
-                num_tests_total = ?,
-                num_passes = ?,
-                num_failures = ?,
-                num_errors = ?,
-                num_skips = ?,
-                num_xfails = ?,
-                num_xpasses = ?,
-                num_reruns = ?,
-                num_rerun_groups = ?,
-                num_warnings = ?,
-                num_warnings_unique = ?,
-                num_deselected = ?
-            WHERE id = ?
+            UPDATE sessions SET
+                total_tests = ?,
+                passed_tests = ?,
+                failed_tests = ?,
+                skipped_tests = ?,
+                xfailed_tests = ?,
+                xpassed_tests = ?,
+                warnings = ?,
+                errors = ?,
+                rerun = ?
+            WHERE session_id = ?
             """,
             (
-                stats["num_tests"],
-                stats["num_tests_without_rerun"],
-                stats["num_tests_total"],
-                stats["num_passes"],
-                stats["num_failures"],
-                stats["num_errors"],
-                stats["num_skips"],
-                stats["num_xfails"],
-                stats["num_xpasses"],
-                stats["num_reruns"],
-                stats["num_rerun_groups"],
-                stats["num_warnings"],
-                stats["num_warnings_unique"],
-                stats["num_deselected"],
+                stats["total_tests"],
+                stats["passed_tests"],
+                stats["failed_tests"],
+                stats["skipped_tests"],
+                stats["xfailed_tests"],
+                stats["xpassed_tests"],
+                stats["warnings"],
+                stats["errors"],
+                stats["rerun"],
                 session_id,
             ),
         )
@@ -407,15 +413,17 @@ def update_session_stats(
         cursor.execute(
             """
             SELECT
-                num_tests,
-                num_tests_without_rerun,
-                num_tests_total,
-                num_passes,
-                num_failures,
-                num_reruns,
-                num_rerun_groups
-            FROM test_sessions
-            WHERE id = ?
+                total_tests,
+                passed_tests,
+                failed_tests,
+                skipped_tests,
+                xfailed_tests,
+                xpassed_tests,
+                warnings,
+                errors,
+                rerun
+            FROM sessions
+            WHERE session_id = ?
             """,
             (session_id,),
         )
@@ -520,18 +528,60 @@ def get_test_results(
                 SELECT
                     test_id,
                     outcome,
-                    timestamp,
+                    start_time,
                     duration,
-                    error_data,
-                    warnings,
+                    error_message,
+                    error_type,
+                    error_traceback,
+                    has_warning,
+                    longreprtext,
+                    caplog,
+                    capstdout,
+                    capstderr,
                     rerun_count,
-                    environment
+                    environment,
+                    warnings,
+                    is_rerun
                 FROM test_results
                 WHERE session_id = ?
-                ORDER BY timestamp
+                ORDER BY start_time
             """
             c.execute(test_results_query, [session[0]])
             test_results = c.fetchall()
+
+            # Convert to dictionary with a more organized structure
+            session_dict = {
+                "session": {
+                    "id": session[0],  # session_id
+                    "timing": {
+                        "start": session[2],  # start_time
+                        "stop": session[3],   # end_time
+                        "duration": session[4],  # duration
+                    },
+                    "sut": {
+                        "id": session[1],  # sut_id
+                        "type": session[5],  # sut_type
+                        "version": session[6],  # sut_version
+                        "environment": session[7],  # sut_env
+                    },
+                    "statistics": {
+                        "tests": {
+                            "total": session[8],  # total_tests
+                        },
+                        "outcomes": {
+                            "passed": session[9],  # passed_tests
+                            "failed": session[10],  # failed_tests
+                            "skipped": session[11],  # skipped_tests
+                            "xfailed": session[12],  # xfailed_tests
+                            "xpassed": session[13],  # xpassed_tests
+                        },
+                        "warnings": {"total": session[14]},  # warnings
+                        "errors": {"total": session[15]},  # errors
+                        "reruns": {"total": session[16]},  # rerun
+                    },
+                },
+                "test_results": [],
+            }
 
             # Organize test results by outcome for easier analysis
             results_by_outcome = {}
@@ -542,27 +592,45 @@ def get_test_results(
 
                 result = {
                     "id": tr[0],  # test_id
-                    "timing": {"start": tr[2], "duration": tr[3]},
+                    "timing": {"start": tr[2], "duration": tr[3]},  # start_time, duration
                 }
 
-                # Only include error info if present
-                error_data = json.loads(tr[4]) if tr[4] else None
-                if error_data:
-                    result["error"] = error_data
+                # Add error info if present
+                if tr[4] or tr[5] or tr[6]:  # error_message, error_type, error_traceback
+                    result["error"] = {
+                        "message": tr[4],
+                        "type": tr[5],
+                        "traceback": tr[6]
+                    }
 
-                # Include warnings if present
-                warnings = json.loads(tr[5]) if tr[5] else None
-                if warnings:
-                    result["warnings"] = warnings
+                # Add longreprtext if present
+                if tr[8]:  # longreprtext
+                    result["longrepr"] = tr[8]
 
-                # Include environment if present
-                env = json.loads(tr[7]) if tr[7] else None
-                if env:
-                    result["environment"] = env
+                # Add capture output if present
+                capture = {}
+                if tr[9]:  # caplog
+                    capture["log"] = tr[9]
+                if tr[10]:  # capstdout
+                    capture["out"] = tr[10]
+                if tr[11]:  # capstderr
+                    capture["err"] = tr[11]
+                if capture:
+                    result["capture"] = capture
 
-                # Include rerun count if present
-                if tr[6]:  # rerun_count
-                    result["rerun_count"] = tr[6]
+                # Add rerun info if present
+                if tr[12]:  # rerun_count
+                    result["rerun_count"] = tr[12]
+                if tr[15]:  # is_rerun
+                    result["is_rerun"] = tr[15]
+
+                # Add environment if present
+                if tr[13]:  # environment
+                    result["environment"] = json.loads(tr[13])
+
+                # Add warnings if present
+                if tr[14]:  # warnings
+                    result["warnings"] = json.loads(tr[14])
 
                 results_by_outcome[outcome].append(result)
 
@@ -592,17 +660,28 @@ def export_results(
 
         # Build the base query for test sessions
         query = """
-            SELECT DISTINCT s.*
+            SELECT DISTINCT
+                s.session_id,
+                s.sut_id,
+                s.start_time,
+                s.end_time,
+                s.duration,
+                s.total_tests,
+                s.passed_tests,
+                s.failed_tests,
+                s.skipped_tests,
+                s.xfailed_tests,
+                s.xpassed_tests,
+                s.warnings,
+                s.errors,
+                s.rerun
             FROM sessions s
+            INNER JOIN test_results r ON s.session_id = r.session_id
+            WHERE 1=1
         """
 
-        # Add join with test_results if filtering by outcome or test_id
-        if outcome is not None or test_id is not None:
-            query += " LEFT JOIN test_results r ON s.session_id = r.session_id"
-        query += " WHERE 1=1"
-        params = []
-
         # Add filters
+        params = []
         if session_id is not None:
             query += " AND s.session_id = ?"
             params.append(session_id)
@@ -642,15 +721,23 @@ def export_results(
                 SELECT
                     test_id,
                     outcome,
-                    timestamp,
+                    start_time,
                     duration,
-                    error_data,
-                    warnings,
+                    error_message,
+                    error_type,
+                    error_traceback,
+                    has_warning,
+                    longreprtext,
+                    caplog,
+                    capstdout,
+                    capstderr,
                     rerun_count,
-                    environment
+                    environment,
+                    warnings,
+                    is_rerun
                 FROM test_results
                 WHERE session_id = ?
-                ORDER BY timestamp
+                ORDER BY start_time
             """
             c.execute(test_results_query, [session[0]])
             test_results = c.fetchall()
@@ -702,27 +789,45 @@ def export_results(
 
                 result = {
                     "id": tr[0],  # test_id
-                    "timing": {"start": tr[2], "duration": tr[3]},
+                    "timing": {"start": tr[2], "duration": tr[3]},  # start_time, duration
                 }
 
-                # Only include error info if present
-                error_data = json.loads(tr[4]) if tr[4] else None
-                if error_data:
-                    result["error"] = error_data
+                # Add error info if present
+                if tr[4] or tr[5] or tr[6]:  # error_message, error_type, error_traceback
+                    result["error"] = {
+                        "message": tr[4],
+                        "type": tr[5],
+                        "traceback": tr[6]
+                    }
 
-                # Include warnings if present
-                warnings = json.loads(tr[5]) if tr[5] else None
-                if warnings:
-                    result["warnings"] = warnings
+                # Add longreprtext if present
+                if tr[8]:  # longreprtext
+                    result["longrepr"] = tr[8]
 
-                # Include environment if present
-                env = json.loads(tr[7]) if tr[7] else None
-                if env:
-                    result["environment"] = env
+                # Add capture output if present
+                capture = {}
+                if tr[9]:  # caplog
+                    capture["log"] = tr[9]
+                if tr[10]:  # capstdout
+                    capture["out"] = tr[10]
+                if tr[11]:  # capstderr
+                    capture["err"] = tr[11]
+                if capture:
+                    result["capture"] = capture
 
-                # Include rerun count if present
-                if tr[6]:  # rerun_count
-                    result["rerun_count"] = tr[6]
+                # Add rerun info if present
+                if tr[12]:  # rerun_count
+                    result["rerun_count"] = tr[12]
+                if tr[15]:  # is_rerun
+                    result["is_rerun"] = tr[15]
+
+                # Add environment if present
+                if tr[13]:  # environment
+                    result["environment"] = json.loads(tr[13])
+
+                # Add warnings if present
+                if tr[14]:  # warnings
+                    result["warnings"] = json.loads(tr[14])
 
                 results_by_outcome[outcome].append(result)
 
@@ -732,10 +837,16 @@ def export_results(
         if output_file:
             with open(output_file, "w") as f:
                 if output_format == "jsonl":
-                    for result in results:
-                        f.write(json.dumps(result, default=str) + "\n")
+                    if not results:
+                        f.write("")  # Write empty file for no results
+                    else:
+                        for result in results:
+                            f.write(json.dumps(result, default=str) + "\n")
                 else:  # json
-                    json.dump(results, f, indent=2, default=str)
+                    if not results:
+                        f.write("[]")  # Write empty array for no results
+                    else:
+                        json.dump(results, f, indent=2, default=str)
 
         return results
 
@@ -848,3 +959,204 @@ def get_db_id_from_session_id(db_path: Path, session_id: str) -> Optional[int]:
         )
         row = c.fetchone()
         return row[0] if row else None
+
+
+def get_recent_failures(
+    db_path: Path,
+    hours: int = 24,
+    min_failures: int = 1,
+    sut_id: Optional[str] = None,
+) -> Dict[str, Dict[str, Any]]:
+    """Get tests that have failed recently.
+    
+    Args:
+        db_path: Path to the SQLite database file
+        hours: Look back period in hours
+        min_failures: Minimum number of failures to include
+        sut_id: Optional SUT ID to filter by
+        
+    Returns:
+        Dict mapping test_id to failure details
+    """
+    since = datetime.now() - timedelta(hours=hours)
+    results = get_test_results(
+        db_path=db_path,
+        start_time=since,
+        outcome='failed'
+    )
+    
+    failed_tests = {}
+    for result in results:
+        test_id = result['test_id']
+        if test_id not in failed_tests:
+            failed_tests[test_id] = {
+                'last_failure': result['timestamp'],
+                'failure_count': 1,
+                'error_messages': [result['error_data']['message']] if result['error_data'] else [],
+                'environments': [result['environment']] if result['environment'] else []
+            }
+        else:
+            failed_tests[test_id]['failure_count'] += 1
+            if result['error_data']:
+                failed_tests[test_id]['error_messages'].append(result['error_data']['message'])
+            if result['environment']:
+                failed_tests[test_id]['environments'].append(result['environment'])
+            if result['timestamp'] > failed_tests[test_id]['last_failure']:
+                failed_tests[test_id]['last_failure'] = result['timestamp']
+    
+    return {
+        test_id: data 
+        for test_id, data in failed_tests.items() 
+        if data['failure_count'] >= min_failures
+    }
+
+
+def get_duration_trends(
+    db_path: Path,
+    days: int = 7,
+    min_runs: int = 5,
+    sut_id: Optional[str] = None,
+) -> Dict[str, Dict[str, Any]]:
+    """Analyze test execution time trends.
+    
+    Args:
+        db_path: Path to the SQLite database file
+        days: Analysis period in days
+        min_runs: Minimum runs to include in analysis
+        sut_id: Optional SUT ID to filter by
+        
+    Returns:
+        Dict mapping test_id to duration statistics
+    """
+    since = datetime.now() - timedelta(days=days)
+    results = get_test_results(
+        db_path=db_path,
+        start_time=since
+    )
+    
+    duration_data = {}
+    for result in results:
+        if result['outcome'] not in ('passed', 'failed'):
+            continue
+            
+        test_id = result['test_id']
+        if test_id not in duration_data:
+            duration_data[test_id] = {
+                'durations': [(result['duration'], result['timestamp'])],
+                'run_count': 1
+            }
+        else:
+            duration_data[test_id]['durations'].append((result['duration'], result['timestamp']))
+            duration_data[test_id]['run_count'] += 1
+    
+    trends = {}
+    for test_id, data in duration_data.items():
+        if data['run_count'] < min_runs:
+            continue
+            
+        durations = [d[0] for d in data['durations']]
+        timestamps = [d[1] for d in data['durations']]
+        
+        # Calculate trend using linear regression
+        x = [(t - min(timestamps)).total_seconds() / 86400 for t in timestamps]  # Convert to days
+        y = durations
+        n = len(x)
+        if n < 2:
+            continue
+            
+        slope = (n * sum(x[i] * y[i] for i in range(n)) - sum(x) * sum(y)) / \
+               (n * sum(x[i] * x[i] for i in range(n)) - sum(x) * sum(x))
+        
+        trends[test_id] = {
+            'avg_duration': sum(durations) / len(durations),
+            'min_duration': min(durations),
+            'max_duration': max(durations),
+            'trend': slope,  # seconds/day
+            'run_count': data['run_count']
+        }
+        
+    return trends
+
+
+def get_stability_metrics(
+    db_path: Path,
+    days: int = 30,
+    sut_id: Optional[str] = None,
+    granularity: str = 'day'
+) -> Dict[str, List[Dict[str, Any]]]:
+    """Generate test stability metrics over time.
+    
+    Args:
+        db_path: Path to the SQLite database file
+        days: Analysis period in days
+        sut_id: Optional SUT ID to filter by
+        granularity: Time grouping ('hour', 'day', 'week')
+        
+    Returns:
+        Dict with stability metrics over time
+    """
+    since = datetime.now() - timedelta(days=days)
+    results = get_test_results(
+        db_path=db_path,
+        start_time=since
+    )
+    
+    # Group results by time period
+    periods = {}
+    for result in results:
+        timestamp = result['timestamp']
+        if granularity == 'hour':
+            period = timestamp.replace(minute=0, second=0, microsecond=0)
+        elif granularity == 'day':
+            period = timestamp.replace(hour=0, minute=0, second=0, microsecond=0)
+        else:  # week
+            period = timestamp.replace(hour=0, minute=0, second=0, microsecond=0)
+            period -= timedelta(days=period.weekday())
+            
+        if period not in periods:
+            periods[period] = []
+        periods[period].append(result)
+    
+    stability_report = {
+        'stability_score': [],
+        'failure_rate': [],
+        'flaky_tests': []
+    }
+    
+    for period, period_results in sorted(periods.items()):
+        total_tests = len(period_results)
+        if total_tests == 0:
+            continue
+            
+        failed = len([r for r in period_results if r['outcome'] == 'failed'])
+        
+        # Identify flaky tests (tests that both passed and failed in this period)
+        test_outcomes = {}
+        for r in period_results:
+            if r['test_id'] not in test_outcomes:
+                test_outcomes[r['test_id']] = set()
+            test_outcomes[r['test_id']].add(r['outcome'])
+        
+        flaky = {
+            test_id 
+            for test_id, outcomes in test_outcomes.items() 
+            if 'passed' in outcomes and 'failed' in outcomes
+        }
+        
+        stability_report['stability_score'].append({
+            'period': period,
+            'score': 1.0 - (failed / total_tests) - (len(flaky) / total_tests * 0.5)
+        })
+        
+        stability_report['failure_rate'].append({
+            'period': period,
+            'rate': failed / total_tests
+        })
+        
+        stability_report['flaky_tests'].append({
+            'period': period,
+            'count': len(flaky),
+            'tests': list(flaky)
+        })
+        
+    return stability_report

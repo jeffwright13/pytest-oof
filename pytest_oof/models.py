@@ -3,7 +3,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Union
 
-from sqlalchemy import Column, Integer, String, JSON, DateTime, ForeignKey
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Float, JSON
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
 
@@ -17,6 +17,9 @@ class SQLTestSession(Base):
 
     session_id = Column(String, primary_key=True)
     sut_id = Column(String, nullable=False)
+    sut_type = Column(String, nullable=True)
+    sut_version = Column(String, nullable=True)
+    sut_env = Column(String, nullable=True)
     start_time = Column(DateTime, nullable=False)
     end_time = Column(DateTime, nullable=True)
     duration = Column(Integer, nullable=True)  # Store duration in seconds
@@ -31,70 +34,58 @@ class SQLTestSession(Base):
     rerun = Column(Integer, default=0)
 
 
-class SQLTestResult(Base):
-    """SQLAlchemy model for test results."""
-    __tablename__ = 'test_results'
-    
-    id = Column(Integer, primary_key=True)
-    session_id = Column(String, ForeignKey('sessions.session_id'))  # Reference to test session
-    test_id = Column(String)
-    outcome = Column(String)
-    duration = Column(Integer)  # Duration in milliseconds
+class TestResult(Base):
+    """A test result."""
+
+    __tablename__ = "test_results"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    session_id = Column(String, ForeignKey("sessions.session_id"), nullable=False)
+    test_id = Column(String, nullable=False)
+    outcome = Column(String, nullable=False)
+    duration = Column(Float)
     error_data = Column(JSON)
     warnings = Column(JSON)
-    rerun_count = Column(Integer, default=0)
     environment = Column(JSON)
-    timestamp = Column(DateTime, default=datetime.utcnow)
-    test_session = relationship("SQLTestSession", backref="test_results")
+    rerun_count = Column(Integer, default=0)
+    timestamp = Column(DateTime)
+
+    def __init__(
+        self,
+        test_id: str,
+        outcome: str,
+        duration: float = 0.0,
+        error_data: Optional[Dict[str, Any]] = None,
+        environment: Optional[Dict[str, Any]] = None,
+        warnings: Optional[List[str]] = None,
+        rerun_count: int = 0,
+        session_id: Optional[str] = None,
+    ):
+        """Initialize a test result."""
+        self.test_id = test_id
+        self.outcome = outcome
+        self.duration = duration
+        self.error_data = error_data
+        self.environment = environment or {}
+        self.warnings = warnings or []
+        self.rerun_count = rerun_count
+        self.session_id = session_id
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary."""
+        return {
+            "test_id": self.test_id,
+            "outcome": self.outcome,
+            "duration": self.duration,
+            "error_data": self.error_data,
+            "environment": self.environment,
+            "warnings": self.warnings,
+            "rerun_count": self.rerun_count,
+            "session_id": self.session_id,
+        }
 
 
 # Dataclass Models
-@dataclass
-class TestResult:
-    """Class to hold test result data."""
-    test_id: str
-    outcome: str
-    duration: float = 0
-    error_data: Optional[Union[str, Dict[str, Any]]] = None
-    environment: Dict[str, Any] = field(default_factory=dict)
-    warnings: List[str] = field(default_factory=list)
-    rerun_count: int = 0
-    session_id: Optional[str] = None
-
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert TestResult to dictionary."""
-        result = {
-            'test_id': self.test_id,
-            'outcome': self.outcome,
-            'duration': self.duration,
-            'environment': self.environment,
-            'warnings': self.warnings,
-            'rerun_count': self.rerun_count,
-            'session_id': self.session_id
-        }
-
-        # Handle ExceptionInfo and ExceptionChainRepr objects
-        if self.error_data:
-            if hasattr(self.error_data, 'typename') and hasattr(self.error_data, 'value'):
-                # Handle ExceptionInfo
-                result['error_data'] = {
-                    'type': self.error_data.typename,
-                    'message': str(self.error_data.value),
-                    'traceback': str(self.error_data.getrepr())
-                }
-            elif hasattr(self.error_data, 'reprtraceback'):
-                # Handle ExceptionChainRepr
-                result['error_data'] = {
-                    'type': self.error_data.reprtraceback.extraline,
-                    'message': str(self.error_data.reprtraceback.reprcrash.message),
-                    'traceback': str(self.error_data)
-                }
-            else:
-                result['error_data'] = str(self.error_data)
-
-        return result
-
-
 @dataclass
 class TestSessionStats:
     """Test session statistics."""

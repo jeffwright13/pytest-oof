@@ -1,9 +1,15 @@
 """Analyzer interface for pytest-oof test data."""
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Dict, List, Optional, Set, Tuple
-from pytest_oof.db import db_connection
+from typing import Dict, Any, List, Optional, Set, Tuple
+from pytest_oof.db import (
+    get_recent_failures,
+    get_duration_trends,
+    get_stability_metrics,
+    get_test_results,
+    db_connection
+)
 
 @dataclass
 class SutStats:
@@ -288,3 +294,72 @@ class TestDataAnalyzer:
             
             cursor.execute(query, params)
             return [(row[0], row[1], row[2]) for row in cursor.fetchall()]
+
+    def get_recently_failed_tests(
+        self,
+        hours: int = 24,
+        min_failures: int = 1,
+        sut_id: Optional[str] = None,
+    ) -> Dict[str, Dict[str, Any]]:
+        """Get tests that have failed recently.
+        
+        Args:
+            hours: Look back period in hours
+            min_failures: Minimum number of failures to include
+            sut_id: Optional SUT ID to filter by
+            
+        Returns:
+            Dict mapping test_id to failure details
+        """
+        return get_recent_failures(
+            db_path=self.db_path,
+            hours=hours,
+            min_failures=min_failures,
+            sut_id=sut_id
+        )
+    
+    def get_duration_trends(
+        self,
+        days: int = 7,
+        min_runs: int = 5,
+        sut_id: Optional[str] = None,
+    ) -> Dict[str, Dict[str, Any]]:
+        """Analyze test execution time trends.
+        
+        Args:
+            days: Analysis period in days
+            min_runs: Minimum runs to include in analysis
+            sut_id: Optional SUT ID to filter by
+            
+        Returns:
+            Dict mapping test_id to duration statistics
+        """
+        return get_duration_trends(
+            db_path=self.db_path,
+            days=days,
+            min_runs=min_runs,
+            sut_id=sut_id
+        )
+    
+    def get_stability_report(
+        self,
+        days: int = 30,
+        sut_id: Optional[str] = None,
+        granularity: str = 'day'
+    ) -> Dict[str, List[Dict[str, Any]]]:
+        """Generate test stability report over time.
+        
+        Args:
+            days: Analysis period in days
+            sut_id: Optional SUT ID to filter by
+            granularity: Time grouping ('hour', 'day', 'week')
+            
+        Returns:
+            Dict with stability metrics over time
+        """
+        return get_stability_metrics(
+            db_path=self.db_path,
+            days=days,
+            sut_id=sut_id,
+            granularity=granularity
+        )

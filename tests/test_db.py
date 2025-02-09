@@ -6,6 +6,8 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 from pytest_mock import MockerFixture
+from sqlalchemy import create_engine, Column, Integer, String, DateTime, ForeignKey
+from sqlalchemy.orm import Session, sessionmaker
 
 from pytest_oof.db import (
     add_session,
@@ -13,7 +15,9 @@ from pytest_oof.db import (
     export_results,
     init_db,
     update_session_stats,
+    Base,
 )
+from pytest_oof.models import TestResult, TestSessionStats
 
 
 @pytest.fixture
@@ -32,6 +36,15 @@ def mock_datetime(mocker: MockerFixture):
     mock.now.return_value = mock_now
     mock.side_effect = datetime
     return mock_now
+
+
+@pytest.fixture
+def db_session():
+    """Create an in-memory SQLAlchemy session for testing."""
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    return Session()
 
 
 def test_add_session(db_path, mock_datetime):
@@ -64,28 +77,33 @@ def test_add_test_results(db_path, mock_datetime):
         db_path,
         start_time=mock_datetime,
         session_id="test-session-2",
+        sut_id="test-sut",  # Added required sut_id
     )
 
     # Add some test results
-    add_test_result(
-        db_path,
-        session_id=session_id,
+    test_result1 = TestResult(
         test_id="test_one",
         outcome="passed",
         timestamp=mock_datetime,
         duration=1.23,
-    )
-    add_test_result(
-        db_path,
+        error_data=None,
+        environment={"python": "3.9"},
+        warnings=[],
         session_id=session_id,
+    )
+    add_test_result(db_path, session_id, test_result1)
+
+    test_result2 = TestResult(
         test_id="test_two",
         outcome="failed",
         timestamp=mock_datetime,
         duration=0.45,
-        error_message="assertion error",
-        error_type="AssertionError",
-        error_traceback="test_file.py:123",
+        error_data={"type": "AssertionError", "message": "assertion error", "traceback": "test_file.py:123"},
+        environment={"python": "3.9"},
+        warnings=["deprecated warning"],
+        session_id=session_id,
     )
+    add_test_result(db_path, session_id, test_result2)
 
     # Query and verify
     results = export_results(db_path, session_id=session_id)
@@ -101,9 +119,9 @@ def test_add_test_results(db_path, mock_datetime):
     failed_test = next(t for t in test_results if t["test_id"] == "test_two")
     assert failed_test["outcome"] == "failed"
     assert failed_test["duration"] == 0.45
-    assert failed_test["error_type"] == "AssertionError"
-    assert failed_test["error_message"] == "assertion error"
-    assert failed_test["error_traceback"] == "test_file.py:123"
+    assert failed_test["error_data"]["type"] == "AssertionError"
+    assert failed_test["error_data"]["message"] == "assertion error"
+    assert failed_test["error_data"]["traceback"] == "test_file.py:123"
     assert failed_test["timestamp"] == "2025-01-01 12:00:00+00:00"
 
 
@@ -113,19 +131,42 @@ def test_export_results_filtering(db_path, mock_datetime):
     session1 = add_session(
         db_path,
         start_time=mock_datetime,
+        session_id="test-session-1",
         sut_id="sut1",
         sut_version="1.0",
     )
     session2 = add_session(
         db_path,
         start_time=mock_datetime,
+        session_id="test-session-2",
         sut_id="sut2",
         sut_version="2.0",
     )
 
     # Add test results to both sessions
-    add_test_result(db_path, session1, "test1", "passed", mock_datetime)
-    add_test_result(db_path, session2, "test1", "failed", mock_datetime)
+    test_result1 = TestResult(
+        test_id="test1",
+        outcome="passed",
+        timestamp=mock_datetime,
+        duration=1.23,
+        error_data=None,
+        environment={"python": "3.9"},
+        warnings=[],
+        session_id=session1,
+    )
+    add_test_result(db_path, session1, test_result1)
+
+    test_result2 = TestResult(
+        test_id="test1",
+        outcome="failed",
+        timestamp=mock_datetime,
+        duration=0.45,
+        error_data={"type": "AssertionError", "message": "assertion error", "traceback": "test_file.py:123"},
+        environment={"python": "3.9"},
+        warnings=["deprecated warning"],
+        session_id=session2,
+    )
+    add_test_result(db_path, session2, test_result2)
 
     # Test filtering by SUT
     results = export_results(db_path, sut_id="sut1")
@@ -147,13 +188,17 @@ def test_export_results_to_file(db_path, mock_datetime, tmp_path):
     """Test exporting results to a JSON file."""
     # Create session and add results
     session_id = add_session(db_path, mock_datetime)
-    add_test_result(
-        db_path,
-        session_id,
-        "test1",
-        "passed",
-        mock_datetime,
+    test_result = TestResult(
+        test_id="test1",
+        outcome="passed",
+        timestamp=mock_datetime,
+        duration=1.23,
+        error_data=None,
+        environment={"python": "3.9"},
+        warnings=[],
+        session_id=session_id,
     )
+    add_test_result(db_path, session_id, test_result)
 
     # Test JSON format
     json_file = tmp_path / "results.json"
@@ -193,14 +238,46 @@ def test_time_based_filtering(db_path, mock_datetime):
     time2 = mock_datetime + timedelta(hours=1)
     time3 = mock_datetime + timedelta(hours=2)
 
-    session1 = add_session(db_path, time1, sut_id="sut1")
-    session2 = add_session(db_path, time2, sut_id="sut2")
-    session3 = add_session(db_path, time3, sut_id="sut3")
+    session1 = add_session(db_path, time1, session_id="test-session-1", sut_id="sut1")
+    session2 = add_session(db_path, time2, session_id="test-session-2", sut_id="sut2")
+    session3 = add_session(db_path, time3, session_id="test-session-3", sut_id="sut3")
 
     # Add test results
-    add_test_result(db_path, session1, "test1", "passed", time1)
-    add_test_result(db_path, session2, "test2", "passed", time2)
-    add_test_result(db_path, session3, "test3", "passed", time3)
+    test_result1 = TestResult(
+        test_id="test1",
+        outcome="passed",
+        timestamp=time1,
+        duration=1.23,
+        error_data=None,
+        environment={"python": "3.9"},
+        warnings=[],
+        session_id=session1,
+    )
+    add_test_result(db_path, session1, test_result1)
+
+    test_result2 = TestResult(
+        test_id="test2",
+        outcome="failed",
+        timestamp=time2,
+        duration=0.45,
+        error_data={"type": "AssertionError", "message": "assertion error", "traceback": "test_file.py:123"},
+        environment={"python": "3.9"},
+        warnings=["deprecated warning"],
+        session_id=session2,
+    )
+    add_test_result(db_path, session2, test_result2)
+
+    test_result3 = TestResult(
+        test_id="test3",
+        outcome="passed",
+        timestamp=time3,
+        duration=1.23,
+        error_data=None,
+        environment={"python": "3.9"},
+        warnings=[],
+        session_id=session3,
+    )
+    add_test_result(db_path, session3, test_result3)
 
     # Test start_time filter
     results = export_results(db_path, start_time=time2)
@@ -266,22 +343,50 @@ def test_xfail_xpass_outcomes(db_path, mock_datetime):
 
     # Add test results with different outcomes
     test_results = [
-        ("test_expected_failure", "xfail", "This test is expected to fail"),
-        ("test_unexpected_pass", "xpass", None),
-        ("test_normal_pass", "passed", None),
-        ("test_normal_fail", "failed", "Normal failure"),
-    ]
-
-    for test_id, outcome, error_message in test_results:
-        add_test_result(
-            db_path,
-            session_id=session_id,
-            test_id=test_id,
-            outcome=outcome,
+        TestResult(
+            test_id="test_expected_failure",
+            outcome="xfail",
             timestamp=mock_datetime,
             duration=0.1,
-            error_message=error_message,
-        )
+            error_data=None,
+            environment={"python": "3.9"},
+            warnings=[],
+            session_id=session_id,
+        ),
+        TestResult(
+            test_id="test_unexpected_pass",
+            outcome="xpass",
+            timestamp=mock_datetime,
+            duration=0.1,
+            error_data=None,
+            environment={"python": "3.9"},
+            warnings=[],
+            session_id=session_id,
+        ),
+        TestResult(
+            test_id="test_normal_pass",
+            outcome="passed",
+            timestamp=mock_datetime,
+            duration=0.1,
+            error_data=None,
+            environment={"python": "3.9"},
+            warnings=[],
+            session_id=session_id,
+        ),
+        TestResult(
+            test_id="test_normal_fail",
+            outcome="failed",
+            timestamp=mock_datetime,
+            duration=0.1,
+            error_data={"type": "AssertionError", "message": "assertion error", "traceback": "test_file.py:123"},
+            environment={"python": "3.9"},
+            warnings=["deprecated warning"],
+            session_id=session_id,
+        ),
+    ]
+
+    for result in test_results:
+        add_test_result(db_path, session_id, result)
 
     # Update session stats
     update_session_stats(db_path, session_id)
@@ -295,7 +400,7 @@ def test_xfail_xpass_outcomes(db_path, mock_datetime):
     # Verify each test outcome
     for test_result in session_results:
         test_id = test_result["test_id"]
-        expected_outcome = next(o for t, o, _ in test_results if t == test_id)
+        expected_outcome = next(o.outcome for o in test_results if o.test_id == test_id)
         assert test_result["outcome"] == expected_outcome
 
     # Verify session stats
@@ -316,25 +421,71 @@ def test_session_stats_update(db_path, mock_datetime):
 
     # Add test results one by one and verify stats
     test_results = [
-        ("test_1", "passed", None),
-        ("test_2", "failed", "Error message"),
-        ("test_3", "skipped", None),
-        ("test_4", "error", "Error occurred"),
-        ("test_5", "xfail", "Expected failure"),
-        ("test_6", "xpass", None),
-    ]
-
-    for i, (test_id, outcome, error_message) in enumerate(test_results, 1):
-        # Add test result
-        add_test_result(
-            db_path,
-            session_id=session_id,
-            test_id=test_id,
-            outcome=outcome,
+        TestResult(
+            test_id="test_1",
+            outcome="passed",
             timestamp=mock_datetime,
             duration=0.1,
-            error_message=error_message,
-        )
+            error_data=None,
+            environment={"python": "3.9"},
+            warnings=[],
+            session_id=session_id,
+        ),
+        TestResult(
+            test_id="test_2",
+            outcome="failed",
+            timestamp=mock_datetime,
+            duration=0.1,
+            error_data={"type": "AssertionError", "message": "assertion error", "traceback": "test_file.py:123"},
+            environment={"python": "3.9"},
+            warnings=["deprecated warning"],
+            session_id=session_id,
+        ),
+        TestResult(
+            test_id="test_3",
+            outcome="skipped",
+            timestamp=mock_datetime,
+            duration=0.1,
+            error_data=None,
+            environment={"python": "3.9"},
+            warnings=[],
+            session_id=session_id,
+        ),
+        TestResult(
+            test_id="test_4",
+            outcome="error",
+            timestamp=mock_datetime,
+            duration=0.1,
+            error_data={"type": "AssertionError", "message": "assertion error", "traceback": "test_file.py:123"},
+            environment={"python": "3.9"},
+            warnings=["deprecated warning"],
+            session_id=session_id,
+        ),
+        TestResult(
+            test_id="test_5",
+            outcome="xfail",
+            timestamp=mock_datetime,
+            duration=0.1,
+            error_data=None,
+            environment={"python": "3.9"},
+            warnings=[],
+            session_id=session_id,
+        ),
+        TestResult(
+            test_id="test_6",
+            outcome="xpass",
+            timestamp=mock_datetime,
+            duration=0.1,
+            error_data=None,
+            environment={"python": "3.9"},
+            warnings=[],
+            session_id=session_id,
+        ),
+    ]
+
+    for i, result in enumerate(test_results, 1):
+        # Add test result
+        add_test_result(db_path, session_id, result)
 
         # Update and verify session stats
         update_session_stats(db_path, session_id)
@@ -346,7 +497,7 @@ def test_session_stats_update(db_path, mock_datetime):
         assert session["num_tests"] == i
 
         # Count outcomes up to this point
-        outcomes = [r[1] for r in test_results[:i]]
+        outcomes = [r.outcome for r in test_results[:i]]
         assert session["num_passes"] == outcomes.count("passed")
         assert session["num_failures"] == outcomes.count("failed")
         assert session["num_skips"] == outcomes.count("skipped")
@@ -372,22 +523,45 @@ def test_edge_cases(db_path, mock_datetime):
         add_test_result(
             db_path,
             session_id=999,
-            test_id="test1",
-            outcome="passed",
-            timestamp=mock_datetime,
+            test_result=TestResult(
+                test_id="test1",
+                outcome="passed",
+                timestamp=mock_datetime,
+                duration=0.1,
+                error_data=None,
+                environment={"python": "3.9"},
+                warnings=[],
+                session_id=999,
+            ),
         )
 
     # Test duplicate test results (same session, test_id, timestamp)
     session_id = add_session(db_path, mock_datetime)
-    add_test_result(db_path, session_id, "test1", "passed", mock_datetime)
+    add_test_result(db_path, session_id, TestResult(
+        test_id="test1",
+        outcome="passed",
+        timestamp=mock_datetime,
+        duration=0.1,
+        error_data=None,
+        environment={"python": "3.9"},
+        warnings=[],
+        session_id=session_id,
+    ))
 
     with pytest.raises(sqlite3.IntegrityError):
         add_test_result(
             db_path,
             session_id,
-            "test1",
-            "failed",  # Different outcome but same session, test_id, timestamp
-            mock_datetime,
+            TestResult(
+                test_id="test1",
+                outcome="failed",
+                timestamp=mock_datetime,
+                duration=0.1,
+                error_data=None,
+                environment={"python": "3.9"},
+                warnings=[],
+                session_id=session_id,
+            ),
         )
 
 
@@ -423,11 +597,17 @@ def test_console_output(db_path, mock_datetime):
     add_test_result(
         db_path,
         session_id=session_id,
-        test_id="test_with_output",
-        outcome="failed",
-        timestamp=mock_datetime,
-        error_message="Test failed",
-        source_line_id=3,  # Reference the error line
+        test_result=TestResult(
+            test_id="test_with_output",
+            outcome="failed",
+            timestamp=mock_datetime,
+            duration=0.1,
+            error_data=None,
+            environment={"python": "3.9"},
+            warnings=[],
+            session_id=session_id,
+            source_line_id=3,  # Reference the error line
+        ),
     )
 
     # Verify the test result references the correct console line
@@ -508,9 +688,16 @@ def test_database_constraints(db_path, mock_datetime):
         add_test_result(
             db_path,
             session_id=999,  # Non-existent session
-            test_id="test_1",
-            outcome="passed",
-            timestamp=mock_datetime,
+            test_result=TestResult(
+                test_id="test_1",
+                outcome="passed",
+                timestamp=mock_datetime,
+                duration=0.1,
+                error_data=None,
+                environment={"python": "3.9"},
+                warnings=[],
+                session_id=999,
+            ),
         )
 
     # Test unique constraint
@@ -518,9 +705,16 @@ def test_database_constraints(db_path, mock_datetime):
     add_test_result(
         db_path,
         session_id=session_id,
-        test_id="test_1",
-        outcome="passed",
-        timestamp=mock_datetime,
+        test_result=TestResult(
+            test_id="test_1",
+            outcome="passed",
+            timestamp=mock_datetime,
+            duration=0.1,
+            error_data=None,
+            environment={"python": "3.9"},
+            warnings=[],
+            session_id=session_id,
+        ),
     )
 
     # Attempt to add duplicate test result
@@ -528,9 +722,16 @@ def test_database_constraints(db_path, mock_datetime):
         add_test_result(
             db_path,
             session_id=session_id,
-            test_id="test_1",
-            outcome="failed",
-            timestamp=mock_datetime,
+            test_result=TestResult(
+                test_id="test_1",
+                outcome="failed",
+                timestamp=mock_datetime,
+                duration=0.1,
+                error_data=None,
+                environment={"python": "3.9"},
+                warnings=[],
+                session_id=session_id,
+            ),
         )
 
     # Add test result with invalid outcome
@@ -538,9 +739,16 @@ def test_database_constraints(db_path, mock_datetime):
     add_test_result(
         db_path,
         session_id=session_id,
-        test_id="test_2",
-        outcome="invalid_outcome",  # This is allowed by the database
-        timestamp=mock_datetime,
+        test_result=TestResult(
+            test_id="test_2",
+            outcome="invalid_outcome",  # This is allowed by the database
+            timestamp=mock_datetime,
+            duration=0.1,
+            error_data=None,
+            environment={"python": "3.9"},
+            warnings=[],
+            session_id=session_id,
+        ),
     )
 
     # Verify the test result was added
@@ -558,19 +766,35 @@ def test_concurrent_access(db_path, mock_datetime):
 
     # Add test results and update stats in a transaction-like manner
     test_results = [
-        ("test_1", "passed"),
-        ("test_2", "failed"),
+        TestResult(
+            test_id="test_1",
+            outcome="passed",
+            timestamp=mock_datetime,
+            duration=0.1,
+            error_data=None,
+            environment={"python": "3.9"},
+            warnings=[],
+            session_id=session_id,
+        ),
+        TestResult(
+            test_id="test_2",
+            outcome="failed",
+            timestamp=mock_datetime,
+            duration=0.1,
+            error_data={"type": "AssertionError", "message": "assertion error", "traceback": "test_file.py:123"},
+            environment={"python": "3.9"},
+            warnings=["deprecated warning"],
+            session_id=session_id,
+        ),
     ]
 
     # Simulate concurrent access by interleaving operations
-    for test_id, outcome in test_results:
+    for test_result in test_results:
         # First connection adds test result
         add_test_result(
             db_path,
             session_id=session_id,
-            test_id=test_id,
-            outcome=outcome,
-            timestamp=mock_datetime,
+            test_result=test_result,
         )
 
         # Second connection updates stats
@@ -580,17 +804,17 @@ def test_concurrent_access(db_path, mock_datetime):
         results = export_results(db_path, session_id=session_id)
         assert len(results) == 1
         session = results[0]["session"]
-        test_count = len([r for r in test_results if r[0] <= test_id])
+        test_count = len([r for r in test_results if r.test_id <= test_result.test_id])
         assert session["num_tests"] == test_count
 
 
 @pytest.fixture
 def db_session():
+    """Create an in-memory SQLAlchemy session for testing."""
     engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
     Session = sessionmaker(bind=engine)
-    session = Session()
-    TestResult.metadata.create_all(engine)
-    return DBClient(session)
+    return Session()
 
 
 def test_add_and_retrieve_result(db_session):
@@ -600,7 +824,8 @@ def test_add_and_retrieve_result(db_session):
         'outcome': 'passed',
         'duration': 1.5
     }
-    db_session.add_test_result(test_data)
-    results = db_session.get_test_results()
+    db_session.add(TestResult(**test_data))
+    db_session.commit()
+    results = db_session.query(TestResult).all()
     assert len(results) == 1
     assert results[0].test_id == 'test_1'

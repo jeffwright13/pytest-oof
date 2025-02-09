@@ -1,38 +1,51 @@
+"""CLI entry point for pytest-oof."""
 import os
 import subprocess
 
-import typer
-from rich.console import Console as rich_console
+import click
+from rich.console import Console
 
-from pytest_oof.utils import HTML_FILES_DIR
+from pytest_oof.cli.analyze import analyze
+from pytest_oof.cli.export import export
+from pytest_oof.cli.examples import examples
 
-app = typer.Typer()
-rich_console = rich_console()
+console = Console()
 
+@click.group()
+def cli():
+    """pytest-oof: Test Results Analysis Tool
+    
+    For example commands and usage:
+        oof examples show
+        
+    To save examples to a file:
+        oof examples show --save examples.md
+    """
+    pass
 
-@app.command()
-def html():
-    rich_console.print(f"Generating HTML in {HTML_FILES_DIR}/", style="green")
-    subprocess.run(["oof-html"])
-    html_file = os.path.join("/oof", "oof-html.html")
-    subprocess.run(["python", "-m", "webbrowser", "-t", html_file])
+cli.add_command(analyze)
+cli.add_command(export)
+cli.add_command(examples)
 
+@cli.group()
+def view():
+    """View test results."""
+    pass
 
-@app.command()
+@view.command()
 def tui():
-    rich_console.print("Launching TUI...", style="green")
+    """View results in terminal UI."""
+    console.print("Launching TUI...", style="green")
     subprocess.run(["oof-tui"])
 
-
-@app.command()
+@view.command()
 def console():
-    rich_console.print("Executing Simple UI...", style="green")
+    """View results in console."""
+    console.print("Executing Simple UI...", style="green")
     subprocess.run(["oof-console"])
 
-
 def main():
-    app()
-
+    cli()
 
 if __name__ == "__main__":
     main()

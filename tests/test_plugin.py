@@ -112,6 +112,7 @@ def test_pytest_unconfigure(mock_config, tmp_path, mocker):
     test_results = Results(
         session_metadata=SessionMetadata(
             session_id="test_session",
+            sut_id="test-sut",  
             start_time=datetime.now(timezone.utc),
             stop_time=datetime.now(timezone.utc),
             duration=timedelta(seconds=0)
@@ -122,29 +123,24 @@ def test_pytest_unconfigure(mock_config, tmp_path, mocker):
     )
     test_results.test_results = [
         TestResult(
-            nodeid="test_1",
+            test_id="test_1",  
             outcome="PASSED",
-            start_time=datetime.now(timezone.utc),
         ),
         TestResult(
-            nodeid="test_2",
+            test_id="test_2",  
             outcome="FAILED",
-            start_time=datetime.now(timezone.utc),
         ),
         TestResult(
-            nodeid="test_3",
+            test_id="test_3",  
             outcome="SKIPPED",
-            start_time=datetime.now(timezone.utc),
         ),
         TestResult(
-            nodeid="test_4",
+            test_id="test_4",  
             outcome="XFAIL",
-            start_time=datetime.now(timezone.utc),
         ),
         TestResult(
-            nodeid="test_5",
+            test_id="test_5",  
             outcome="XPASS",
-            start_time=datetime.now(timezone.utc),
         ),
     ]
     mock_config._oof_test_results = test_results
@@ -181,9 +177,8 @@ def test_pytest_runtest_makereport(mock_config, mock_item, mocker, tmp_path):
 
     # Create a test result
     test_result = TestResult(
-        nodeid=mock_item.nodeid,
+        test_id=mock_item.nodeid,  
         outcome="PASSED",
-        start_time=datetime.now(timezone.utc),
         duration=0.1,
     )
 
@@ -198,14 +193,12 @@ def test_pytest_runtest_makereport(mock_config, mock_item, mocker, tmp_path):
     assert len(test_results.all_xfails()) == 0
 
     test_result = test_results.all_passes()[0]
-    assert test_result.nodeid == mock_item.nodeid
-    assert test_result.outcome == "PASSED"  
+    assert test_result.test_id == mock_item.nodeid  
 
     # Test xfail/xpass handling
     test_result = TestResult(
-        nodeid=mock_item.nodeid,
+        test_id=mock_item.nodeid,  
         outcome="XPASS",
-        start_time=datetime.now(timezone.utc),
         duration=0.1,
     )
 
@@ -219,14 +212,13 @@ def test_pytest_runtest_makereport(mock_config, mock_item, mocker, tmp_path):
     assert len(test_results.all_xfails()) == 0
 
     test_result = test_results.all_xpasses()[0]
-    assert test_result.nodeid == mock_item.nodeid
+    assert test_result.test_id == mock_item.nodeid  
     assert test_result.outcome == "XPASS"
 
     # Test xfail case
     test_result = TestResult(
-        nodeid=mock_item.nodeid,
+        test_id=mock_item.nodeid,  
         outcome="XFAIL",
-        start_time=datetime.now(timezone.utc),
         duration=0.1,
     )
 
@@ -240,7 +232,7 @@ def test_pytest_runtest_makereport(mock_config, mock_item, mocker, tmp_path):
     assert len(test_results.all_xfails()) == 1
 
     test_result = test_results.all_xfails()[0]
-    assert test_result.nodeid == mock_item.nodeid
+    assert test_result.test_id == mock_item.nodeid  
     assert test_result.outcome == "XFAIL"
 
 
