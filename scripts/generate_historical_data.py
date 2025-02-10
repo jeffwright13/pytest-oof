@@ -42,64 +42,79 @@ def ensure_tables_exist():
     with db_connection(db_path) as conn:
         cursor = conn.cursor()
 
-        # Drop existing tables to ensure clean schema
-        drop_tables()
+        # Check if tables exist
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='sessions'")
+        sessions_exists = cursor.fetchone() is not None
+        
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='test_results'")
+        test_results_exists = cursor.fetchone() is not None
 
-        cursor.execute(
-            """
-            CREATE TABLE IF NOT EXISTS sessions (
-                session_id TEXT PRIMARY KEY,
-                sut_id TEXT,
-                sut_type TEXT,
-                sut_version TEXT,
-                sut_env TEXT,
-                start_time TIMESTAMP,
-                end_time TIMESTAMP,
-                duration REAL,
-                total_tests INTEGER,
-                passed_tests INTEGER,
-                failed_tests INTEGER,
-                skipped_tests INTEGER,
-                xfailed_tests INTEGER,
-                xpassed_tests INTEGER,
-                warnings INTEGER,
-                errors INTEGER,
-                rerun INTEGER
+        # Only create tables if they don't exist
+        if not sessions_exists:
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS sessions (
+                    session_id TEXT PRIMARY KEY,
+                    sut_id TEXT,
+                    sut_type TEXT,
+                    sut_version TEXT,
+                    sut_env TEXT,
+                    start_time TIMESTAMP,
+                    end_time TIMESTAMP,
+                    duration REAL,
+                    total_tests INTEGER,
+                    passed_tests INTEGER,
+                    failed_tests INTEGER,
+                    skipped_tests INTEGER,
+                    xfailed_tests INTEGER,
+                    xpassed_tests INTEGER,
+                    warnings INTEGER,
+                    errors INTEGER,
+                    rerun INTEGER,
+                    rerun_outcomes TEXT
+                )
+                """
             )
-            """
-        )
-        cursor.execute(
-            """
-            CREATE TABLE IF NOT EXISTS test_results (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                session_id TEXT,
-                test_id TEXT NOT NULL,
-                outcome TEXT,
-                start_time TIMESTAMP,
-                duration REAL,
-                error_message TEXT,
-                error_type TEXT,
-                error_traceback TEXT,
-                has_warning BOOLEAN,
-                longreprtext TEXT,
-                caplog TEXT,
-                capstdout TEXT,
-                capstderr TEXT,
-                rerun_count INTEGER,
-                environment TEXT,
-                warnings TEXT,
-                is_rerun BOOLEAN,
-                FOREIGN KEY (session_id) REFERENCES sessions(session_id)
-            )
-            """
-        )
-        conn.commit()
 
-        # Check if we need to add new columns
-        cursor.execute("PRAGMA table_info(test_results)")
+        if not test_results_exists:
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS test_results (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    session_id TEXT,
+                    test_id TEXT NOT NULL,
+                    outcome TEXT,
+                    start_time TIMESTAMP,
+                    duration REAL,
+                    error_message TEXT,
+                    error_type TEXT,
+                    error_traceback TEXT,
+                    has_warning BOOLEAN,
+                    longreprtext TEXT,
+                    caplog TEXT,
+                    capstdout TEXT,
+                    capstderr TEXT,
+                    rerun_count INTEGER,
+                    environment TEXT,
+                    warnings TEXT,
+                    is_rerun BOOLEAN,
+                    FOREIGN KEY (session_id) REFERENCES sessions(session_id)
+                )
+                """
+            )
+
+        # Check if we need to add new columns to sessions
+        cursor.execute("PRAGMA table_info(sessions)")
         columns = {col[1] for col in cursor.fetchall()}
 
         # Add missing columns if they don't exist
+        if "rerun_outcomes" not in columns:
+            cursor.execute("ALTER TABLE sessions ADD COLUMN rerun_outcomes TEXT DEFAULT '[]'")
+
+        # Check if we need to add new columns to test_results
+        cursor.execute("PRAGMA table_info(test_results)")
+        columns = {col[1] for col in cursor.fetchall()}
+
         if "environment" not in columns:
             cursor.execute("ALTER TABLE test_results ADD COLUMN environment TEXT")
         if "warnings" not in columns:
@@ -137,7 +152,7 @@ def vary_number(original: int, variance_pct: float = 0.1) -> int:
 SUT_IDS = [
     "qa-ref-azulprimejdk17",
     "qa-ref-dist-core-azulprime17",
-    "qa-re-openjdk17",
+    "qa-ref-openjdk17",
     "qa-ref-dist-core-openjdk17",
 ]
 
@@ -468,115 +483,182 @@ def update_session_stats(session_id: str, test_results: List[Dict[str, Any]]) ->
     return stats
 
 
-def generate_historical_data(days: int = 7, sessions_per_day: tuple = (3, 8)):
-    """Generate historical test data."""
-    db_path = get_db_path()
-    ensure_tables_exist()  # Create tables if they don't exist
+def create_global_failure_event(base_time: datetime, duration_days: int = 1) -> tuple[datetime, datetime]:
+    """Create a time window where all SUTs will fail."""
+    end_time = base_time + timedelta(days=duration_days)
+    return base_time, end_time
+
+
+def create_clustered_failures(sut_id: str, base_time: datetime, cluster_size: int = 3) -> list[datetime]:
+    """Create a cluster of failures followed by recovery for a specific SUT."""
+    failure_times = []
+    current_time = base_time
+    for _ in range(cluster_size):
+        failure_times.append(current_time)
+        current_time += timedelta(hours=random.randint(1, 4))
+    return failure_times
+
+
+def create_flaky_pattern(base_time: datetime, duration_hours: int = 24) -> list[tuple[datetime, bool]]:
+    """Create alternating pass/fail pattern over time."""
+    pattern = []
+    current_time = base_time
+    while current_time < base_time + timedelta(hours=duration_hours):
+        should_fail = random.random() < 0.5  # 50% chance of failure
+        pattern.append((current_time, should_fail))
+        current_time += timedelta(minutes=random.randint(30, 120))
+    return pattern
+
+
+def get_version_specific_failures(sut_version: str) -> float:
+    """Return failure probability for specific versions."""
+    version_failure_rates = {
+        "1.0.0": 0.8,  # High failure rate for old version
+        "1.1.0": 0.5,  # Moderate failure rate
+        "2.0.0": 0.2,  # Lower failure rate for newer version
+    }
+    return version_failure_rates.get(sut_version, 0.1)  # Default to 10% failure rate
+
+
+def get_environment_failure_probability(sut_env: str) -> float:
+    """Return failure probability for specific environments."""
+    env_failure_rates = {
+        "dev": 0.3,     # Higher failure rate in dev
+        "staging": 0.2, # Moderate failure rate in staging
+        "prod": 0.05,   # Low failure rate in prod
+    }
+    return env_failure_rates.get(sut_env, 0.1)
+
+
+def apply_performance_trend(base_failure_rate: float, day_index: int, total_days: int) -> float:
+    """Apply a gradual trend to failure rates over time."""
+    if random.random() < 0.5:  # 50% chance of increasing trend
+        trend_factor = 1 + (day_index / total_days)  # Gradually increase
+    else:
+        trend_factor = 1 - (day_index / (2 * total_days))  # Gradually decrease, but not to zero
+    return base_failure_rate * trend_factor
+
+
+def generate_historical_data(
+    days: int = 7,
+    sessions_per_day: tuple = (3, 8),
+    include_patterns: bool = True
+):
+    """Generate historical test data with various failure patterns.
+
+    Args:
+        days: Number of days of historical data to generate
+        sessions_per_day: Tuple of (min, max) sessions per day
+        include_patterns: Whether to include special failure patterns
+    """
     ensure_template_data()
+    db_path = get_db_path()
 
-    # Connect to database
-    with db_connection(db_path) as conn:
-        cursor = conn.cursor()
+    end_time = datetime.now()
+    start_time = end_time - timedelta(days=days)
 
-        # Get template session
-        cursor.execute(
-            """
-            SELECT
-                session_id, start_time, end_time, duration,
-                sut_id, sut_type, sut_version, sut_env,
-                total_tests, passed_tests, failed_tests,
-                skipped_tests, xfailed_tests, xpassed_tests,
-                warnings, errors, rerun
-            FROM sessions
-            ORDER BY start_time DESC
-            LIMIT 1
-            """
-        )
-        template = cursor.fetchone()
+    # Create global failure event (1-day window in the middle of the time range)
+    global_failure_start, global_failure_end = create_global_failure_event(
+        start_time + timedelta(days=days//2),
+        duration_days=1
+    )
 
-        if not template:
-            print("No template session found.")
-            return
+    # Create version-specific failure windows
+    version_failure_times = {
+        "1.0.0": create_clustered_failures("qa-ref-azulprimejdk17", start_time + timedelta(days=1)),
+        "2.0.0": create_clustered_failures("qa-ref-openjdk17", start_time + timedelta(days=3))
+    }
 
-        # Convert template to dict for easier access
-        template_session = {
-            "session_id": template[0],
-            "start_time": template[1],
-            "end_time": template[2],
-            "duration": template[3],
-            "sut_id": template[4],
-            "sut_type": template[5],
-            "sut_version": template[6],
-            "sut_env": template[7],
-            "total_tests": template[8],
-            "passed_tests": template[9],
-            "failed_tests": template[10],
-            "skipped_tests": template[11],
-            "xfailed_tests": template[12],
-            "xpassed_tests": template[13],
-            "warnings": template[14],
-            "errors": template[15],
-            "rerun": template[16],
-        }
-
-        # Generate historical data
-        current_time = datetime.now()
-        all_sessions = []
-        total_reruns = 0
-        total_rerun_groups = 0
-
-        print(f"\nInserting {days * sessions_per_day[1]} new sessions...\n")
-
-        for day in range(days):
-            # Generate random number of sessions for this day
-            num_sessions = random.randint(sessions_per_day[0], sessions_per_day[1])
-
-            for _ in range(num_sessions):
-                # Create varied session based on template
-                session = vary_session(template_session, current_time)
-
-                # Insert session
+    # Generate data for each day
+    current_time = start_time
+    day_index = 0
+    
+    while current_time < end_time:
+        num_sessions = random.randint(*sessions_per_day)
+        
+        for _ in range(num_sessions):
+            # Create session
+            session_id = str(uuid.uuid4())
+            session_end_time = current_time + timedelta(minutes=random.randint(20, 40))
+            sut_id = random.choice(SUT_IDS)
+            sut_version = random.choice(["1.0.0", "1.1.0", "2.0.0"])
+            sut_env = random.choice(["dev", "staging", "prod"])
+            
+            # Generate test results
+            num_tests = random.randint(50, 100)
+            test_results = generate_test_results(session_id, num_tests, current_time)
+            
+            if include_patterns:
+                # Apply failure patterns based on conditions
+                in_global_failure = global_failure_start <= current_time <= global_failure_end
+                version_failures = version_failure_times.get(sut_version, [])
+                in_version_failure = current_time in version_failures
+                
+                base_failure_rate = 0.1  # Default failure rate
+                
+                # Apply various failure patterns
+                if in_global_failure:
+                    base_failure_rate = 0.9  # 90% failure rate during global failure event
+                elif in_version_failure:
+                    base_failure_rate = 0.7  # 70% failure rate during version-specific failures
+                
+                # Apply environment-based failure rates
+                env_failure_rate = get_environment_failure_probability(sut_env)
+                base_failure_rate = max(base_failure_rate, env_failure_rate)
+                
+                # Apply performance trend
+                final_failure_rate = apply_performance_trend(base_failure_rate, day_index, days)
+                
+                # Modify test results based on calculated failure rate
+                for result in test_results:
+                    if random.random() < final_failure_rate:
+                        result["outcome"] = "failed"
+                        result["error_message"] = "Simulated failure based on pattern"
+            
+            # Calculate session stats from test results
+            passed_tests = sum(1 for r in test_results if r["outcome"].lower() == "passed")
+            failed_tests = sum(1 for r in test_results if r["outcome"].lower() == "failed")
+            skipped_tests = sum(1 for r in test_results if r["outcome"].lower() == "skipped")
+            xfailed_tests = sum(1 for r in test_results if r["outcome"].lower() == "xfailed")
+            xpassed_tests = sum(1 for r in test_results if r["outcome"].lower() == "xpassed")
+            warnings = sum(1 for r in test_results if r["has_warning"])
+            
+            # Insert session
+            with db_connection(str(db_path)) as conn:
+                cursor = conn.cursor()
                 cursor.execute(
                     """
                     INSERT INTO sessions (
                         session_id, sut_id, sut_type, sut_version, sut_env,
                         start_time, end_time, duration, total_tests,
                         passed_tests, failed_tests, skipped_tests,
-                        xfailed_tests, xpassed_tests, warnings, errors, rerun
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        xfailed_tests, xpassed_tests, warnings, errors, rerun,
+                        rerun_outcomes
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
-                        session["session_id"],
-                        session["sut_id"],
-                        session["sut_type"],
-                        session["sut_version"],
-                        session["sut_env"],
-                        session["start_time"],
-                        session["end_time"],
-                        session["duration"],
-                        session["total_tests"],
-                        session["passed_tests"],
-                        session["failed_tests"],
-                        session["skipped_tests"],
-                        session["xfailed_tests"],
-                        session["xpassed_tests"],
-                        session["warnings"],
-                        session["errors"],
-                        session["rerun"],
+                        session_id,
+                        sut_id,
+                        "web-service",
+                        sut_version,
+                        sut_env,
+                        current_time.isoformat(),
+                        session_end_time.isoformat(),
+                        (session_end_time - current_time).total_seconds(),
+                        len(test_results),
+                        passed_tests,
+                        failed_tests,
+                        skipped_tests,
+                        xfailed_tests,
+                        xpassed_tests,
+                        warnings,
+                        0,  # errors
+                        0,  # rerun
+                        json.dumps([]),  # rerun_outcomes
                     ),
                 )
-                session_id = session["session_id"]
-                all_sessions.append(session)
-
-                # Generate test results
-                test_results = generate_test_results(
-                    session_id=session_id,
-                    num_tests=session["total_tests"],
-                    base_time=session["start_time"],
-                )
-
-                print(f"\rInserting {len(test_results)} test results...", end="")
-
+                
+                # Insert test results
                 for result in test_results:
                     cursor.execute(
                         """
@@ -608,31 +690,72 @@ def generate_historical_data(days: int = 7, sessions_per_day: tuple = (3, 8)):
                             result.get("is_rerun", False),
                         ),
                     )
+                conn.commit()
+            
+            current_time += timedelta(minutes=random.randint(60, 180))
+        
+        day_index += 1
+        current_time = start_time + timedelta(days=day_index)
 
-                # Update session stats
-                session_stats = update_session_stats(session_id, test_results)
-                total_reruns += session_stats["num_reruns"]
-                total_rerun_groups += session_stats["num_rerun_groups"]
 
-                cursor.execute(
-                    """
-                    UPDATE sessions
-                    SET rerun = ?
-                    WHERE session_id = ?
-                    """,
-                    (
-                        session_stats["num_reruns"],
-                        session_id,
-                    ),
-                )
+def generate_test_session(base_time: datetime, template_session_id: str) -> str:
+    """Generate a test session with random variations."""
+    session_id = str(uuid.uuid4())
+    end_time = base_time + timedelta(minutes=random.randint(20, 40))
 
-            current_time -= timedelta(days=1)
-            conn.commit()
+    # Generate test results first
+    num_tests = random.randint(50, 100)
+    test_results = generate_test_results(session_id, num_tests, base_time)
 
-        print("\n")
-        print(f"Total reruns: {total_reruns}")
-        print(f"Total rerun groups: {total_rerun_groups}")
-        print(f"\nSuccessfully generated {len(all_sessions)} historical test sessions with {len(all_sessions) * template_session['total_tests']} test results over {days} days")
+    # Calculate session stats from actual test results
+    passed_tests = sum(1 for r in test_results if r["outcome"].lower() == "passed")
+    failed_tests = sum(1 for r in test_results if r["outcome"].lower() == "failed")
+    skipped_tests = sum(1 for r in test_results if r["outcome"].lower() == "skipped")
+    xfailed_tests = sum(1 for r in test_results if r["outcome"].lower() == "xfailed")
+    xpassed_tests = sum(1 for r in test_results if r["outcome"].lower() == "xpassed")
+    warnings = sum(1 for r in test_results if r["has_warning"])
+
+    # Pick a random SUT ID
+    sut_id = random.choice(SUT_IDS)
+
+    # Create session with calculated stats
+    db_path = get_db_path()
+    with db_connection(db_path) as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            INSERT INTO sessions (
+                session_id, sut_id, sut_type, sut_version, sut_env,
+                start_time, end_time, duration, total_tests,
+                passed_tests, failed_tests, skipped_tests,
+                xfailed_tests, xpassed_tests, warnings, errors, rerun,
+                rerun_outcomes
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                session_id,
+                sut_id,
+                "web-service",  # sut_type
+                "1.0.0",  # sut_version
+                "staging",  # sut_env
+                base_time.isoformat(),
+                end_time.isoformat(),
+                (end_time - base_time).total_seconds(),
+                len(test_results),  # Use actual number of test results
+                passed_tests,
+                failed_tests,
+                skipped_tests,
+                xfailed_tests,
+                xpassed_tests,
+                warnings,
+                0,  # errors
+                0,  # rerun
+                json.dumps([]),  # rerun_outcomes
+            ),
+        )
+        conn.commit()
+
+    return session_id
 
 
 def ensure_template_data():
@@ -689,8 +812,9 @@ def ensure_template_data():
                     session_id, sut_id, sut_type, sut_version, sut_env,
                     start_time, end_time, duration, total_tests,
                     passed_tests, failed_tests, skipped_tests,
-                    xfailed_tests, xpassed_tests, warnings, errors, rerun
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    xfailed_tests, xpassed_tests, warnings, errors, rerun,
+                    rerun_outcomes
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     template_session["session_id"],
@@ -710,6 +834,7 @@ def ensure_template_data():
                     template_session["warnings"],
                     template_session["errors"],
                     template_session["rerun"],
+                    json.dumps([]),  # rerun_outcomes
                 ),
             )
             conn.commit()
@@ -795,64 +920,6 @@ def purge_database():
         )
     finally:
         conn.close()
-
-
-def generate_test_session(base_time: datetime, template_session_id: str) -> str:
-    """Generate a test session with random variations."""
-    session_id = str(uuid.uuid4())
-    end_time = base_time + timedelta(minutes=random.randint(20, 40))
-
-    # Generate test results first
-    num_tests = random.randint(50, 100)
-    test_results = generate_test_results(session_id, num_tests, base_time)
-
-    # Calculate session stats from actual test results
-    passed_tests = sum(1 for r in test_results if r["outcome"].lower() == "passed")
-    failed_tests = sum(1 for r in test_results if r["outcome"].lower() == "failed")
-    skipped_tests = sum(1 for r in test_results if r["outcome"].lower() == "skipped")
-    xfailed_tests = sum(1 for r in test_results if r["outcome"].lower() == "xfailed")
-    xpassed_tests = sum(1 for r in test_results if r["outcome"].lower() == "xpassed")
-    warnings = sum(1 for r in test_results if r["has_warning"])
-
-    # Pick a random SUT ID
-    sut_id = random.choice(SUT_IDS)
-
-    # Create session with calculated stats
-    db_path = get_db_path()
-    with db_connection(db_path) as conn:
-        cursor = conn.cursor()
-        cursor.execute(
-            """
-            INSERT INTO sessions (
-                session_id, sut_id, sut_type, sut_version, sut_env,
-                start_time, end_time, duration, total_tests,
-                passed_tests, failed_tests, skipped_tests,
-                xfailed_tests, xpassed_tests, warnings, errors, rerun
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                session_id,
-                sut_id,
-                "web-service",  # sut_type
-                "1.0.0",  # sut_version
-                "staging",  # sut_env
-                base_time.isoformat(),
-                end_time.isoformat(),
-                (end_time - base_time).total_seconds(),
-                len(test_results),  # Use actual number of test results
-                passed_tests,
-                failed_tests,
-                skipped_tests,
-                xfailed_tests,
-                xpassed_tests,
-                warnings,
-                0,  # errors
-                0,  # rerun
-            ),
-        )
-        conn.commit()
-
-    return session_id
 
 
 if __name__ == "__main__":

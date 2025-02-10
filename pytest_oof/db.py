@@ -209,7 +209,8 @@ def init_sqlite_db(db_path: Path) -> None:
                 xpassed_tests INTEGER DEFAULT 0,
                 warnings INTEGER DEFAULT 0,
                 errors INTEGER DEFAULT 0,
-                rerun INTEGER DEFAULT 0
+                rerun INTEGER DEFAULT 0,
+                rerun_outcomes TEXT DEFAULT '[]'  -- JSON array of outcomes
             )
             """
         )
@@ -233,11 +234,9 @@ def init_sqlite_db(db_path: Path) -> None:
                 capstdout TEXT,
                 capstderr TEXT,
                 rerun_count INTEGER DEFAULT 0,
-                rerun_outcomes TEXT DEFAULT '[]',  -- JSON array of outcomes
                 environment TEXT,
                 warnings TEXT,
-                is_rerun BOOLEAN,
-                FOREIGN KEY (session_id) REFERENCES sessions(session_id)
+                is_rerun BOOLEAN
             )
             """
         )
@@ -284,8 +283,9 @@ def add_session(
                 xpassed_tests,
                 warnings,
                 errors,
-                rerun
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                rerun,
+                rerun_outcomes
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 session_id,
@@ -303,6 +303,7 @@ def add_session(
                 0,  # warnings
                 0,  # errors
                 0,  # rerun
+                '[]',  # rerun_outcomes
             ),
         )
         conn.commit()
@@ -364,9 +365,8 @@ def add_test_result(
                 environment,
                 rerun_count,
                 start_time,
-                is_rerun,
-                rerun_outcomes
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                is_rerun
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 session_id,
@@ -383,7 +383,6 @@ def add_test_result(
                 if timestamp
                 else datetime.now(timezone.utc).isoformat(),
                 rerun_count > 0,
-                json.dumps(rerun_outcomes) if rerun_outcomes else "[]",
             ),
         )
         conn.commit()
@@ -435,7 +434,8 @@ def update_session_stats(
                 errors = ?,
                 rerun = ?,
                 end_time = ?,
-                duration = ?
+                duration = ?,
+                rerun_outcomes = ?
             WHERE session_id = ?
             """,
             (
@@ -450,6 +450,7 @@ def update_session_stats(
                 stats["rerun"],
                 stats["end_time"].isoformat() if stats["end_time"] else None,
                 int(stats["duration"].total_seconds()) if stats["duration"] else None,
+                json.dumps(stats["rerun_outcomes"]) if stats["rerun_outcomes"] else '[]',
                 session_id,
             ),
         )
@@ -622,7 +623,11 @@ def export_results(
                 s.xpassed_tests,
                 s.warnings,
                 s.errors,
-                s.rerun
+                s.rerun,
+                s.rerun_outcomes,
+                s.sut_type,
+                s.sut_version,
+                s.sut_env
             FROM sessions s
             INNER JOIN test_results r ON s.session_id = r.session_id
             WHERE 1=1
@@ -682,8 +687,7 @@ def export_results(
                     rerun_count,
                     environment,
                     warnings,
-                    is_rerun,
-                    rerun_outcomes
+                    is_rerun
                 FROM test_results
                 WHERE session_id = ?
                 ORDER BY start_time
@@ -695,12 +699,16 @@ def export_results(
             session_dict = {
                 "session": {
                     "id": session[0],  # Use single ID field
-                    "timing": {"start": datetime.fromisoformat(session[2]) if isinstance(session[2], str) else session[2], "stop": datetime.fromisoformat(session[3]) if isinstance(session[3], str) else session[3], "duration": session[4]},
+                    "timing": {
+                        "start": datetime.fromisoformat(session[2]) if isinstance(session[2], str) else session[2],
+                        "stop": datetime.fromisoformat(session[3]) if isinstance(session[3], str) else session[3],
+                        "duration": session[4]
+                    },
                     "sut": {
                         "id": session[1],
-                        "type": "",  # These fields no longer exist in schema
-                        "version": "",
-                        "environment": "",
+                        "type": session[15] or "",  # sut_type
+                        "version": session[16] or "",  # sut_version
+                        "environment": session[17] or "",  # sut_env
                         "metadata": None,
                     },
                     "statistics": {
@@ -719,8 +727,9 @@ def export_results(
                         },
                         "reruns": {
                             "total": session[13],
+                            "outcomes": json.loads(session[14]) if session[14] else [],  # rerun_outcomes
                             "groups": [],
-                        },  # These fields no longer exist
+                        },
                         "warnings": {"total": session[11], "unique": 0},
                         "deselected": 0,
                     },
@@ -744,9 +753,7 @@ def export_results(
                 }
 
                 # Add error info if present
-                if (
-                    tr[4] or tr[5] or tr[6]
-                ):  # error_message, error_type, error_traceback
+                if tr[4] or tr[5] or tr[6]:  # error_message, error_type, error_traceback
                     result["error"] = {
                         "message": tr[4],
                         "type": tr[5],
@@ -782,28 +789,19 @@ def export_results(
                 if tr[14]:  # warnings
                     result["warnings"] = json.loads(tr[14])
 
-                # Add rerun outcomes if present
-                if tr[16]:  # rerun_outcomes
-                    result["rerun_outcomes"] = json.loads(tr[16])
-
                 results_by_outcome[outcome].append(result)
 
             session_dict["test_results"] = results_by_outcome
             results.append(session_dict)
 
         if output_file:
+            # Write results to file
             with open(output_file, "w") as f:
                 if output_format == "jsonl":
-                    if not results:
-                        f.write("")  # Write empty file for no results
-                    else:
-                        for result in results:
-                            f.write(json.dumps(result, default=str) + "\n")
-                else:  # json
-                    if not results:
-                        f.write("[]")  # Write empty array for no results
-                    else:
-                        json.dump(results, f, indent=2, default=str)
+                    for result in results:
+                        f.write(json.dumps(result, default=str) + "\n")
+                else:
+                    json.dump(results, f, indent=2, default=str)
 
         return results
 

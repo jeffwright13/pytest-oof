@@ -1166,10 +1166,10 @@ def create_flexible_visualization(
 
         for i, metric in enumerate(metrics, 1):
             name, base_color = metric_props[metric]
-            
+
             for sut_id in selected_suts:
                 sut_data = df_sorted[df_sorted["sut_id"] == sut_id]
-                
+
                 if normalize:
                     total = sut_data[metrics].sum(axis=1)
                     y_values = sut_data[metric] / total * 100
@@ -1197,10 +1197,10 @@ def create_flexible_visualization(
     elif view_type == "area":
         for metric in metrics:
             name, base_color = metric_props[metric]
-            
+
             for sut_id in selected_suts:
                 sut_data = df_sorted[df_sorted["sut_id"] == sut_id]
-                
+
                 if normalize:
                     total = sut_data[metrics].sum(axis=1)
                     y_values = sut_data[metric] / total * 100
@@ -1347,22 +1347,22 @@ test_results_df_sut = (
     else test_results_df[test_results_df["sut_id"] == selected_sut]
 )
 
-# Main content with tabs
-st.title("pytest-oof Test Analysis")
+# # Main content with tabs
+# st.title("pytest-oof Test Analysis")
 
-tab_names = [
-    "Overview",
-    "Session View",
-    "Session Details",
-    "Session Comparison",
-    "Test Stability Analysis",
-    "Rerun Analysis",
-    "3D Visualization",
-    "Flaky Tests",
-    "Flexible Analysis",
-    "SUT Comparison Analysis",
-    "Test Analysis"
-]
+# tab_names = [
+#     "Overview",
+#     "Session View",
+#     "Session Details",
+#     "Session Comparison",
+#     "Test Stability Analysis",
+#     "Rerun Analysis",
+#     "3D Visualization",
+#     "Flaky Tests",
+#     "Flexible Analysis",
+#     "SUT Comparison Analysis",
+#     "Test Analysis"
+# ]
 
 # Create tabs and handle tab selection
 tabs = st.tabs(TABS)
@@ -1876,13 +1876,13 @@ with tabs[st.session_state.active_tab]:
     with tab11:
         def get_rerun_patterns(db_path, days, min_reruns, sut_filter=None):
             """Get rerun patterns from the database.
-            
+
             Args:
                 db_path: Path to the SQLite database
                 days: Number of days to look back
                 min_reruns: Minimum number of reruns required
                 sut_filter: Optional SUT ID to filter by
-            
+
             Returns:
                 dict: Dictionary containing recovery metrics and patterns
             """
@@ -1890,7 +1890,7 @@ with tabs[st.session_state.active_tab]:
                 with sqlite3.connect(db_path) as conn:
                     # Base query to get test results with reruns
                     query = """
-                        SELECT 
+                        SELECT
                             tr.test_id,
                             tr.outcome,
                             tr.rerun_outcomes,
@@ -1901,15 +1901,15 @@ with tabs[st.session_state.active_tab]:
                         WHERE s.start_time >= datetime('now', ?)
                     """
                     params = [f'-{days} days']
-                    
+
                     if sut_filter:
                         query += " AND s.sut_id = ?"
                         params.append(sut_filter)
-                        
+
                     query += " ORDER BY s.start_time"
-                    
+
                     df = pd.read_sql_query(query, conn, params=params)
-                    
+
                     if df.empty:
                         return {
                             "recovery_rate": 0.0,
@@ -1917,18 +1917,18 @@ with tabs[st.session_state.active_tab]:
                             "success_patterns": [],
                             "failure_patterns": []
                         }
-                    
+
                     # Process the results
                     success_patterns = defaultdict(int)
                     failure_patterns = defaultdict(int)
                     total_attempts = []
-                    
+
                     for _, row in df.iterrows():
                         test_id = row['test_id']
                         outcome = row['outcome']
                         rerun_outcomes = json.loads(row['rerun_outcomes']) if row['rerun_outcomes'] else []
                         rerun_count = row['rerun_count']
-                        
+
                         if rerun_count >= min_reruns:
                             full_sequence = [outcome] + rerun_outcomes
                             sequence = tuple(full_sequence)
@@ -1936,12 +1936,12 @@ with tabs[st.session_state.active_tab]:
                                 success_patterns[sequence] += 1
                             else:
                                 failure_patterns[sequence] += 1
-                            
+
                             total_attempts.append(rerun_count)
-                    
+
                     successful_reruns = len([x for x in df['outcome'] if x == 'PASSED'])
                     total_reruns = len(df)
-                    
+
                     return {
                         "success_patterns": sorted(
                             [(list(k), v) for k, v in success_patterns.items()],
@@ -1956,7 +1956,7 @@ with tabs[st.session_state.active_tab]:
                         "recovery_rate": (successful_reruns / total_reruns * 100) if total_reruns > 0 else 0.0,
                         "avg_attempts": sum(total_attempts) / len(total_attempts) if total_attempts else 0.0
                     }
-                    
+
             except Exception as e:
                 st.error(f"Failed to get rerun patterns: {str(e)}")
                 return {
