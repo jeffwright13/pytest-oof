@@ -1,6 +1,4 @@
 """CLI entry point for pytest-oof."""
-import subprocess
-
 import click
 from rich.console import Console
 
@@ -10,8 +8,14 @@ from pytest_oof.cli.export import export
 
 console = Console()
 
+CONTEXT_SETTINGS = {
+    "help_option_names": ["-h", "--help"],
+    "show_default": True,
+    "max_content_width": 100,
+}
 
-@click.group()
+
+@click.group(context_settings=CONTEXT_SETTINGS)
 def cli():
     """pytest-oof: Pytest Outcomes and Output-Fields
 
@@ -29,27 +33,8 @@ cli.add_command(export)
 cli.add_command(examples)
 
 
-@cli.group()
-def view():
-    """View test results."""
-    pass
-
-
-@view.command()
-def tui():
-    """View results in terminal UI."""
-    console.print("Launching TUI...", style="green")
-    subprocess.run(["oof-tui"])
-
-
-@view.command()
-def console():
-    """View results in console."""
-    console.print("Executing Simple UI...", style="green")
-    subprocess.run(["oof-console"])
-
-
 def main():
+    """Entry point for the CLI."""
     cli()
 
 

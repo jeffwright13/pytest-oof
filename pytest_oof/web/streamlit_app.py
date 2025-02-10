@@ -1,22 +1,20 @@
-import plotly.graph_objects as go
-import pandas as pd
-import streamlit as st
-import sqlite3
-from pathlib import Path
 import json
+import sqlite3
 from collections import defaultdict
+from pathlib import Path
 
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
-from plotly.subplots import make_subplots
 import streamlit as st
+from plotly.subplots import make_subplots
 
 from pytest_oof.db import (
-    init_sqlite_db,
-    get_rerun_patterns,
-    get_xfail_trends,
     get_flaky_tests,
+    get_rerun_patterns,
+    get_rerun_stats,
+    get_xfail_trends,
+    init_sqlite_db,
 )
 
 st.set_page_config(
@@ -57,7 +55,7 @@ TABS = [
     "Flaky Tests",
     "Flexible Analysis",
     "SUT Comparison Analysis",
-    "Test Analysis"
+    "Test Analysis",
 ]
 
 # Define which outcomes should have white text for better contrast
@@ -289,8 +287,12 @@ def load_test_results():
 
             # Return empty DataFrame if no results
             if df.empty:
-                st.warning("No test results found in the database. Please run some tests first.")
-                return pd.DataFrame(columns=["sut_id", "start_time", "outcome", "duration"])
+                st.warning(
+                    "No test results found in the database. Please run some tests first."
+                )
+                return pd.DataFrame(
+                    columns=["sut_id", "start_time", "outcome", "duration"]
+                )
 
             # Ensure timezone awareness
             if df["start_time"].dt.tz is None:
@@ -310,11 +312,15 @@ def load_test_results():
             return df
     except Exception as e:
         st.error(f"Error loading test results: {str(e)}")
-        return pd.DataFrame(columns=["sut_id", "start_time", "outcome", "duration"])  # Return empty DataFrame with required columns
+        return pd.DataFrame(
+            columns=["sut_id", "start_time", "outcome", "duration"]
+        )  # Return empty DataFrame with required columns
+
 
 def get_db_path():
     """Get the path to the SQLite database."""
     return Path("./.oof/oof-results.db")
+
 
 def get_unique_sut_ids(db_path):
     """Get unique SUT IDs from the database."""
@@ -322,10 +328,11 @@ def get_unique_sut_ids(db_path):
         with sqlite3.connect(db_path) as conn:
             query = "SELECT DISTINCT sut_id FROM sessions ORDER BY sut_id"
             df = pd.read_sql_query(query, conn)
-            return df['sut_id'].unique()
+            return df["sut_id"].unique()
     except Exception as e:
         st.error(f"Failed to get unique SUT IDs: {str(e)}")
         return []
+
 
 def plot_test_results_trend(df, viz_settings, view_type="aggregate"):
     """Plot test results trend over time."""
@@ -778,8 +785,8 @@ def plot_test_transitions(fail_to_pass, pass_to_fail):
 
     if fail_to_pass.empty and pass_to_fail.empty:
         st.info("No test transitions detected with current settings.")
-# ERROR: Misplaced return - commented out
-#         return
+    # ERROR: Misplaced return - commented out
+    #         return
 
     # Combine transitions into one dataframe
     transitions = []
@@ -808,8 +815,8 @@ def plot_test_transitions(fail_to_pass, pass_to_fail):
 
     if not transitions:
         st.info("No test transitions detected with current settings.")
-# ERROR: Misplaced return - commented out
-#         return
+    # ERROR: Misplaced return - commented out
+    #         return
 
     df = pd.DataFrame(transitions)
 
@@ -860,92 +867,38 @@ def plot_test_transitions(fail_to_pass, pass_to_fail):
             )
 
 
-def analyze_rerun_patterns(df):
-    """
-    Analyze test rerun patterns and create visualizations.
+def analyze_rerun_patterns():
+    """Analyze and display test rerun patterns."""
+    db_path = ensure_db_exists()
+    rerun_stats = get_rerun_stats(db_path)
 
-    Args:
-        df: DataFrame with test results including rerun information
+    if not rerun_stats:
+        st.info("No rerun data available for analysis.")
+        return
 
-    Returns:
-        tuple: (rerun_stats_fig, rerun_outcomes_fig) - Plotly figures for rerun statistics
-    """
-    if df.empty or "rerun_count" not in df.columns:
-        return None, None
+    # Display statistics
+    col1, col2 = st.columns(2)
+    with col1:
+        st.metric("Tests with Reruns", rerun_stats["total_reruns"])
+        st.metric("Recovery Success Rate", f"{rerun_stats['success_rate']:.1f}%")
+    with col2:
+        st.metric("Average Reruns per Test", f"{rerun_stats['avg_reruns']:.2f}")
+        st.metric("Average Rerun Time", f"{rerun_stats['avg_time']:.2f}s")
 
-    # Calculate rerun statistics
-    rerun_df = df[df["rerun_count"] > 0].copy()  # Make a copy to avoid SettingWithCopyWarning
-    if rerun_df.empty:
-        return None, None
+    # Display outcome distribution
+    st.subheader("Final Outcomes for Tests with Reruns")
+    outcome_df = pd.DataFrame(
+        list(rerun_stats["outcome_counts"].items()), columns=["Outcome", "Count"]
+    )
+    st.bar_chart(outcome_df.set_index("Outcome"))
 
-    # Calculate total rerun time (duration * rerun_count)
-    rerun_df["total_rerun_time"] = rerun_df["duration"] * rerun_df["rerun_count"]
-
-    rerun_stats = rerun_df.agg(
-        {"rerun_count": ["count", "mean", "max"], "total_rerun_time": ["sum", "mean"]}
-    ).round(2)
-
-    # Create rerun stats figure
-    rerun_stats_fig = go.Figure()
-    rerun_stats_fig.add_trace(
-        go.Indicator(
-            mode="number",
-            value=rerun_stats["rerun_count"]["count"],
-            title="Tests with Reruns",
-            domain={"row": 0, "column": 0},
+    # Display common sequences
+    if rerun_stats["common_sequences"]:
+        st.subheader("Most Common Rerun Sequences")
+        sequence_df = pd.DataFrame(
+            rerun_stats["common_sequences"], columns=["Sequence", "Count"]
         )
-    )
-    rerun_stats_fig.add_trace(
-        go.Indicator(
-            mode="number",
-            value=rerun_stats["rerun_count"]["mean"],
-            title="Avg Reruns per Test",
-            number={"valueformat": ".2f"},
-            domain={"row": 0, "column": 1},
-        )
-    )
-    rerun_stats_fig.add_trace(
-        go.Indicator(
-            mode="number",
-            value=rerun_stats["total_rerun_time"]["sum"],
-            title="Total Rerun Time (s)",
-            number={"valueformat": ".2f"},
-            domain={"row": 1, "column": 0},
-        )
-    )
-    rerun_stats_fig.add_trace(
-        go.Indicator(
-            mode="number",
-            value=rerun_stats["total_rerun_time"]["mean"],
-            title="Avg Rerun Time per Test (s)",
-            number={"valueformat": ".2f"},
-            domain={"row": 1, "column": 1},
-        )
-    )
-
-    rerun_stats_fig.update_layout(
-        grid={"rows": 2, "columns": 2}, height=400, **PLOTLY_LAYOUT
-    )
-
-    # Create rerun outcomes figure showing final outcomes for tests with reruns
-    outcome_counts = rerun_df["outcome"].value_counts()
-
-    rerun_outcomes_fig = go.Figure()
-    rerun_outcomes_fig.add_trace(
-        go.Pie(
-            labels=outcome_counts.index,
-            values=outcome_counts.values,
-            hole=0.4,
-            marker=dict(colors=[OUTCOME_COLORS.get(o, "#808080") for o in outcome_counts.index])
-        )
-    )
-    rerun_outcomes_fig.update_layout(
-        title="Final Outcomes for Tests with Reruns",
-        height=400,
-        **PLOTLY_LAYOUT
-    )
-
-    return rerun_stats_fig, rerun_outcomes_fig
+        st.dataframe(sequence_df, use_container_width=True)
 
 
 def create_3d_test_surface(df, metric="failures", smoothing=0.0, colorscale="viridis"):
@@ -959,11 +912,15 @@ def create_3d_test_surface(df, metric="failures", smoothing=0.0, colorscale="vir
 
     # Calculate metric values
     if metric == "failures":
-        daily_stats["metric_value"] = daily_stats["num_failures"] + daily_stats["num_errors"]
+        daily_stats["metric_value"] = (
+            daily_stats["num_failures"] + daily_stats["num_errors"]
+        )
     elif metric == "passes":
         daily_stats["metric_value"] = daily_stats["num_passes"]
     elif metric == "flaky":
-        daily_stats["metric_value"] = daily_stats["num_xpasses"] + daily_stats["num_xfails"]
+        daily_stats["metric_value"] = (
+            daily_stats["num_xpasses"] + daily_stats["num_xfails"]
+        )
 
     # Pivot data to create surface
     pivot_df = daily_stats.pivot_table(
@@ -982,7 +939,7 @@ def create_3d_test_surface(df, metric="failures", smoothing=0.0, colorscale="vir
                 x=pivot_df.columns,
                 y=pivot_df.index,
                 colorscale=colorscale,
-# smoothing=smoothing,  # Removed invalid 'smoothing' parameter
+                # smoothing=smoothing,  # Removed invalid 'smoothing' parameter
                 colorbar=dict(title=metric.capitalize()),
             )
         ]
@@ -997,10 +954,10 @@ def create_3d_test_surface(df, metric="failures", smoothing=0.0, colorscale="vir
             camera=dict(
                 up=dict(x=0, y=0, z=1),
                 center=dict(x=0, y=0, z=0),
-                eye=dict(x=1.5, y=1.5, z=1.5)
+                eye=dict(x=1.5, y=1.5, z=1.5),
             ),
-            aspectmode='manual',
-            aspectratio=dict(x=2, y=1, z=1)
+            aspectmode="manual",
+            aspectratio=dict(x=2, y=1, z=1),
         ),
         width=1000,  # Increased width
         height=800,  # Increased height
@@ -1136,9 +1093,16 @@ def create_flexible_visualization(
     df_sorted["start_time"] = pd.to_datetime(df_sorted["date"])
     df_sorted = df_sorted.sort_values("start_time")
 
-    fig = go.Figure()
+    # Create a subplot for each SUT
+    fig = make_subplots(
+        rows=len(selected_suts),
+        cols=1,
+        shared_xaxes=True,
+        vertical_spacing=0.05,
+        subplot_titles=[f"SUT: {sut}" for sut in selected_suts],
+    )
 
-    # Define metric properties with consistent colors per metric across SUTs
+    # Define metric properties with consistent colors
     metric_props = {
         "num_passes": ("Passed", "#2ecc71"),  # Green
         "num_failures": ("Failed", "#e74c3c"),  # Red
@@ -1148,27 +1112,12 @@ def create_flexible_visualization(
         "num_xpasses": ("Unexpected Passes", "#3498db"),  # Blue
     }
 
-    # Create color variations for different SUTs
-    sut_opacities = {
-        sut: 0.5 + (i * 0.5 / len(selected_suts))
-        for i, sut in enumerate(selected_suts)
-    }
-
     if view_type == "line":
-        # Create a subplot for each metric
-        fig = make_subplots(
-            rows=len(metrics),
-            cols=1,
-            shared_xaxes=True,
-            vertical_spacing=0.05,
-            subplot_titles=[metric_props[m][0] for m in metrics]
-        )
+        for i, sut_id in enumerate(selected_suts, 1):
+            sut_data = df_sorted[df_sorted["sut_id"] == sut_id]
 
-        for i, metric in enumerate(metrics, 1):
-            name, base_color = metric_props[metric]
-
-            for sut_id in selected_suts:
-                sut_data = df_sorted[df_sorted["sut_id"] == sut_id]
+            for metric in metrics:
+                name, color = metric_props[metric]
 
                 if normalize:
                     total = sut_data[metrics].sum(axis=1)
@@ -1180,26 +1129,24 @@ def create_flexible_visualization(
                     go.Scatter(
                         x=sut_data["start_time"],
                         y=y_values,
-                        name=f"{sut_id} - {name}",
+                        name=f"{name}",
                         mode="lines+markers",
                         line=dict(
-                            color=base_color,
+                            color=color,
                             width=2,
-                            dash="solid" if i == 1 else "dot",
                         ),
-                        opacity=sut_opacities[sut_id],
                         showlegend=i == 1,  # Only show legend for first subplot
                     ),
                     row=i,
-                    col=1
+                    col=1,
                 )
 
     elif view_type == "area":
-        for metric in metrics:
-            name, base_color = metric_props[metric]
+        for i, sut_id in enumerate(selected_suts, 1):
+            sut_data = df_sorted[df_sorted["sut_id"] == sut_id]
 
-            for sut_id in selected_suts:
-                sut_data = df_sorted[df_sorted["sut_id"] == sut_id]
+            for metric in metrics:
+                name, color = metric_props[metric]
 
                 if normalize:
                     total = sut_data[metrics].sum(axis=1)
@@ -1211,17 +1158,19 @@ def create_flexible_visualization(
                     go.Scatter(
                         x=sut_data["start_time"],
                         y=y_values,
-                        name=f"{sut_id} - {name}",
+                        name=f"{name}",
                         mode="none",
                         fill="tonexty",
-                        stackgroup=sut_id,
-                        line=dict(color=base_color),
-                        opacity=sut_opacities[sut_id],
-                    )
+                        stackgroup="group" + str(i),  # Separate stack groups per SUT
+                        line=dict(color=color),
+                        showlegend=i == 1,  # Only show legend for first subplot
+                    ),
+                    row=i,
+                    col=1,
                 )
 
     # Update layout
-    title = "Test Results Over Time"
+    title = "Test Results by SUT Over Time"
     if normalize:
         title += " (Percentage)"
         y_axis_title = "Percentage"
@@ -1232,18 +1181,16 @@ def create_flexible_visualization(
         title=title,
         xaxis_title="Date",
         yaxis_title=y_axis_title,
-        legend=dict(
-            orientation="h",
-            yanchor="bottom",
-            y=1.02,
-            xanchor="right",
-            x=1
-        ),
-        height=200 * max(len(metrics), 2),  # Adjust height based on number of metrics
-        margin=dict(t=30, l=10, r=10, b=10),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        height=250 * len(selected_suts),  # More height per SUT
+        margin=dict(t=50, l=10, r=10, b=10),
         hovermode="x unified",
-        **PLOTLY_LAYOUT
+        **PLOTLY_LAYOUT,
     )
+
+    # Update y-axes titles
+    for i in range(len(selected_suts)):
+        fig.update_yaxes(title=y_axis_title, row=i + 1, col=1)
 
     return fig
 
@@ -1387,7 +1334,7 @@ with tabs[st.session_state.active_tab]:
             "Flaky Tests",
             "Flexible Analysis",
             "SUT Comparison Analysis",
-            "Test Analysis"
+            "Test Analysis",
         ]
     )
 
@@ -1547,13 +1494,7 @@ with tabs[st.session_state.active_tab]:
     with tab6:
         st.header("Rerun Analysis")
         if not test_results_df_sut.empty:
-            rerun_stats_fig, rerun_outcomes_fig = analyze_rerun_patterns(
-                test_results_df_sut
-            )
-            if rerun_stats_fig:
-                st.plotly_chart(rerun_stats_fig, use_container_width=True)
-            if rerun_outcomes_fig:
-                st.plotly_chart(rerun_outcomes_fig, use_container_width=True)
+            analyze_rerun_patterns()
         else:
             st.info("No rerun data available for the selected SUT.")
 
@@ -1564,15 +1505,13 @@ with tabs[st.session_state.active_tab]:
         daily_stats_df = load_session_data()
         if daily_stats_df is None or daily_stats_df.empty:
             st.warning("No session data available.")
-# ERROR: Misplaced return - commented out
-#             return
+        # ERROR: Misplaced return - commented out
+        #             return
 
         col1, col2, col3 = st.columns(3)
         with col1:
             metric = st.selectbox(
-                "Metric",
-                ["failures", "passes", "flaky"],
-                key="surface_metric"
+                "Metric", ["failures", "passes", "flaky"], key="surface_metric"
             )
         with col2:
             smoothing = st.slider(
@@ -1581,31 +1520,33 @@ with tabs[st.session_state.active_tab]:
                 max_value=1.0,
                 value=0.0,
                 step=0.1,
-                key="surface_smoothing"
+                key="surface_smoothing",
             )
         with col3:
             colorscale = st.selectbox(
                 "Color Scale",
                 ["viridis", "plasma", "inferno", "magma", "RdYlBu"],
-                key="surface_colorscale"
+                key="surface_colorscale",
             )
 
         surface_fig = create_3d_test_surface(
             daily_stats_df,
             metric=metric,
             smoothing=smoothing,
-            colorscale=colorscale.lower()
+            colorscale=colorscale.lower(),
         )
         if surface_fig:
             st.plotly_chart(surface_fig, use_container_width=True)
 
-            st.markdown("""
+            st.markdown(
+                """
             ### How to Interact with the 3D Plot:
             - **Rotate**: Click and drag
             - **Zoom**: Mouse wheel or pinch gesture
             - **Pan**: Right-click and drag
             - **Reset View**: Double-click
-            """)
+            """
+            )
     with tab8:
         st.header("Flaky Tests")
         if not test_results_df_sut.empty:
@@ -1874,6 +1815,7 @@ with tabs[st.session_state.active_tab]:
             st.info("Please select at least one SUT and one metric to display.")
 
     with tab11:
+
         def get_rerun_patterns(db_path, days, min_reruns, sut_filter=None):
             """Get rerun patterns from the database.
 
@@ -1900,7 +1842,7 @@ with tabs[st.session_state.active_tab]:
                         JOIN sessions s ON tr.session_id = s.session_id
                         WHERE s.start_time >= datetime('now', ?)
                     """
-                    params = [f'-{days} days']
+                    params = [f"-{days} days"]
 
                     if sut_filter:
                         query += " AND s.sut_id = ?"
@@ -1915,7 +1857,7 @@ with tabs[st.session_state.active_tab]:
                             "recovery_rate": 0.0,
                             "avg_attempts": 0.0,
                             "success_patterns": [],
-                            "failure_patterns": []
+                            "failure_patterns": [],
                         }
 
                     # Process the results
@@ -1924,37 +1866,45 @@ with tabs[st.session_state.active_tab]:
                     total_attempts = []
 
                     for _, row in df.iterrows():
-                        test_id = row['test_id']
-                        outcome = row['outcome']
-                        rerun_outcomes = json.loads(row['rerun_outcomes']) if row['rerun_outcomes'] else []
-                        rerun_count = row['rerun_count']
+                        row["test_id"]
+                        outcome = row["outcome"]
+                        rerun_outcomes = (
+                            json.loads(row["rerun_outcomes"])
+                            if row["rerun_outcomes"]
+                            else []
+                        )
+                        rerun_count = row["rerun_count"]
 
                         if rerun_count >= min_reruns:
                             full_sequence = [outcome] + rerun_outcomes
                             sequence = tuple(full_sequence)
-                            if outcome == 'PASSED':
+                            if outcome == "PASSED":
                                 success_patterns[sequence] += 1
                             else:
                                 failure_patterns[sequence] += 1
 
                             total_attempts.append(rerun_count)
 
-                    successful_reruns = len([x for x in df['outcome'] if x == 'PASSED'])
+                    successful_reruns = len([x for x in df["outcome"] if x == "PASSED"])
                     total_reruns = len(df)
 
                     return {
                         "success_patterns": sorted(
                             [(list(k), v) for k, v in success_patterns.items()],
                             key=lambda x: x[1],
-                            reverse=True
+                            reverse=True,
                         )[:5],
                         "failure_patterns": sorted(
                             [(list(k), v) for k, v in failure_patterns.items()],
                             key=lambda x: x[1],
-                            reverse=True
+                            reverse=True,
                         )[:5],
-                        "recovery_rate": (successful_reruns / total_reruns * 100) if total_reruns > 0 else 0.0,
-                        "avg_attempts": sum(total_attempts) / len(total_attempts) if total_attempts else 0.0
+                        "recovery_rate": (successful_reruns / total_reruns * 100)
+                        if total_reruns > 0
+                        else 0.0,
+                        "avg_attempts": sum(total_attempts) / len(total_attempts)
+                        if total_attempts
+                        else 0.0,
                     }
 
             except Exception as e:
@@ -1963,7 +1913,7 @@ with tabs[st.session_state.active_tab]:
                     "recovery_rate": 0.0,
                     "avg_attempts": 0.0,
                     "success_patterns": [],
-                    "failure_patterns": []
+                    "failure_patterns": [],
                 }
 
         def display_test_analysis():
@@ -1978,18 +1928,22 @@ with tabs[st.session_state.active_tab]:
                 sut_id = st.selectbox(
                     "Filter by SUT",
                     options=["All"] + list(get_unique_sut_ids(get_db_path())),
-                    index=0
+                    index=0,
                 )
 
             sut_filter = None if sut_id == "All" else sut_id
 
             # Create tabs for different analyses
-            tab1, tab2, tab3 = st.tabs(["Rerun Analysis", "XFail Trends", "Flaky Tests"])
+            tab1, tab2, tab3 = st.tabs(
+                ["Rerun Analysis", "XFail Trends", "Flaky Tests"]
+            )
 
             with tab1:
                 st.subheader("Rerun Pattern Analysis")
                 min_reruns = st.number_input("Minimum Reruns", min_value=1, value=3)
-                patterns = get_rerun_patterns(get_db_path(), days, min_reruns, sut_filter)
+                patterns = get_rerun_patterns(
+                    get_db_path(), days, min_reruns, sut_filter
+                )
 
                 # Display recovery metrics
                 col1, col2 = st.columns(2)
@@ -2011,37 +1965,39 @@ with tabs[st.session_state.active_tab]:
             with tab2:
                 st.subheader("XFail/XPass Trends")
                 granularity = st.selectbox(
-                    "Time Grouping",
-                    options=["hour", "day", "week"],
-                    index=1
+                    "Time Grouping", options=["hour", "day", "week"], index=1
                 )
 
                 trends = get_xfail_trends(get_db_path(), days, granularity, sut_filter)
                 if trends:
                     # Create DataFrame for plotting
                     df = pd.DataFrame(trends)
-                    df['timestamp'] = pd.to_datetime(df['timestamp'])
+                    df["timestamp"] = pd.to_datetime(df["timestamp"])
 
                     # Plot trends
                     fig = go.Figure()
-                    fig.add_trace(go.Scatter(
-                        x=df['timestamp'],
-                        y=df['xfail_rate'],
-                        name='XFail Rate',
-                        line=dict(color='orange')
-                    ))
-                    fig.add_trace(go.Scatter(
-                        x=df['timestamp'],
-                        y=df['xpass_rate'],
-                        name='XPass Rate',
-                        line=dict(color='green')
-                    ))
+                    fig.add_trace(
+                        go.Scatter(
+                            x=df["timestamp"],
+                            y=df["xfail_rate"],
+                            name="XFail Rate",
+                            line=dict(color="orange"),
+                        )
+                    )
+                    fig.add_trace(
+                        go.Scatter(
+                            x=df["timestamp"],
+                            y=df["xpass_rate"],
+                            name="XPass Rate",
+                            line=dict(color="green"),
+                        )
+                    )
 
                     fig.update_layout(
-                        title='XFail/XPass Trends Over Time',
-                        xaxis_title='Time',
-                        yaxis_title='Rate (%)',
-                        height=500
+                        title="XFail/XPass Trends Over Time",
+                        xaxis_title="Time",
+                        yaxis_title="Rate (%)",
+                        height=500,
                     )
                     st.plotly_chart(fig, use_container_width=True)
 
@@ -2049,8 +2005,12 @@ with tabs[st.session_state.active_tab]:
                     if len(df) > 0:
                         latest = df.iloc[-1]
                         col1, col2 = st.columns(2)
-                        col1.metric("Current XFail Rate", f"{latest['xfail_rate']:.1f}%")
-                        col2.metric("Current XPass Rate", f"{latest['xpass_rate']:.1f}%")
+                        col1.metric(
+                            "Current XFail Rate", f"{latest['xfail_rate']:.1f}%"
+                        )
+                        col2.metric(
+                            "Current XPass Rate", f"{latest['xpass_rate']:.1f}%"
+                        )
 
             with tab3:
                 st.subheader("Flaky Test Detection")
@@ -2060,7 +2020,7 @@ with tabs[st.session_state.active_tab]:
                     max_value=1.0,
                     value=0.1,
                     step=0.05,
-                    help="Minimum ratio of outcome changes to total runs"
+                    help="Minimum ratio of outcome changes to total runs",
                 )
 
                 flaky_tests = get_flaky_tests(
@@ -2073,24 +2033,31 @@ with tabs[st.session_state.active_tab]:
                             f"{test['test_id']} (Score: {test['flakiness_score']:.2f})"
                         ):
                             # Show test details
-                            st.write("Run Count:", test['run_count'])
-                            st.write("Unique Outcomes:", ", ".join(test['unique_outcomes']))
+                            st.write("Run Count:", test["run_count"])
+                            st.write(
+                                "Unique Outcomes:", ", ".join(test["unique_outcomes"])
+                            )
 
                             # Create pie chart of outcomes
-                            fig = go.Figure(data=[go.Pie(
-                                labels=list(test['outcome_counts'].keys()),
-                                values=list(test['outcome_counts'].values())
-                            )])
-                            fig.update_layout(
-                                title='Outcome Distribution',
-                                height=300
+                            fig = go.Figure(
+                                data=[
+                                    go.Pie(
+                                        labels=list(test["outcome_counts"].keys()),
+                                        values=list(test["outcome_counts"].values()),
+                                    )
+                                ]
                             )
+                            fig.update_layout(title="Outcome Distribution", height=300)
                             st.plotly_chart(fig, use_container_width=True)
 
                             # Show common transitions
                             st.write("Common Outcome Transitions:")
-                            for (from_outcome, to_outcome), count in test['common_transitions']:
-                                st.write(f"• {from_outcome} → {to_outcome} ({count} times)")
+                            for (from_outcome, to_outcome), count in test[
+                                "common_transitions"
+                            ]:
+                                st.write(
+                                    f"• {from_outcome} → {to_outcome} ({count} times)"
+                                )
                 else:
                     st.info("No flaky tests found with the current criteria")
 

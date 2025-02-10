@@ -1,8 +1,6 @@
 """CLI command to show example usage of all oof commands."""
 import click
 from rich.console import Console
-from rich.syntax import Syntax
-from rich.panel import Panel
 from rich.text import Text
 
 console = Console()
@@ -70,34 +68,37 @@ oof export results --outcome skipped --output skipped-tests.json
 oof export results --test-id test_login --output login-tests.json
 """
 
-@click.command()
-@click.option('--save', type=click.Path(), help='Save examples to a markdown file')
+
+@click.command(
+    context_settings={"help_option_names": ["-h", "--help"], "show_default": True}
+)
+@click.option("--save", type=click.Path(), help="Save examples to a markdown file")
 def examples(save):
     """Show example commands and usage."""
     if save:
-        with open(save, 'w') as f:
+        with open(save, "w") as f:
             f.write(EXAMPLE_TEXT)
         console.print(f"Examples saved to [green]{save}[/green]")
     else:
         # Split into sections and print each with a header
-        sections = EXAMPLE_TEXT.split('\n\n')
+        sections = EXAMPLE_TEXT.split("\n\n")
         for section in sections:
-            if section.startswith('#'):
+            if section.startswith("#"):
                 # It's a header
                 console.print()
-                console.print(Text(section.strip('#').strip(), style="bold cyan"))
-            elif section.startswith('##'):
+                console.print(Text(section.strip("#").strip(), style="bold cyan"))
+            elif section.startswith("##"):
                 # It's a subheader
                 console.print()
-                console.print(Text(section.strip('#').strip(), style="bold blue"))
-            elif section.startswith('###'):
+                console.print(Text(section.strip("#").strip(), style="bold blue"))
+            elif section.startswith("###"):
                 # It's a sub-subheader
                 console.print()
-                console.print(Text(section.strip('#').strip(), style="bold"))
+                console.print(Text(section.strip("#").strip(), style="bold"))
             else:
                 # It's a command block
-                for line in section.split('\n'):
-                    if line.startswith('#'):
+                for line in section.split("\n"):
+                    if line.startswith("#"):
                         # It's a comment
                         console.print(Text(line, style="dim"))
                     elif line.strip():

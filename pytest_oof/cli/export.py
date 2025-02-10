@@ -11,9 +11,11 @@ from pytest_oof.db import export_results
 console = Console()
 
 
-@click.group()
+@click.group(
+    context_settings={"help_option_names": ["-h", "--help"], "show_default": True}
+)
 def export():
-    """Export test results in various formats."""
+    """Export test results."""
     pass
 
 
@@ -67,7 +69,7 @@ def results(
         oof export results --start-time "2025-01-01 00:00:00" --end-time "2025-02-01 00:00:00"
     """
     output_path = Path(output) if output else None
-    db_path = Path("./.oof/oof-results.db")  # TODO: Make this configurable
+    db_path = Path("./.oof/oof-results.db")
 
     # Determine format from file extension if output is specified
     output_format = "json"  # Default to JSON for stdout

@@ -3,7 +3,16 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Union
 
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Float, JSON
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    Column,
+    DateTime,
+    Float,
+    ForeignKey,
+    Integer,
+    String,
+)
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
 
@@ -13,6 +22,7 @@ Base = declarative_base()
 # SQLAlchemy Models
 class SQLTestSession(Base):
     """SQLAlchemy model for test sessions."""
+
     __tablename__ = "sessions"
 
     session_id = Column(String, primary_key=True)
@@ -32,6 +42,9 @@ class SQLTestSession(Base):
     warnings = Column(Integer, default=0)
     errors = Column(Integer, default=0)
     rerun = Column(Integer, default=0)
+    rerun_outcomes = Column(JSON, default=list)
+
+    test_results = relationship("TestResult", back_populates="session")
 
 
 class TestResult(Base):
@@ -43,12 +56,22 @@ class TestResult(Base):
     session_id = Column(String, ForeignKey("sessions.session_id"), nullable=False)
     test_id = Column(String, nullable=False)
     outcome = Column(String, nullable=False)
+    start_time = Column(DateTime)
     duration = Column(Float)
-    error_data = Column(JSON)
-    warnings = Column(JSON)
-    environment = Column(JSON)
+    error_message = Column(String)
+    error_type = Column(String)
+    error_traceback = Column(String)
+    has_warning = Column(Boolean, default=False)
+    longreprtext = Column(String)
+    caplog = Column(String)
+    capstdout = Column(String)
+    capstderr = Column(String)
     rerun_count = Column(Integer, default=0)
-    timestamp = Column(DateTime)
+    rerun_outcomes = Column(JSON, default=list)
+    environment = Column(JSON)
+    warnings = Column(JSON)
+
+    session = relationship("SQLTestSession", back_populates="test_results")
 
     def __init__(
         self,
@@ -59,16 +82,21 @@ class TestResult(Base):
         environment: Optional[Dict[str, Any]] = None,
         warnings: Optional[List[str]] = None,
         rerun_count: int = 0,
+        rerun_outcomes: Optional[List[str]] = None,
         session_id: Optional[str] = None,
     ):
         """Initialize a test result."""
         self.test_id = test_id
         self.outcome = outcome
         self.duration = duration
-        self.error_data = error_data
+        if error_data:
+            self.error_message = error_data.get("message", "")
+            self.error_type = error_data.get("type", "")
+            self.error_traceback = error_data.get("traceback", "")
         self.environment = environment or {}
         self.warnings = warnings or []
         self.rerun_count = rerun_count
+        self.rerun_outcomes = rerun_outcomes or []
         self.session_id = session_id
 
     def to_dict(self) -> Dict[str, Any]:
@@ -77,10 +105,17 @@ class TestResult(Base):
             "test_id": self.test_id,
             "outcome": self.outcome,
             "duration": self.duration,
-            "error_data": self.error_data,
+            "error_data": {
+                "message": self.error_message,
+                "type": self.error_type,
+                "traceback": self.error_traceback,
+            }
+            if self.error_message
+            else None,
             "environment": self.environment,
             "warnings": self.warnings,
             "rerun_count": self.rerun_count,
+            "rerun_outcomes": self.rerun_outcomes,
             "session_id": self.session_id,
         }
 
@@ -89,6 +124,7 @@ class TestResult(Base):
 @dataclass
 class TestSessionStats:
     """Test session statistics."""
+
     num_passed: int = 0
     num_failed: int = 0
     num_skipped: int = 0
@@ -103,17 +139,21 @@ class TestSessionStats:
     def to_dict(self) -> Dict[str, Any]:
         """Convert TestSessionStats to a dictionary."""
         return {
-            'total_tests': self.num_passed + self.num_failed + self.num_skipped + self.num_xfailed + self.num_xpassed,
-            'passed_tests': self.num_passed,
-            'failed_tests': self.num_failed,
-            'skipped_tests': self.num_skipped,
-            'xfailed_tests': self.num_xfailed,
-            'xpassed_tests': self.num_xpassed,
-            'warnings': self.num_warnings,
-            'errors': self.num_errors,
-            'rerun': self.num_rerun,
-            'end_time': self.end_time,
-            'duration': self.duration
+            "total_tests": self.num_passed
+            + self.num_failed
+            + self.num_skipped
+            + self.num_xfailed
+            + self.num_xpassed,
+            "passed_tests": self.num_passed,
+            "failed_tests": self.num_failed,
+            "skipped_tests": self.num_skipped,
+            "xfailed_tests": self.num_xfailed,
+            "xpassed_tests": self.num_xpassed,
+            "warnings": self.num_warnings,
+            "errors": self.num_errors,
+            "rerun": self.num_rerun,
+            "end_time": self.end_time,
+            "duration": self.duration,
         }
 
 
@@ -199,6 +239,7 @@ class SessionMetadata:
 @dataclass
 class TestSession:
     """Test session information."""
+
     session_id: str
     sut_id: str
     start_time: datetime
@@ -230,7 +271,7 @@ class TestSession:
             "xpassed_tests": self.xpassed_tests,
             "warnings": self.warnings,
             "errors": self.errors,
-            "rerun": self.rerun
+            "rerun": self.rerun,
         }
 
 

@@ -1,8 +1,8 @@
 """Database operations for pytest-oof."""
-from collections import defaultdict
 import json
 import sqlite3
 import sys
+from collections import defaultdict
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -171,22 +171,14 @@ def init_db(db_path: str = "./.oof/oof-results.db") -> Session:
     return Session()
 
 
-@contextmanager
-def db_connection(db_path: Path) -> Iterator[Connection]:
-    """Context manager for database connections."""
-    conn = sqlite3.connect(db_path)
-    try:
-        yield conn
-    finally:
-        conn.close()
-
-
 def init_sqlite_db(db_path: Path) -> None:
     """Initialize the SQLite database with required tables."""
-    # Create directory if it doesn't exist
-    db_path.parent.mkdir(parents=True, exist_ok=True)
+    db_path = Path(db_path)
+    db_dir = db_path.parent
+    db_dir.mkdir(parents=True, exist_ok=True)
 
-    with db_connection(db_path) as conn:
+    conn = sqlite3.connect(db_path)
+    try:
         cursor = conn.cursor()
 
         # Create sessions table
@@ -210,7 +202,9 @@ def init_sqlite_db(db_path: Path) -> None:
                 warnings INTEGER DEFAULT 0,
                 errors INTEGER DEFAULT 0,
                 rerun INTEGER DEFAULT 0,
-                rerun_outcomes TEXT DEFAULT '[]'  -- JSON array of outcomes
+                rerun_outcomes TEXT DEFAULT '[]',
+                rerun_recovery_rate REAL DEFAULT 0.0,
+                rerun_total_time REAL DEFAULT 0.0
             )
             """
         )
@@ -220,9 +214,9 @@ def init_sqlite_db(db_path: Path) -> None:
             """
             CREATE TABLE IF NOT EXISTS test_results (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                session_id TEXT,
+                session_id TEXT NOT NULL,
                 test_id TEXT NOT NULL,
-                outcome TEXT,
+                outcome TEXT NOT NULL,
                 start_time TIMESTAMP,
                 duration REAL,
                 error_message TEXT,
@@ -234,24 +228,62 @@ def init_sqlite_db(db_path: Path) -> None:
                 capstdout TEXT,
                 capstderr TEXT,
                 rerun_count INTEGER DEFAULT 0,
+                rerun_outcomes TEXT DEFAULT '[]',
                 environment TEXT,
                 warnings TEXT,
-                is_rerun BOOLEAN
-            )
-            """
-        )
-
-        # Create rerun_groups table
-        cursor.execute(
-            """
-            CREATE TABLE IF NOT EXISTS rerun_groups (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                session_id TEXT,
-                group_name TEXT NOT NULL,
                 FOREIGN KEY (session_id) REFERENCES sessions(session_id)
             )
             """
         )
+
+        # Check if we need to add new columns
+        cursor.execute("PRAGMA table_info(test_results)")
+        columns = {col[1] for col in cursor.fetchall()}
+
+        if "rerun_outcomes" not in columns:
+            cursor.execute(
+                "ALTER TABLE test_results ADD COLUMN rerun_outcomes TEXT DEFAULT '[]'"
+            )
+
+        cursor.execute("PRAGMA table_info(sessions)")
+        columns = {col[1] for col in cursor.fetchall()}
+
+        if "rerun_outcomes" not in columns:
+            cursor.execute(
+                "ALTER TABLE sessions ADD COLUMN rerun_outcomes TEXT DEFAULT '[]'"
+            )
+
+        if "rerun_recovery_rate" not in columns:
+            cursor.execute(
+                "ALTER TABLE sessions ADD COLUMN rerun_recovery_rate REAL DEFAULT 0.0"
+            )
+
+        if "rerun_total_time" not in columns:
+            cursor.execute(
+                "ALTER TABLE sessions ADD COLUMN rerun_total_time REAL DEFAULT 0.0"
+            )
+
+        conn.commit()
+    finally:
+        conn.close()
+
+
+@contextmanager
+def db_connection(db_path: Path) -> Iterator[Connection]:
+    """Context manager for database connections."""
+    db_path = Path(db_path)
+    db_dir = db_path.parent
+    db_dir.mkdir(parents=True, exist_ok=True)
+
+    # Initialize database if it doesn't exist
+    if not db_path.exists():
+        init_sqlite_db(db_path)
+
+    conn = sqlite3.connect(db_path)
+    try:
+        yield conn
+    finally:
+        conn.close()
 
 
 def add_session(
@@ -284,8 +316,10 @@ def add_session(
                 warnings,
                 errors,
                 rerun,
-                rerun_outcomes
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                rerun_outcomes,
+                rerun_recovery_rate,
+                rerun_total_time
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 session_id,
@@ -303,7 +337,9 @@ def add_session(
                 0,  # warnings
                 0,  # errors
                 0,  # rerun
-                '[]',  # rerun_outcomes
+                "[]",  # rerun_outcomes
+                0.0,  # rerun_recovery_rate
+                0.0,  # rerun_total_time
             ),
         )
         conn.commit()
@@ -325,24 +361,9 @@ def add_test_result(
 ) -> None:
     """Add a test result to the database."""
     with db_connection(db_path) as conn:
-        c = conn.cursor()
+        cursor = conn.cursor()
 
-        result = TestResult(
-            test_id=test_id,
-            outcome=outcome,
-            duration=duration,
-            error_data=error_data,
-            environment=environment,
-            warnings=warnings,
-            rerun_count=rerun_count,
-            session_id=session_id,
-            rerun_outcomes=rerun_outcomes or [],
-        )
-
-        if timestamp:
-            result.timestamp = timestamp
-
-        # Extract error data fields
+        # Parse error data
         error_message = None
         error_type = None
         error_traceback = None
@@ -351,38 +372,45 @@ def add_test_result(
             error_type = error_data.get("type")
             error_traceback = error_data.get("traceback")
 
-        c.execute(
+        # Convert environment to JSON string if present
+        env_json = json.dumps(environment) if environment else None
+        warnings_json = json.dumps(warnings) if warnings else None
+        rerun_outcomes_json = json.dumps(rerun_outcomes) if rerun_outcomes else "[]"
+
+        # Use current time if no timestamp provided
+        if timestamp is None:
+            timestamp = datetime.now()
+
+        cursor.execute(
             """
             INSERT INTO test_results (
                 session_id,
                 test_id,
                 outcome,
+                start_time,
                 duration,
                 error_message,
                 error_type,
                 error_traceback,
-                warnings,
                 environment,
+                warnings,
                 rerun_count,
-                start_time,
-                is_rerun
+                rerun_outcomes
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 session_id,
                 test_id,
                 outcome,
+                timestamp,
                 duration,
                 error_message,
                 error_type,
                 error_traceback,
-                json.dumps(warnings) if warnings else "[]",
-                json.dumps(environment) if environment else "{}",
+                env_json,
+                warnings_json,
                 rerun_count,
-                timestamp.isoformat()
-                if timestamp
-                else datetime.now(timezone.utc).isoformat(),
-                rerun_count > 0,
+                rerun_outcomes_json,
             ),
         )
         conn.commit()
@@ -435,7 +463,9 @@ def update_session_stats(
                 rerun = ?,
                 end_time = ?,
                 duration = ?,
-                rerun_outcomes = ?
+                rerun_outcomes = ?,
+                rerun_recovery_rate = ?,
+                rerun_total_time = ?
             WHERE session_id = ?
             """,
             (
@@ -450,7 +480,11 @@ def update_session_stats(
                 stats["rerun"],
                 stats["end_time"].isoformat() if stats["end_time"] else None,
                 int(stats["duration"].total_seconds()) if stats["duration"] else None,
-                json.dumps(stats["rerun_outcomes"]) if stats["rerun_outcomes"] else '[]',
+                json.dumps(stats["rerun_outcomes"])
+                if stats["rerun_outcomes"]
+                else "[]",
+                stats["rerun_recovery_rate"],
+                stats["rerun_total_time"],
                 session_id,
             ),
         )
@@ -566,13 +600,17 @@ def get_test_results(
                 "sut_id": row[1],
                 "test_id": row[14],  # From the JOIN with test_results
                 "outcome": row[15],
-                "timestamp": datetime.fromisoformat(row[16]) if isinstance(row[16], str) else row[16],  # test_start_time
+                "timestamp": datetime.fromisoformat(row[16])
+                if isinstance(row[16], str)
+                else row[16],  # test_start_time
                 "duration": row[17],
                 "error_data": {
                     "message": row[18],  # error_message
-                    "type": row[19],    # error_type
-                    "traceback": row[20] # error_traceback
-                } if row[18] or row[19] or row[20] else None,
+                    "type": row[19],  # error_type
+                    "traceback": row[20],  # error_traceback
+                }
+                if row[18] or row[19] or row[20]
+                else None,
                 "has_warning": row[21],
                 "longreprtext": row[22],
                 "caplog": row[23],
@@ -625,6 +663,8 @@ def export_results(
                 s.errors,
                 s.rerun,
                 s.rerun_outcomes,
+                s.rerun_recovery_rate,
+                s.rerun_total_time,
                 s.sut_type,
                 s.sut_version,
                 s.sut_env
@@ -687,7 +727,8 @@ def export_results(
                     rerun_count,
                     environment,
                     warnings,
-                    is_rerun
+                    is_rerun,
+                    rerun_outcomes
                 FROM test_results
                 WHERE session_id = ?
                 ORDER BY start_time
@@ -700,9 +741,13 @@ def export_results(
                 "session": {
                     "id": session[0],  # Use single ID field
                     "timing": {
-                        "start": datetime.fromisoformat(session[2]) if isinstance(session[2], str) else session[2],
-                        "stop": datetime.fromisoformat(session[3]) if isinstance(session[3], str) else session[3],
-                        "duration": session[4]
+                        "start": datetime.fromisoformat(session[2])
+                        if isinstance(session[2], str)
+                        else session[2],
+                        "stop": datetime.fromisoformat(session[3])
+                        if isinstance(session[3], str)
+                        else session[3],
+                        "duration": session[4],
                     },
                     "sut": {
                         "id": session[1],
@@ -727,8 +772,12 @@ def export_results(
                         },
                         "reruns": {
                             "total": session[13],
-                            "outcomes": json.loads(session[14]) if session[14] else [],  # rerun_outcomes
+                            "outcomes": json.loads(session[14])
+                            if session[14]
+                            else [],  # rerun_outcomes
                             "groups": [],
+                            "recovery_rate": session[18],
+                            "total_time": session[19],
                         },
                         "warnings": {"total": session[11], "unique": 0},
                         "deselected": 0,
@@ -747,13 +796,17 @@ def export_results(
                 result = {
                     "id": tr[0],  # test_id
                     "timing": {
-                        "start": datetime.fromisoformat(tr[2]) if isinstance(tr[2], str) else tr[2],
+                        "start": datetime.fromisoformat(tr[2])
+                        if isinstance(tr[2], str)
+                        else tr[2],
                         "duration": tr[3],
                     },  # start_time, duration
                 }
 
                 # Add error info if present
-                if tr[4] or tr[5] or tr[6]:  # error_message, error_type, error_traceback
+                if (
+                    tr[4] or tr[5] or tr[6]
+                ):  # error_message, error_type, error_traceback
                     result["error"] = {
                         "message": tr[4],
                         "type": tr[5],
@@ -788,6 +841,10 @@ def export_results(
                 # Add warnings if present
                 if tr[14]:  # warnings
                     result["warnings"] = json.loads(tr[14])
+
+                # Add rerun outcomes if present
+                if tr[16]:  # rerun_outcomes
+                    result["rerun_outcomes"] = json.loads(tr[16])
 
                 results_by_outcome[outcome].append(result)
 
@@ -996,7 +1053,11 @@ def get_duration_trends(
             continue
 
         test_id = result["test_id"]
-        timestamp = datetime.fromisoformat(result["timestamp"]) if isinstance(result["timestamp"], str) else result["timestamp"]
+        timestamp = (
+            datetime.fromisoformat(result["timestamp"])
+            if isinstance(result["timestamp"], str)
+            else result["timestamp"]
+        )
 
         if test_id not in duration_data:
             duration_data[test_id] = {
@@ -1004,9 +1065,7 @@ def get_duration_trends(
                 "run_count": 1,
             }
         else:
-            duration_data[test_id]["durations"].append(
-                (result["duration"], timestamp)
-            )
+            duration_data[test_id]["durations"].append((result["duration"], timestamp))
             duration_data[test_id]["run_count"] += 1
 
     trends = {}
@@ -1064,7 +1123,11 @@ def get_stability_metrics(
     # Group results by time period
     periods = {}
     for result in results:
-        timestamp = datetime.fromisoformat(result["timestamp"]) if isinstance(result["timestamp"], str) else result["timestamp"]
+        timestamp = (
+            datetime.fromisoformat(result["timestamp"])
+            if isinstance(result["timestamp"], str)
+            else result["timestamp"]
+        )
         if granularity == "hour":
             period = timestamp.replace(minute=0, second=0, microsecond=0)
         elif granularity == "day":
@@ -1146,7 +1209,7 @@ def get_rerun_patterns(
         cursor = conn.cursor()
 
         query = """
-        SELECT 
+        SELECT
             tr.test_id,
             tr.outcome,
             tr.rerun_outcomes,
@@ -1170,7 +1233,7 @@ def get_rerun_patterns(
             "success_patterns": [],
             "failure_patterns": [],
             "recovery_rate": 0.0,
-            "avg_attempts": 0.0
+            "avg_attempts": 0.0,
         }
 
     success_patterns = defaultdict(int)
@@ -1184,35 +1247,35 @@ def get_rerun_patterns(
 
         if rerun_count >= min_reruns:
             sequence = tuple(full_sequence)
-            if outcome == 'PASSED':
+            if outcome == "PASSED":
                 success_patterns[sequence] += 1
             else:
                 failure_patterns[sequence] += 1
 
         total_attempts.append(rerun_count)
 
-    successful_reruns = sum(1 for row in rows if row[1] == 'PASSED')
+    successful_reruns = sum(1 for row in rows if row[1] == "PASSED")
 
     return {
         "success_patterns": sorted(
             [(list(k), v) for k, v in success_patterns.items()],
             key=lambda x: x[1],
-            reverse=True
+            reverse=True,
         )[:10],
         "failure_patterns": sorted(
             [(list(k), v) for k, v in failure_patterns.items()],
             key=lambda x: x[1],
-            reverse=True
+            reverse=True,
         )[:10],
         "recovery_rate": (successful_reruns / len(rows) * 100),
-        "avg_attempts": sum(total_attempts) / len(total_attempts)
+        "avg_attempts": sum(total_attempts) / len(total_attempts),
     }
 
 
 def get_xfail_trends(
     db_path: Path,
     days: int = 30,
-    granularity: str = 'day',
+    granularity: str = "day",
     sut_id: Optional[str] = None,
 ) -> List[Dict]:
     """Analyze trends in expected failures (xfail) and unexpected passes (xpass).
@@ -1260,7 +1323,7 @@ def get_xfail_trends(
         return []
 
     # Group by time bucket
-    buckets = defaultdict(lambda: {'xfail': 0, 'xpass': 0, 'total': 0})
+    buckets = defaultdict(lambda: {"xfail": 0, "xpass": 0, "total": 0})
 
     for row in rows:
         timestamp = datetime.fromisoformat(row[0])
@@ -1268,34 +1331,38 @@ def get_xfail_trends(
         total_tests = row[2]
 
         # Determine bucket based on granularity
-        if granularity == 'hour':
+        if granularity == "hour":
             bucket = timestamp.replace(minute=0, second=0, microsecond=0)
-        elif granularity == 'week':
+        elif granularity == "week":
             bucket = timestamp.replace(hour=0, minute=0, second=0, microsecond=0)
             bucket -= timedelta(days=timestamp.weekday())
         else:  # default to day
             bucket = timestamp.replace(hour=0, minute=0, second=0, microsecond=0)
 
-        buckets[bucket]['total'] = total_tests
-        if outcome == 'XFAILED':
-            buckets[bucket]['xfail'] += 1
+        buckets[bucket]["total"] = total_tests
+        if outcome == "XFAILED":
+            buckets[bucket]["xfail"] += 1
         else:  # XPASSED
-            buckets[bucket]['xpass'] += 1
+            buckets[bucket]["xpass"] += 1
 
     # Convert to list of dicts with calculated rates
     trends = []
     for timestamp, counts in sorted(buckets.items()):
-        total = counts['total']
-        xfails = counts['xfail']
-        xpasses = counts['xpass']
+        total = counts["total"]
+        xfails = counts["xfail"]
+        xpasses = counts["xpass"]
 
-        trends.append({
-            'timestamp': timestamp.isoformat(),
-            'xfail_count': xfails,
-            'xpass_count': xpasses,
-            'xfail_rate': (xfails / total * 100) if total > 0 else 0,
-            'xpass_rate': (xpasses / (xfails + xpasses) * 100) if (xfails + xpasses) > 0 else 0
-        })
+        trends.append(
+            {
+                "timestamp": timestamp.isoformat(),
+                "xfail_count": xfails,
+                "xpass_count": xpasses,
+                "xfail_rate": (xfails / total * 100) if total > 0 else 0,
+                "xpass_rate": (xpasses / (xfails + xpasses) * 100)
+                if (xfails + xpasses) > 0
+                else 0,
+            }
+        )
 
     return trends
 
@@ -1368,7 +1435,7 @@ def get_flaky_tests(
         # Count outcome transitions
         transitions = defaultdict(int)
         for i in range(len(outcomes) - 1):
-            transition = (outcomes[i], outcomes[i+1])
+            transition = (outcomes[i], outcomes[i + 1])
             if transition[0] != transition[1]:
                 transitions[transition] += 1
 
@@ -1381,17 +1448,158 @@ def get_flaky_tests(
             for outcome in outcomes:
                 outcome_counts[outcome] += 1
 
-            flaky_tests.append({
-                'test_id': test_id,
-                'run_count': len(outcomes),
-                'unique_outcomes': unique_outcomes,
-                'outcome_counts': dict(outcome_counts),
-                'flakiness_score': flakiness_score,
-                'common_transitions': sorted(
-                    [((k[0], k[1]), v) for k, v in transitions.items()],
-                    key=lambda x: x[1],
-                    reverse=True
-                )[:5]
-            })
+            flaky_tests.append(
+                {
+                    "test_id": test_id,
+                    "run_count": len(outcomes),
+                    "unique_outcomes": unique_outcomes,
+                    "outcome_counts": dict(outcome_counts),
+                    "flakiness_score": flakiness_score,
+                    "common_transitions": sorted(
+                        [((k[0], k[1]), v) for k, v in transitions.items()],
+                        key=lambda x: x[1],
+                        reverse=True,
+                    )[:5],
+                }
+            )
 
-    return sorted(flaky_tests, key=lambda x: x['flakiness_score'], reverse=True)
+    return sorted(flaky_tests, key=lambda x: x["flakiness_score"], reverse=True)
+
+
+def get_rerun_stats(db_path: Path) -> Dict[str, Any]:
+    """Get statistics about test reruns.
+
+    Returns:
+        Dict containing:
+        - total_reruns: Number of tests that were rerun
+        - avg_reruns: Average number of reruns per test
+        - success_rate: Percentage of reruns that ended in success
+        - avg_time: Average time spent on reruns
+        - outcome_counts: Count of final outcomes for rerun tests
+        - common_sequences: Most common rerun sequences
+    """
+    with db_connection(db_path) as conn:
+        cursor = conn.cursor()
+
+        # Get tests with reruns
+        cursor.execute(
+            """
+            SELECT
+                test_id,
+                outcome,
+                duration,
+                rerun_count,
+                rerun_outcomes
+            FROM test_results
+            WHERE rerun_count > 0
+        """
+        )
+        results = cursor.fetchall()
+
+        if not results:
+            return None
+
+        total_reruns = len(results)
+        avg_reruns = sum(r[3] for r in results) / total_reruns
+        total_time = sum(r[2] * r[3] for r in results)
+        avg_time = total_time / total_reruns
+
+        # Analyze outcomes
+        outcome_counts = defaultdict(int)
+        successful_sequences = 0
+        sequence_counts = defaultdict(int)
+
+        for result in results:
+            outcome = result[1]
+            outcome_counts[outcome] += 1
+
+            # Analyze sequence
+            rerun_outcomes = json.loads(result[4]) if result[4] else []
+            if rerun_outcomes:
+                sequence = " → ".join(rerun_outcomes + [outcome])
+                sequence_counts[sequence] += 1
+                if outcome == "passed":
+                    successful_sequences += 1
+
+        success_rate = (
+            (successful_sequences / total_reruns * 100) if total_reruns > 0 else 0
+        )
+
+        # Get top 10 most common sequences
+        common_sequences = sorted(
+            sequence_counts.items(), key=lambda x: x[1], reverse=True
+        )[:10]
+
+        return {
+            "total_reruns": total_reruns,
+            "avg_reruns": avg_reruns,
+            "success_rate": success_rate,
+            "avg_time": avg_time,
+            "outcome_counts": dict(outcome_counts),
+            "common_sequences": common_sequences,
+        }
+
+
+def update_session_stats(db_path: Path, session_id: str) -> None:
+    """Update session statistics based on test results."""
+    with db_connection(db_path) as conn:
+        cursor = conn.cursor()
+
+        # Get all test results for the session
+        cursor.execute(
+            """
+            SELECT outcome, rerun_count, rerun_outcomes, duration
+            FROM test_results
+            WHERE session_id = ?
+            """,
+            (session_id,),
+        )
+        results = cursor.fetchall()
+
+        # Initialize counters
+        stats = defaultdict(int)
+        total_rerun_time = 0
+        successful_reruns = 0
+        total_reruns = 0
+
+        # Calculate statistics
+        for outcome, rerun_count, rerun_outcomes, duration in results:
+            stats[outcome] += 1
+            if rerun_count > 0:
+                total_reruns += 1
+                total_rerun_time += duration * rerun_count
+                (
+                    json.loads(rerun_outcomes) if rerun_outcomes else []
+                )
+                if outcome == "passed":
+                    successful_reruns += 1
+
+        # Update session
+        cursor.execute(
+            """
+            UPDATE sessions
+            SET total_tests = ?,
+                passed_tests = ?,
+                failed_tests = ?,
+                skipped_tests = ?,
+                xfailed_tests = ?,
+                xpassed_tests = ?,
+                rerun = ?,
+                rerun_recovery_rate = ?,
+                rerun_total_time = ?
+            WHERE session_id = ?
+            """,
+            (
+                len(results),
+                stats["passed"],
+                stats["failed"],
+                stats["skipped"],
+                stats["xfailed"],
+                stats["xpassed"],
+                total_reruns,
+                (successful_reruns / total_reruns * 100) if total_reruns > 0 else 0,
+                total_rerun_time,
+                session_id,
+            ),
+        )
+        conn.commit()
