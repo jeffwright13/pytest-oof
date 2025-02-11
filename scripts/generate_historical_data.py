@@ -560,7 +560,7 @@ def generate_test_results(session_id: str, num_tests: int, base_time: datetime):
                     "warning",
                 ],
                 weights=[0.2, 0.3, 0.1, 0.1, 0.1, 0.1, 0.1],
-            )[0]
+            )[0].lower()
         else:
             # More consistent tests, but still with some variation
             initial_outcome = random.choices(
@@ -574,7 +574,7 @@ def generate_test_results(session_id: str, num_tests: int, base_time: datetime):
                     "warning",
                 ],
                 weights=[0.6, 0.15, 0.05, 0.05, 0.05, 0.05, 0.05],
-            )[0]
+            )[0].lower()
 
         # Vary the timestamp within 5 minutes of base time
         timestamp = base_time + timedelta(
@@ -644,7 +644,7 @@ def generate_test_results(session_id: str, num_tests: int, base_time: datetime):
                         0.1,
                         0.2,
                     ],  # Chance of changing or maintaining outcome
-                )[0]
+                )[0].lower()
                 rerun_outcomes.append(rerun_outcome)
 
             result["rerun_outcomes"] = rerun_outcomes

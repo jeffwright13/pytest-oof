@@ -1,7 +1,6 @@
 """Database operations for pytest-oof."""
 import json
 import sqlite3
-import sys
 from collections import defaultdict
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
@@ -9,13 +8,10 @@ from pathlib import Path
 from sqlite3 import Connection
 from typing import Any, Dict, Iterator, List, Optional, Union
 
-from sqlalchemy import create_engine
 from sqlalchemy.engine import Connection
-from sqlalchemy.orm import Session, sessionmaker
 
-from pytest_oof.constants import DEFAULT_DB_PATH, TEST_DB_PATH
-from pytest_oof.models import Base, TestResult, TestSession, TestSessionStats
-
+from pytest_oof.constants import DEFAULT_DB_PATH
+from pytest_oof.models import TestSessionStats
 
 # class DBClient:
 #     """Database client for pytest-oof."""
@@ -201,12 +197,12 @@ def init_sqlite_db(db_path: Path) -> None:
                 skipped_tests INTEGER,
                 xfailed_tests INTEGER,
                 xpassed_tests INTEGER,
-                warnings TEXT,
-                errors TEXT,
-                rerun BOOLEAN DEFAULT 0,
-                rerun_outcomes TEXT,
-                rerun_recovery_rate REAL,
-                rerun_total_time REAL
+                warnings INTEGER,
+                errors INTEGER,
+                rerun INTEGER,
+                rerun_outcomes TEXT DEFAULT '[]',
+                rerun_recovery_rate REAL DEFAULT 0.0,
+                rerun_total_time REAL DEFAULT 0.0
             )
             """
         )
@@ -238,7 +234,9 @@ def init_sqlite_db(db_path: Path) -> None:
 
         # Migrate columns if they don't exist
         try:
-            cursor.execute("ALTER TABLE test_results ADD COLUMN is_rerun BOOLEAN DEFAULT 0")
+            cursor.execute(
+                "ALTER TABLE test_results ADD COLUMN is_rerun BOOLEAN DEFAULT 0"
+            )
         except sqlite3.OperationalError:
             pass  # Column already exists
 
@@ -252,16 +250,77 @@ def init_sqlite_db(db_path: Path) -> None:
 
 @contextmanager
 def db_connection(db_path: Path) -> Iterator[Connection]:
-    """Context manager for database connections."""
-    db_path = Path(db_path)
-    db_dir = db_path.parent
-    db_dir.mkdir(parents=True, exist_ok=True)
+    """Context manager for database connections.
 
-    # Initialize database if it doesn't exist
+    Args:
+        db_path: Path to the SQLite database file.
+
+    Yields:
+        A database connection object.
+    """
+    # Ensure the database directory exists
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Initialize the database if it doesn't exist
     if not db_path.exists():
-        init_sqlite_db(db_path)
+        # Create the database and tables
+        conn = sqlite3.connect(str(db_path))
+        try:
+            cursor = conn.cursor()
 
-    conn = sqlite3.connect(db_path)
+            # Create sessions table
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS sessions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    session_id TEXT UNIQUE,
+                    sut_id TEXT,
+                    sut_type TEXT,
+                    sut_version TEXT,
+                    sut_environment TEXT,
+                    start_time DATETIME,
+                    end_time DATETIME,
+                    duration REAL,
+                    total_tests INTEGER,
+                    passed_tests INTEGER,
+                    failed_tests INTEGER,
+                    skipped_tests INTEGER,
+                    xfailed_tests INTEGER,
+                    xpassed_tests INTEGER,
+                    warnings INTEGER,
+                    errors INTEGER,
+                    rerun INTEGER
+                )
+            """
+            )
+
+            # Create test_results table
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS test_results (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    session_id TEXT,
+                    test_id TEXT,
+                    outcome TEXT,
+                    duration REAL,
+                    error_data TEXT,
+                    environment TEXT,
+                    warnings TEXT,
+                    rerun_count INTEGER,
+                    rerun_outcomes TEXT,
+                    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY(session_id) REFERENCES sessions(session_id)
+                )
+            """
+            )
+
+            conn.commit()
+        except Exception as e:
+            conn.rollback()
+            raise e
+
+    # Establish the connection
+    conn = sqlite3.connect(str(db_path))
     try:
         yield conn
     finally:

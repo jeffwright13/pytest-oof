@@ -1,7 +1,7 @@
 """Data models for pytest-oof."""
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional
 
 from sqlalchemy import (
     JSON,
@@ -321,3 +321,11 @@ class Results:
             warnings=warnings,
             rerun_test_groups=rerun_test_groups,
         )
+
+    def all_tests(self) -> List[TestResult]:
+        """Return all test results."""
+        return self.test_results
+
+    def all_passes(self) -> List[TestResult]:
+        """Return all passed test results."""
+        return [test for test in self.test_results if test.outcome.lower() == "passed"]

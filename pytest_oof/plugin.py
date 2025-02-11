@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, List
+from typing import Any, List, Optional
 
 import pytest
 from _pytest.config import Config
@@ -69,7 +69,10 @@ def pytest_configure(config: Config) -> None:
             stop_time=None,
             duration=None,
         ),
-        session_stats=TestSessionStats(),
+        session_stats=TestSessionStats(
+            end_time=None,
+            duration=None,
+        ),
         report_stats=ReportBasedStats(),
         test_results=[],
     )
@@ -110,14 +113,14 @@ def pytest_unconfigure(config: Config) -> None:
             test_id=result.test_id,
             outcome=result.outcome,
             duration=result.duration,
-            error_data=getattr(result, 'error_data', None),
+            error_data=getattr(result, "error_data", None),
             environment=result.environment,
             warnings=result.warnings,
             rerun_count=result.rerun_count,
         )
 
     # Update session stats with rerun groups
-    rerun_groups = list(getattr(config, "_oof_rerun_groups", set()))
+    list(getattr(config, "_oof_rerun_groups", set()))
     update_session_stats(db_path, session_id)
 
 
@@ -185,7 +188,7 @@ def process_test_result(item, reports):
 
     test_result = TestResult(
         test_id=item.nodeid,
-        outcome=call.outcome.upper(),
+        outcome=call.outcome.lower(),  # Convert to lowercase
         duration=call.duration,
         error_data={
             "type": str(call.longrepr) if call.longrepr else None,
@@ -197,7 +200,9 @@ def process_test_result(item, reports):
         environment={},
         warnings=[],
         rerun_count=len(rerun_reports),
-        rerun_outcomes=rerun_outcomes,  # Store the sequence of rerun outcomes
+        rerun_outcomes=[
+            outcome.lower() for outcome in rerun_outcomes
+        ],  # Convert to lowercase
     )
 
     item.config._oof_test_results.test_results.append(test_result)
@@ -229,4 +234,25 @@ def pytest_collection_modifyitems(
         return
 
     results = config._oof_test_results
-    results.session_stats.total_tests = len(items)
+    if results.session_stats is None:
+        results.session_stats = TestSessionStats()
+
+    # Manually set total tests
+    results.session_stats.num_passed = 0
+    results.session_stats.num_failed = 0
+    results.session_stats.num_skipped = 0
+    results.session_stats.num_xfailed = 0
+    results.session_stats.num_xpassed = 0
+
+
+def pytest_cmdline_main(config: Config) -> Optional[int]:
+    """Process command line options.
+
+    Args:
+        config: Pytest configuration object.
+
+    Returns:
+        Optional exit code.
+    """
+    # Placeholder implementation
+    return None
