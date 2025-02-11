@@ -183,7 +183,7 @@ def load_session_data():
             sut_id,
             sut_type,
             sut_version,
-            sut_env,
+            sut_environment,
             total_tests as num_tests,
             total_tests as num_tests_without_rerun,
             total_tests as num_tests_total,
@@ -216,7 +216,7 @@ def load_session_data():
             df["sut_id"] = df["sut_id"].fillna("")
             df["sut_type"] = df["sut_type"].fillna("")
             df["sut_version"] = df["sut_version"].fillna("")
-            df["sut_env"] = df["sut_env"].fillna("")
+            df["sut_environment"] = df["sut_environment"].fillna("")
             df["duration"] = df["duration"].fillna(0).astype(float)
 
             # Convert numeric columns to native Python int
@@ -275,7 +275,7 @@ def load_test_results():
             s.sut_id,
             s.sut_type,
             s.sut_version,
-            s.sut_env
+            s.sut_environment
         FROM test_results tr
         JOIN sessions s ON tr.session_id = s.session_id
         ORDER BY tr.start_time DESC
@@ -302,7 +302,7 @@ def load_test_results():
             df["sut_id"] = df["sut_id"].fillna("")
             df["sut_type"] = df["sut_type"].fillna("")
             df["sut_version"] = df["sut_version"].fillna("")
-            df["sut_env"] = df["sut_env"].fillna("")
+            df["sut_environment"] = df["sut_environment"].fillna("")
             df["error_message"] = df["error_message"].fillna("")
             df["error_type"] = df["error_type"].fillna("")
             df["duration"] = df["duration"].fillna(0).astype(float)

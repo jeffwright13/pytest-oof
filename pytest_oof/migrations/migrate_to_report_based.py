@@ -25,7 +25,7 @@ def migrate_database(db_path: Path) -> None:
                 sut_id TEXT,
                 sut_type TEXT,
                 sut_version TEXT,
-                sut_env TEXT,
+                sut_environment TEXT,
                 sut_metadata TEXT,
                 python_version TEXT,
                 os_info TEXT,
@@ -63,14 +63,14 @@ def migrate_database(db_path: Path) -> None:
         c.execute("""
             INSERT INTO test_sessions (
                 id, session_id, start_time, end_time, duration, sut_id, sut_type,
-                sut_version, sut_env, python_version, os_info, pytest_version,
+                sut_version, sut_environment, python_version, os_info, pytest_version,
                 command_line, num_tests, num_passes, num_failures, num_errors,
                 num_skips, num_xfails, num_xpasses, num_reruns, num_rerun_groups,
                 num_warnings, num_deselected
             )
             SELECT 
                 id, '', start_time, end_time, duration, sut_id, sut_type,
-                sut_version, sut_env, python_version, os_info, pytest_version,
+                sut_version, sut_environment, python_version, os_info, pytest_version,
                 command_line, num_tests, num_passes, num_failures, num_errors,
                 num_skips, num_xfails, num_xpasses, num_reruns, num_rerun_groups,
                 num_warnings, num_deselected

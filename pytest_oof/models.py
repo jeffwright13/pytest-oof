@@ -29,7 +29,7 @@ class SQLTestSession(Base):
     sut_id = Column(String, nullable=False)
     sut_type = Column(String, nullable=True)
     sut_version = Column(String, nullable=True)
-    sut_env = Column(String, nullable=True)
+    sut_environment = Column(String, nullable=True)
     start_time = Column(DateTime, nullable=False)
     end_time = Column(DateTime, nullable=True)
     duration = Column(Integer, nullable=True)  # Store duration in seconds

@@ -56,7 +56,7 @@ def test_add_session(db_path, mock_datetime):
         sut_id="test-sut",
         sut_type="unit-test",
         sut_version="1.0.0",
-        sut_env="test",
+        sut_environment="test",
     )
 
     # Query and verify
@@ -66,7 +66,7 @@ def test_add_session(db_path, mock_datetime):
     assert session["sut_id"] == "test-sut"
     assert session["sut_type"] == "unit-test"
     assert session["sut_version"] == "1.0.0"
-    assert session["sut_env"] == "test"
+    assert session["sut_environment"] == "test"
     assert session["start_time"] == "2025-01-01 12:00:00+00:00"
 
 

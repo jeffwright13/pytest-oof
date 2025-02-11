@@ -140,3 +140,28 @@ You can then access the test session data within this block, and do whatever you
 def pytest_oof_results(results):
     print(f"Received results: {results}")
 ```
+
+### Generating Historical Test Data
+
+You can generate historical test data using the CLI:
+
+```bash
+# Generate 7 days of test data with default settings
+oof generate data
+
+# Generate 14 days of test data with 2-5 sessions per day
+oof generate data --days 14 --min-sessions 2 --max-sessions 5
+
+# Generate data with special failure patterns
+oof generate data --include-patterns
+
+# Purge existing data before generating new data
+oof generate data --purge
+```
+
+Advanced options:
+- `--days`: Number of days to generate data for (default: 7)
+- `--min-sessions`: Minimum number of sessions per day (default: 3)
+- `--max-sessions`: Maximum number of sessions per day (default: 8)
+- `--include-patterns`: Include special failure patterns like global failures and flaky tests
+- `--purge`: Remove existing data before generating new data

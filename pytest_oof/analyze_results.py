@@ -39,7 +39,7 @@ def list_recent_sessions(db_path: Path, limit: int = 10) -> List[Dict[str, Any]]
             """
             SELECT 
                 id, start_time, stop_time, duration, 
-                sut_id, sut_type, sut_version, sut_env,
+                sut_id, sut_type, sut_version, sut_environment,
                 num_tests, num_passes, num_failures,
                 num_errors, num_skips, num_xfails, num_xpasses,
                 num_reruns, num_rerun_groups
@@ -99,7 +99,7 @@ def analyze_results(
     sut_id: str = "",
     sut_type: str = "",
     sut_version: str = "",
-    sut_env: str = "",
+    sut_environment: str = "",
     start_time: Optional[datetime] = None,
     end_time: Optional[datetime] = None,
     last_n_sessions: Optional[int] = None,
@@ -186,7 +186,7 @@ def analyze_results(
             sut_id=sut_id,
             sut_type=sut_type,
             sut_version=sut_version,
-            sut_env=sut_env,
+            sut_environment=sut_environment,
             output_file=export_file,
             output_format=output_format,
             outcome=outcome,
@@ -255,7 +255,7 @@ def analyze_results(
 
         # Show SUT info if available
         if any(
-            session.get(k) for k in ["sut_id", "sut_type", "sut_version", "sut_env"]
+            session.get(k) for k in ["sut_id", "sut_type", "sut_version", "sut_environment"]
         ):
             click.echo("\nSUT Information:")
             if session.get("sut_id"):
@@ -264,8 +264,8 @@ def analyze_results(
                 click.echo(f"SUT Type: {session['sut_type']}")
             if session.get("sut_version"):
                 click.echo(f"SUT Version: {session['sut_version']}")
-            if session.get("sut_env"):
-                click.echo(f"SUT Environment: {session['sut_env']}")
+            if session.get("sut_environment"):
+                click.echo(f"SUT Environment: {session['sut_environment']}")
 
         # Show environment info if available
         if any(session.get(k) for k in ["python_version", "pytest_version", "os_info"]):
@@ -334,7 +334,7 @@ def analyze_results(
             sut_id=sut_id,
             sut_type=sut_type,
             sut_version=None,
-            sut_env=None,
+            sut_environment=None,
             output_file=export_file,
             output_format=output_format,
             outcome=outcome,
@@ -350,7 +350,7 @@ def analyze_results(
         sut_id=sut_id or None,
         sut_type=sut_type or None,
         sut_version=sut_version or None,
-        sut_env=sut_env or None,
+        sut_environment=sut_environment or None,
         start_time=start_time,
         end_time=end_time,
         last_n_sessions=last_n_sessions,
@@ -682,8 +682,8 @@ def main(
                 sut_info.append(f"type: {session['sut_type']}")
             if session["sut_version"]:
                 sut_info.append(f"version: {session['sut_version']}")
-            if session["sut_env"]:
-                sut_info.append(f"env: {session['sut_env']}")
+            if session["sut_environment"]:
+                sut_info.append(f"env: {session['sut_environment']}")
 
             if sut_info:
                 click.echo(f"SUT: {', '.join(sut_info)}")
@@ -721,14 +721,14 @@ def main(
                     sut_id,
                     sut_type,
                     sut_version,
-                    sut_env,
+                    sut_environment,
                     COUNT(DISTINCT id) as session_count,
                     SUM(num_tests) as total_tests,
                     MIN(start_time) as first_seen,
                     MAX(start_time) as last_seen
                 FROM test_sessions 
                 WHERE sut_id IS NOT NULL
-                GROUP BY sut_id, sut_type, sut_version, sut_env
+                GROUP BY sut_id, sut_type, sut_version, sut_environment
                 ORDER BY sut_id, sut_type, last_seen DESC
             """
             )

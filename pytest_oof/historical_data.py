@@ -95,7 +95,7 @@ def generate_test_result(
     session_id: str,
     test_id: str,
     timestamp: datetime,
-    sut_env: Dict[str, Any],
+    sut_environment: Dict[str, Any],
     error_types: List[str],
     base_failure_rate: float = 0.2,
 ) -> Dict[str, Any]:
@@ -103,13 +103,13 @@ def generate_test_result(
     template = next(t for t in TEST_TEMPLATES if t["id"] == test_id)
     
     # Adjust failure rate based on environment
-    if sut_env["env"] == "staging":
+    if sut_environment["env"] == "staging":
         base_failure_rate *= 1.5
-    elif sut_env["env"] == "prod":
+    elif sut_environment["env"] == "prod":
         base_failure_rate *= 0.5
     
     # Version-specific failures
-    if sut_env["version"].endswith(".0"):  # Initial versions more likely to fail
+    if sut_environment["version"].endswith(".0"):  # Initial versions more likely to fail
         base_failure_rate *= 1.3
     
     # Determine weights for each outcome
@@ -165,7 +165,7 @@ def generate_test_results(
     session_id: str,
     num_tests: int,
     base_time: datetime,
-    sut_env: Dict[str, Any],
+    sut_environment: Dict[str, Any],
     base_failure_rate: float = 0.2,
 ) -> List[Dict[str, Any]]:
     """Generate test results for a session."""
@@ -178,7 +178,7 @@ def generate_test_results(
             session_id=session_id,
             test_id=template["id"],
             timestamp=timestamp,
-            sut_env=sut_env,
+            sut_environment=sut_environment,
             error_types=template["error_types"],
             base_failure_rate=base_failure_rate,
         )
@@ -255,7 +255,7 @@ def generate_historical_data(
         for _ in range(num_sessions):
             # Select random SUT and metadata
             sut = random.choice(SUTS)
-            sut_env = {
+            sut_environment = {
                 "id": sut["id"],
                 "type": sut["type"],
                 "version": random.choice(sut["versions"]),
@@ -295,7 +295,7 @@ def generate_historical_data(
                 session_id=session_id,
                 num_tests=len(test_templates),
                 base_time=session_time,
-                sut_env=sut_env,
+                sut_environment=sut_environment,
                 base_failure_rate=base_failure_rate,
             )
             
@@ -310,10 +310,10 @@ def generate_historical_data(
                 start_time=session_time,
                 end_time=session_end,
                 duration=int(session_duration),
-                sut_id=sut_env["id"],
-                sut_type=sut_env["type"],
-                sut_version=sut_env["version"],
-                sut_env=sut_env["env"],
+                sut_id=sut_environment["id"],
+                sut_type=sut_environment["type"],
+                sut_version=sut_environment["version"],
+                sut_environment=sut_environment["env"],
             )
             
             # Add test results

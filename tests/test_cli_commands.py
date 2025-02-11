@@ -35,7 +35,7 @@ SAMPLE_TEST_ID = "test_database_connection"
 #     "rerun_outcomes": "[]",
 #     "sut_type": SAMPLE_SUT_TYPE,
 #     "sut_version": SAMPLE_SUT_VERSION,
-#     "sut_env": SAMPLE_SUT_ENV,
+#     "sut_environment": SAMPLE_SUT_ENV,
 # }
 
 

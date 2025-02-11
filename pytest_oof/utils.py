@@ -185,7 +185,7 @@ class TestHistory:
         sut_id: Optional[str] = None,
         sut_type: Optional[str] = None,
         sut_version: Optional[str] = None,
-        sut_env: Optional[str] = None,
+        sut_environment: Optional[str] = None,
         start_time: Optional[datetime] = None,
         end_time: Optional[datetime] = None,
         last_n_sessions: Optional[int] = None,
@@ -223,7 +223,7 @@ class TestHistory:
                     s.sut_id,
                     s.sut_type,
                     s.sut_version,
-                    s.sut_env
+                    s.sut_environment
                 FROM test_sessions s
                 WHERE 1=1
             """
@@ -238,9 +238,9 @@ class TestHistory:
             if sut_version:
                 session_query += " AND s.sut_version = ?"
                 params.append(sut_version)
-            if sut_env:
-                session_query += " AND s.sut_env = ?"
-                params.append(sut_env)
+            if sut_environment:
+                session_query += " AND s.sut_environment = ?"
+                params.append(sut_environment)
             if start_time:
                 session_query += " AND s.start_time >= ?"
                 params.append(start_time.isoformat())

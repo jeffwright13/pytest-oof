@@ -179,51 +179,47 @@ def init_db(db_path: Optional[str] = None) -> None:
 
 def init_sqlite_db(db_path: Path) -> None:
     """Initialize the SQLite database with required tables."""
-    db_path = Path(db_path)
-    db_dir = db_path.parent
-    db_dir.mkdir(parents=True, exist_ok=True)
-
-    conn = sqlite3.connect(db_path)
-    try:
+    with db_connection(db_path) as conn:
         cursor = conn.cursor()
 
         # Create sessions table
         cursor.execute(
             """
             CREATE TABLE IF NOT EXISTS sessions (
-                session_id TEXT PRIMARY KEY,
-                sut_id TEXT NOT NULL,
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id TEXT UNIQUE,
+                sut_id TEXT,
                 sut_type TEXT,
                 sut_version TEXT,
-                sut_env TEXT,
-                start_time TIMESTAMP NOT NULL,
-                end_time TIMESTAMP,
-                duration INTEGER,
-                total_tests INTEGER DEFAULT 0,
-                passed_tests INTEGER DEFAULT 0,
-                failed_tests INTEGER DEFAULT 0,
-                skipped_tests INTEGER DEFAULT 0,
-                xfailed_tests INTEGER DEFAULT 0,
-                xpassed_tests INTEGER DEFAULT 0,
-                warnings INTEGER DEFAULT 0,
-                errors INTEGER DEFAULT 0,
-                rerun INTEGER DEFAULT 0,
-                rerun_outcomes TEXT DEFAULT '[]',
-                rerun_recovery_rate REAL DEFAULT 0.0,
-                rerun_total_time REAL DEFAULT 0.0
+                sut_environment TEXT,
+                start_time DATETIME,
+                end_time DATETIME,
+                duration REAL,
+                total_tests INTEGER,
+                passed_tests INTEGER,
+                failed_tests INTEGER,
+                skipped_tests INTEGER,
+                xfailed_tests INTEGER,
+                xpassed_tests INTEGER,
+                warnings TEXT,
+                errors TEXT,
+                rerun BOOLEAN DEFAULT 0,
+                rerun_outcomes TEXT,
+                rerun_recovery_rate REAL,
+                rerun_total_time REAL
             )
             """
         )
 
-        # Create test_results table
+        # Create test_results table with migration for new columns
         cursor.execute(
             """
             CREATE TABLE IF NOT EXISTS test_results (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                session_id TEXT NOT NULL,
-                test_id TEXT NOT NULL,
-                outcome TEXT NOT NULL,
-                start_time TIMESTAMP,
+                session_id TEXT,
+                test_id TEXT,
+                outcome TEXT,
+                start_time DATETIME,
                 duration REAL,
                 error_message TEXT,
                 error_type TEXT,
@@ -234,44 +230,24 @@ def init_sqlite_db(db_path: Path) -> None:
                 capstdout TEXT,
                 capstderr TEXT,
                 rerun_count INTEGER DEFAULT 0,
-                rerun_outcomes TEXT DEFAULT '[]',
                 environment TEXT,
-                warnings TEXT,
-                FOREIGN KEY (session_id) REFERENCES sessions(session_id)
+                warnings TEXT
             )
             """
         )
 
-        # Check if we need to add new columns
-        cursor.execute("PRAGMA table_info(test_results)")
-        columns = {col[1] for col in cursor.fetchall()}
+        # Migrate columns if they don't exist
+        try:
+            cursor.execute("ALTER TABLE test_results ADD COLUMN is_rerun BOOLEAN DEFAULT 0")
+        except sqlite3.OperationalError:
+            pass  # Column already exists
 
-        if "rerun_outcomes" not in columns:
-            cursor.execute(
-                "ALTER TABLE test_results ADD COLUMN rerun_outcomes TEXT DEFAULT '[]'"
-            )
-
-        cursor.execute("PRAGMA table_info(sessions)")
-        columns = {col[1] for col in cursor.fetchall()}
-
-        if "rerun_outcomes" not in columns:
-            cursor.execute(
-                "ALTER TABLE sessions ADD COLUMN rerun_outcomes TEXT DEFAULT '[]'"
-            )
-
-        if "rerun_recovery_rate" not in columns:
-            cursor.execute(
-                "ALTER TABLE sessions ADD COLUMN rerun_recovery_rate REAL DEFAULT 0.0"
-            )
-
-        if "rerun_total_time" not in columns:
-            cursor.execute(
-                "ALTER TABLE sessions ADD COLUMN rerun_total_time REAL DEFAULT 0.0"
-            )
+        try:
+            cursor.execute("ALTER TABLE test_results ADD COLUMN rerun_outcomes TEXT")
+        except sqlite3.OperationalError:
+            pass  # Column already exists
 
         conn.commit()
-    finally:
-        conn.close()
 
 
 @contextmanager
@@ -299,7 +275,7 @@ def add_session(
     sut_id: str,
     sut_type: str = "",
     sut_version: str = "",
-    sut_env: str = "",
+    sut_environment: str = "",
     end_time: Optional[datetime] = None,
     duration: Optional[int] = None,
 ) -> str:
@@ -313,7 +289,7 @@ def add_session(
                 sut_id,
                 sut_type,
                 sut_version,
-                sut_env,
+                sut_environment,
                 start_time,
                 end_time,
                 duration,
@@ -336,7 +312,7 @@ def add_session(
                 sut_id,
                 sut_type,
                 sut_version,
-                sut_env,
+                sut_environment,
                 start_time.isoformat(),  # Convert datetime to ISO format string
                 end_time.isoformat() if end_time else None,  # Handle end_time
                 duration,  # Handle duration
@@ -407,8 +383,9 @@ def add_test_result(
                 environment,
                 warnings,
                 rerun_count,
-                rerun_outcomes
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                rerun_outcomes,
+                is_rerun
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 session_id,
@@ -423,6 +400,7 @@ def add_test_result(
                 warnings_json,
                 rerun_count,
                 rerun_outcomes_json,
+                rerun_count > 0,
             ),
         )
         conn.commit()
@@ -647,7 +625,7 @@ def export_results(
     sut_id: Optional[str] = None,
     sut_type: Optional[str] = None,
     sut_version: Optional[str] = None,
-    sut_env: Optional[str] = None,
+    sut_environment: Optional[str] = None,
     output_file: Optional[Path] = None,
     output_format: str = "json",  # Can be "json" or "jsonl"
     outcome: Optional[str] = None,
@@ -679,7 +657,7 @@ def export_results(
                 s.rerun_total_time,
                 s.sut_type,
                 s.sut_version,
-                s.sut_env
+                s.sut_environment
             FROM sessions s
             INNER JOIN test_results r ON s.session_id = r.session_id
             WHERE 1=1
@@ -705,9 +683,9 @@ def export_results(
         if sut_version is not None and sut_version != "":
             query += " AND s.sut_version = ?"
             params.append(sut_version)
-        if sut_env is not None and sut_env != "":
-            query += " AND s.sut_env = ?"
-            params.append(sut_env)
+        if sut_environment is not None and sut_environment != "":
+            query += " AND s.sut_environment = ?"
+            params.append(sut_environment)
         if outcome is not None:
             query += " AND r.outcome = ?"
             params.append(outcome.upper())  # Convert outcome filter to uppercase
@@ -765,7 +743,7 @@ def export_results(
                         "id": session[1],
                         "type": session[15] or "",  # sut_type
                         "version": session[16] or "",  # sut_version
-                        "environment": session[17] or "",  # sut_env
+                        "environment": session[17] or "",  # sut_environment
                         "metadata": None,
                     },
                     "statistics": {

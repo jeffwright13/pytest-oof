@@ -24,7 +24,7 @@ def mock_config(mocker):
     options.oof_sut_id = "test-sut"
     options.oof_sut_type = "test-type"
     options.oof_sut_version = "1.0.0"
-    options.oof_sut_env = "test"
+    options.oof_sut_environment = "test"
     options.oof_html = None
     options.oof_json = None
     options.oof_console = None

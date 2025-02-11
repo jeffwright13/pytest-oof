@@ -49,7 +49,7 @@ class AdvancedAnalyzer:
             if result.get("error_type"):
                 failure_counts[test_id]["error_types"].add(result["error_type"])
             failure_counts[test_id]["environments"].add(
-                result.get("sut_env", "unknown")
+                result.get("sut_environment", "unknown")
             )
 
         # Filter and format results
@@ -104,7 +104,7 @@ class AdvancedAnalyzer:
                 ):
                     test_status[test_id]["last_pass"] = result["start_time"]
 
-            test_status[test_id]["environments"].add(result.get("sut_env", "unknown"))
+            test_status[test_id]["environments"].add(result.get("sut_environment", "unknown"))
 
         # Find tests that failed but then passed
         fixed_tests = []

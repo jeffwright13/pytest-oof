@@ -77,11 +77,11 @@ def get_db_stats(db_path: Path) -> Dict[str, Any]:
             cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
             tables = [table[0] for table in cursor.fetchall()]
             
-            if not {'test_sessions', 'test_results', 'suts'}.issubset(tables):
+            if not {'sessions', 'test_results'}.issubset(tables):
                 return stats
             
             # Total test sessions
-            cursor.execute("SELECT COUNT(*) FROM test_sessions")
+            cursor.execute("SELECT COUNT(*) FROM sessions")
             stats['Total Test Sessions'] = cursor.fetchone()[0]
             
             # Total test results
@@ -89,23 +89,23 @@ def get_db_stats(db_path: Path) -> Dict[str, Any]:
             stats['Total Test Results'] = cursor.fetchone()[0]
             
             # Unique test cases
-            cursor.execute("SELECT COUNT(DISTINCT test_case) FROM test_results")
+            cursor.execute("SELECT COUNT(DISTINCT test_id) FROM test_results")
             stats['Unique Test Cases'] = cursor.fetchone()[0]
             
             # Unique SUTs
-            cursor.execute("SELECT COUNT(DISTINCT sut_id) FROM suts")
+            cursor.execute("SELECT COUNT(DISTINCT sut_id) FROM sessions")
             stats['Unique SUTs'] = cursor.fetchone()[0]
             
             # Unique SUT Types
-            cursor.execute("SELECT COUNT(DISTINCT sut_type) FROM suts")
+            cursor.execute("SELECT COUNT(DISTINCT sut_type) FROM sessions")
             stats['Unique SUT Types'] = cursor.fetchone()[0]
             
             # Unique SUT Versions
-            cursor.execute("SELECT COUNT(DISTINCT sut_version) FROM suts")
+            cursor.execute("SELECT COUNT(DISTINCT sut_version) FROM sessions")
             stats['Unique SUT Versions'] = cursor.fetchone()[0]
             
             # Unique SUT Environments
-            cursor.execute("SELECT COUNT(DISTINCT sut_environment) FROM suts")
+            cursor.execute("SELECT COUNT(DISTINCT sut_environment) FROM sessions")
             stats['Unique SUT Environments'] = cursor.fetchone()[0]
             
             # Test Outcomes

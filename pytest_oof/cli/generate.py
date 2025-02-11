@@ -19,37 +19,39 @@ def generate():
 @generate.command()
 @click.option(
     "--days",
-    type=int,
-    default=7,
-    help="Number of days to generate data for (default: %(default)s)",
+    default=14,
+    help="Number of days of historical data to generate",
 )
 @click.option(
     "--min-sessions",
-    type=int,
     default=3,
-    help="Minimum number of sessions per day (default: %(default)s)",
+    help="Minimum number of sessions per day",
 )
 @click.option(
     "--max-sessions",
-    type=int,
     default=8,
-    help="Maximum number of sessions per day (default: %(default)s)",
+    help="Maximum number of sessions per day",
 )
 @click.option(
-    "--include-patterns",
-    is_flag=True,
-    help="Include special failure patterns (global failures, flaky tests, etc.)",
+    "--include-patterns/--no-include-patterns",
+    default=True,
+    help="Include special test failure patterns",
 )
 @click.option(
     "--db-path",
     type=click.Path(),
-    default=str(TEST_DB_PATH),
-    help="Database path for generated data (default: test database)",
+    default=None,
+    help="Database to generate data in (default: current active database)",
 )
 @click.option(
     "--force",
     is_flag=True,
-    help="Force using production database (not recommended)",
+    help="Force generating data in a non-test database (USE WITH CAUTION)",
+)
+@click.option(
+    "--purge",
+    is_flag=True,
+    help="Purge existing data before generating new data",
 )
 def data(
     days: int,
@@ -58,32 +60,56 @@ def data(
     include_patterns: bool,
     db_path: str,
     force: bool,
+    purge: bool,
 ):
     """Generate historical test data."""
+    # Logging for debugging
+    console.print(f"[yellow]DEBUG: Generate data command called[/yellow]")
+    console.print(f"[yellow]  days: {days}[/yellow]")
+    console.print(f"[yellow]  db_path: {db_path}[/yellow]")
+    console.print(f"[yellow]  force: {force}[/yellow]")
+    console.print(f"[yellow]  purge: {purge}[/yellow]")
+
+    # If no db_path provided, use the active database
+    if db_path is None:
+        from pytest_oof.constants import get_active_db
+        db_path = str(get_active_db())
+
+    # Validate database path
     db_path = Path(db_path)
-    
-    # Safety check for production database
-    if db_path.resolve() == DEFAULT_DB_PATH.resolve() and not force:
+
+    # Safety check for non-test databases
+    if not force and not str(db_path).endswith("test-data.db"):
         console.print(
             "[red]Error: Refusing to generate test data in production database. "
             "Use --force to override.[/red]"
         )
         return
-    
+
     try:
-        # First purge any existing data
-        purge_database(db_path=db_path)
-        
-        # Then generate new data
-        # gen_data(
-        #     days=days,
-        #     sessions_per_day=(min_sessions, max_sessions),
-        #     include_patterns=include_patterns,
-        #     db_path=db_path,
-        # )
-        console.print("[green]Successfully generated test data![/green]")
+        # Set the database path for the script
+        import os
+        os.environ['OOF_DB_PATH'] = str(db_path)
+
+        # Purge database if requested
+        if purge:
+            purge_database(db_path=str(db_path))
+        else:
+            from scripts.generate_historical_data import ensure_tables_exist
+            ensure_tables_exist()
+
+        # Generate new data
+        from scripts.generate_historical_data import generate_historical_data
+        generate_historical_data(
+            days=days,
+            sessions_per_day=(min_sessions, max_sessions),
+            include_patterns=include_patterns,
+        )
+
+        console.print(f"[green]Successfully generated test data in {db_path}![/green]")
     except Exception as e:
-        console.print(f"[red]Error generating test data: {str(e)}[/red]")
+        console.print(f"[red]Error generating test data: {e}[/red]")
+        raise
 
 @generate.command()
 @click.option(

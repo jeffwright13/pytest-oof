@@ -72,7 +72,7 @@ class TestDataAnalyzer:
                     sut_id TEXT NOT NULL,
                     sut_type TEXT,
                     sut_version TEXT,
-                    sut_env TEXT,
+                    sut_environment TEXT,
                     start_time TIMESTAMP NOT NULL,
                     end_time TIMESTAMP,
                     duration INTEGER,
@@ -154,7 +154,7 @@ class TestDataAnalyzer:
             cursor = conn.cursor()
             cursor.execute(
                 """
-                SELECT DISTINCT sut_id, sut_type, sut_version, sut_env
+                SELECT DISTINCT sut_id, sut_type, sut_version, sut_environment
                 FROM test_sessions
                 ORDER BY sut_id, sut_version
                 """
@@ -187,7 +187,7 @@ class TestDataAnalyzer:
                     ts.sut_id,
                     ts.sut_type,
                     ts.sut_version,
-                    ts.sut_env,
+                    ts.sut_environment,
                     COUNT(DISTINCT ts.id) as total_sessions,
                     SUM(ts.num_tests) as total_tests,
                     SUM(ts.num_passes) as total_passes,
@@ -210,7 +210,7 @@ class TestDataAnalyzer:
                 query += " AND ts.sut_version = ?"
                 params.append(version)
             if environment:
-                query += " AND ts.sut_env = ?"
+                query += " AND ts.sut_environment = ?"
                 params.append(environment)
             if start_time:
                 query += " AND ts.start_time >= ?"
@@ -224,7 +224,7 @@ class TestDataAnalyzer:
                     ts.sut_id,
                     ts.sut_type,
                     ts.sut_version,
-                    ts.sut_env
+                    ts.sut_environment
                 ORDER BY
                     ts.sut_id,
                     ts.sut_version
@@ -242,7 +242,7 @@ class TestDataAnalyzer:
                     WHERE ts.sut_id = ?
                         AND ts.sut_type = ?
                         AND ts.sut_version = ?
-                        AND ts.sut_env = ?
+                        AND ts.sut_environment = ?
                         AND tr.rerun_count > 0
                     """,
                     (row[0], row[1], row[2], row[3]),
@@ -334,7 +334,7 @@ class TestDataAnalyzer:
                 # Get environments and versions this test was run in
                 cursor.execute(
                     """
-                    SELECT DISTINCT ts.sut_env, ts.sut_version
+                    SELECT DISTINCT ts.sut_environment, ts.sut_version
                     FROM test_results tr
                     JOIN test_sessions ts ON tr.session_id = ts.id
                     WHERE tr.nodeid = ?

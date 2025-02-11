@@ -282,7 +282,7 @@ def test_show_session_by_id(
                     "sut_id": "test-sut",
                     "sut_type": "test",
                     "sut_version": "1.0.0",
-                    "sut_env": "prod",
+                    "sut_environment": "prod",
                 },
                 "test_results": MOCK_TEST_RESULTS,
             }
@@ -335,7 +335,7 @@ def test_show_session_by_short_id(
                     "sut_id": "test-sut",
                     "sut_type": "test",
                     "sut_version": "1.0.0",
-                    "sut_env": "prod",
+                    "sut_environment": "prod",
                 },
                 "test_results": MOCK_TEST_RESULTS,
             }

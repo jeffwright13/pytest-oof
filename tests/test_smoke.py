@@ -297,7 +297,7 @@ def test_rerun_tracking(tmp_path, mocker):
         sut_id="test_sut",
         sut_type="unit",
         sut_version="1.0",
-        sut_env="test",
+        sut_environment="test",
     )
 
     # Add test results with reruns
