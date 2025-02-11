@@ -155,6 +155,27 @@ def pytest_runtest_makereport(item: Item, call: Any) -> TestReport:
     return report
 
 
+def determine_final_outcome(initial_outcome: str, rerun_outcomes: List[str]) -> str:
+    """
+    Determine the final test outcome based on initial outcome and rerun history.
+    
+    Prioritization rules:
+    1. If any rerun passes, consider the test as PASSED
+    2. If no reruns pass, keep the original outcome
+    3. Handle special cases like XFAIL, XPASS
+    """
+    # Special case handling for expected failures/passes
+    if initial_outcome in ["xfail", "xpass"]:
+        return initial_outcome
+    
+    # Check if any rerun passes
+    if any(outcome.lower() == "passed" for outcome in rerun_outcomes):
+        return "passed"
+    
+    # If no successful reruns, return original outcome
+    return initial_outcome.lower()
+
+
 def process_test_result(item, reports):
     """Process all reports for a test and add the final result."""
     # Get the call report (or setup for skips) - prioritize xfail/xpass
@@ -186,9 +207,11 @@ def process_test_result(item, reports):
         # Add to rerun groups if there were reruns
         item.config._oof_rerun_groups.add(item.nodeid)
 
+    final_outcome = determine_final_outcome(call.outcome.lower(), rerun_outcomes)
+
     test_result = TestResult(
         test_id=item.nodeid,
-        outcome=call.outcome.lower(),  # Convert to lowercase
+        outcome=final_outcome,
         duration=call.duration,
         error_data={
             "type": str(call.longrepr) if call.longrepr else None,
@@ -209,15 +232,15 @@ def process_test_result(item, reports):
 
     # Update session stats
     stats = item.config._oof_test_results.session_stats
-    if call.outcome == "passed":
+    if final_outcome == "passed":
         stats.num_passed += 1
-    elif call.outcome == "failed":
+    elif final_outcome == "failed":
         stats.num_failed += 1
-    elif call.outcome == "skipped":
+    elif final_outcome == "skipped":
         stats.num_skipped += 1
-    elif call.outcome == "xfailed":
+    elif final_outcome == "xfailed":
         stats.num_xfailed += 1
-    elif call.outcome == "xpassed":
+    elif final_outcome == "xpassed":
         stats.num_xpassed += 1
     if call.longrepr:
         stats.num_errors += 1

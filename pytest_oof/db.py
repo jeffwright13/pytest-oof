@@ -1590,14 +1590,19 @@ def get_rerun_stats(db_path: Path) -> Dict[str, Any]:
 
 
 def update_session_stats(db_path: Path, session_id: str) -> None:
-    """Update session statistics based on test results."""
+    """Update session statistics based on test results with enhanced rerun tracking."""
     with db_connection(db_path) as conn:
         cursor = conn.cursor()
 
         # Get all test results for the session
         cursor.execute(
             """
-            SELECT outcome, rerun_count, rerun_outcomes, duration
+            SELECT 
+                outcome, 
+                rerun_count, 
+                rerun_outcomes, 
+                duration,
+                is_rerun
             FROM test_results
             WHERE session_id = ?
             """,
@@ -1605,47 +1610,73 @@ def update_session_stats(db_path: Path, session_id: str) -> None:
         )
         results = cursor.fetchall()
 
-        # Initialize counters
-        stats = defaultdict(int)
-        total_rerun_time = 0
-        successful_reruns = 0
-        total_reruns = 0
+        # Initialize advanced statistics
+        stats = {
+            "total_tests": len(results),
+            "outcomes": defaultdict(int),
+            "reruns": {
+                "total_tests_rerun": 0,
+                "total_rerun_attempts": 0,
+                "total_rerun_time": 0.0,
+                "recovery_paths": defaultdict(int),
+                "recovery_rate": 0.0
+            }
+        }
 
-        # Calculate statistics
-        for outcome, rerun_count, rerun_outcomes, duration in results:
-            stats[outcome] += 1
+        # Calculate detailed statistics
+        for outcome, rerun_count, rerun_outcomes, duration, is_rerun in results:
+            # Count outcomes
+            stats["outcomes"][outcome.lower()] += 1
+
+            # Track reruns
             if rerun_count > 0:
-                total_reruns += 1
-                total_rerun_time += duration * rerun_count
-                (json.loads(rerun_outcomes) if rerun_outcomes else [])
-                if outcome == "passed":
-                    successful_reruns += 1
+                stats["reruns"]["total_tests_rerun"] += 1
+                stats["reruns"]["total_rerun_attempts"] += rerun_count
+                stats["reruns"]["total_rerun_time"] += duration * rerun_count
 
-        # Update session
+                # Analyze recovery paths
+                parsed_outcomes = json.loads(rerun_outcomes) if rerun_outcomes else []
+                if parsed_outcomes:
+                    recovery_path = " → ".join(parsed_outcomes + [outcome])
+                    stats["reruns"]["recovery_paths"][recovery_path] += 1
+
+        # Calculate recovery rate
+        total_rerun_tests = stats["reruns"]["total_tests_rerun"]
+        if total_rerun_tests > 0:
+            # Consider a test recovered if final outcome is PASSED
+            recovered_tests = stats["outcomes"].get("passed", 0)
+            stats["reruns"]["recovery_rate"] = (recovered_tests / total_rerun_tests) * 100
+
+        # Update session with comprehensive statistics
         cursor.execute(
             """
             UPDATE sessions
-            SET total_tests = ?,
+            SET 
+                total_tests = ?,
                 passed_tests = ?,
                 failed_tests = ?,
                 skipped_tests = ?,
                 xfailed_tests = ?,
                 xpassed_tests = ?,
                 rerun = ?,
+                rerun_total_attempts = ?,
                 rerun_recovery_rate = ?,
-                rerun_total_time = ?
+                rerun_total_time = ?,
+                rerun_recovery_paths = ?
             WHERE session_id = ?
             """,
             (
-                len(results),
-                stats["passed"],
-                stats["failed"],
-                stats["skipped"],
-                stats["xfailed"],
-                stats["xpassed"],
-                total_reruns,
-                (successful_reruns / total_reruns * 100) if total_reruns > 0 else 0,
-                total_rerun_time,
+                stats["total_tests"],
+                stats["outcomes"].get("passed", 0),
+                stats["outcomes"].get("failed", 0),
+                stats["outcomes"].get("skipped", 0),
+                stats["outcomes"].get("xfailed", 0),
+                stats["outcomes"].get("xpassed", 0),
+                stats["reruns"]["total_tests_rerun"],
+                stats["reruns"]["total_rerun_attempts"],
+                stats["reruns"]["recovery_rate"],
+                stats["reruns"]["total_rerun_time"],
+                json.dumps(dict(stats["reruns"]["recovery_paths"])),
                 session_id,
             ),
         )
