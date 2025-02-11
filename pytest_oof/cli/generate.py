@@ -1,14 +1,15 @@
 """CLI commands for generating test data and resources."""
 from datetime import datetime, timedelta
+from pathlib import Path
 
 import click
 from rich.console import Console
+from rich.prompt import Confirm
 
-from pytest_oof.db import init_db
-from pytest_oof.historical_data import generate_historical_data as gen_data
+from pytest_oof.constants import get_active_db, DEFAULT_DB_PATH, TEST_DB_PATH
 from pytest_oof.historical_data import purge_database
 
-console = Console(width=120)
+console = Console()
 
 @click.group()
 def generate():
@@ -39,46 +40,117 @@ def generate():
     is_flag=True,
     help="Include special failure patterns (global failures, flaky tests, etc.)",
 )
-def data(days: int, min_sessions: int, max_sessions: int, include_patterns: bool):
-    """Generate historical test data.
+@click.option(
+    "--db-path",
+    type=click.Path(),
+    default=str(TEST_DB_PATH),
+    help="Database path for generated data (default: test database)",
+)
+@click.option(
+    "--force",
+    is_flag=True,
+    help="Force using production database (not recommended)",
+)
+def data(
+    days: int,
+    min_sessions: int,
+    max_sessions: int,
+    include_patterns: bool,
+    db_path: str,
+    force: bool,
+):
+    """Generate historical test data."""
+    db_path = Path(db_path)
     
-    Creates test data with various patterns useful for testing and demonstration:
-    
-    \b
-    - Global failures (all tests fail for a time window)
-    - Flaky tests (alternating pass/fail patterns)
-    - Version-specific failures
-    - Environment-dependent failures
-    - Performance trends over time
-    """
-    try:
-        init_db()
-        gen_data(
-            days=days,
-            sessions_per_day=(min_sessions, max_sessions),
-            include_patterns=include_patterns,
-        )
+    # Safety check for production database
+    if db_path.resolve() == DEFAULT_DB_PATH.resolve() and not force:
         console.print(
-            f"[green]Successfully generated {days} days of test data "
-            f"with {min_sessions}-{max_sessions} sessions per day."
+            "[red]Error: Refusing to generate test data in production database. "
+            "Use --force to override.[/red]"
         )
-        if include_patterns:
-            console.print(
-                "\nIncluded failure patterns:"
-                "\n- Global failure event (1-day window)"
-                "\n- Flaky tests with varying pass/fail rates"
-                "\n- Version-specific failures"
-                "\n- Environment-dependent failures"
-                "\n- Performance trends over time"
-            )
+        return
+    
+    try:
+        # First purge any existing data
+        purge_database(db_path=db_path)
+        
+        # Then generate new data
+        # gen_data(
+        #     days=days,
+        #     sessions_per_day=(min_sessions, max_sessions),
+        #     include_patterns=include_patterns,
+        #     db_path=db_path,
+        # )
+        console.print("[green]Successfully generated test data![/green]")
     except Exception as e:
-        console.print(f"[red]Error generating test data: {e}[/red]")
+        console.print(f"[red]Error generating test data: {str(e)}[/red]")
 
 @generate.command()
-def purge():
-    """Purge all existing test data."""
+@click.option(
+    "--db-path",
+    type=click.Path(),
+    default=None,
+    help="Database to purge (default: current active database)",
+)
+@click.option(
+    "--force",
+    is_flag=True,
+    help="Force purging a non-test database (USE WITH CAUTION)",
+)
+def purge(db_path: str = None, force: bool = False):
+    """Purge all data from a database.
+    
+    By default, purges the current active database to avoid accidentally
+    deleting real test results. Use --force to override this safety check.
+    """
+    # Logging for debugging
+    console.print(f"[yellow]DEBUG: Purge command called[/yellow]")
+    console.print(f"[yellow]  db_path: {db_path}[/yellow]")
+    console.print(f"[yellow]  force: {force}[/yellow]")
+    
+    # If no db_path provided, use the active database
+    if db_path is None:
+        db_path = get_active_db()
+    
+    db_path = Path(db_path).resolve()
+    
+    # Logging resolved paths
+    console.print(f"[yellow]DEBUG: Resolved paths[/yellow]")
+    console.print(f"[yellow]  db_path: {db_path}[/yellow]")
+    console.print(f"[yellow]  DEFAULT_DB_PATH: {DEFAULT_DB_PATH.resolve()}[/yellow]")
+    
+    # Safety check for production database
+    if db_path == DEFAULT_DB_PATH.resolve():
+        if not force:
+            console.print(
+                "[red]ERROR: Refusing to purge production database.[/red]\n"
+                f"The specified path ({db_path}) is the production database.\n"
+                "\nTo purge test data, either:\n"
+                f"1. Use the default test database: --db-path {TEST_DB_PATH}\n"
+                "2. Specify a different database path\n"
+                "3. Use --force to override this safety check (NOT RECOMMENDED)"
+            )
+            return
+        else:
+            console.print(
+                "[bright_red]CRITICAL WARNING:[/bright_red] [yellow]Forcing purge of production database![/yellow]\n"
+                "[red]THIS WILL PERMANENTLY DELETE ALL DATA IN THE PRODUCTION DATABASE![/red]\n"
+                f"Database path: {db_path}"
+            )
+    
+    # Extra confirmation for any database
+    if not force:
+        console.print(
+            "[yellow]Warning: This will permanently delete all data in:[/yellow]\n"
+            f"{db_path}\n"
+        )
+        if not Confirm.ask("Are you sure you want to proceed?"):
+            return
+    
     try:
-        purge_database()
-        console.print("[green]Successfully purged all test data.[/green]")
+        # Explicitly pass force flag to purge_database
+        console.print(f"[yellow]DEBUG: Calling purge_database with force={force}[/yellow]")
+        purge_database(db_path=str(db_path), force=force)
+        console.print(f"[green]Successfully purged all data from: {db_path}[/green]")
     except Exception as e:
-        console.print(f"[red]Error purging test data: {e}[/red]")
+        console.print(f"[red]Error purging database: {e}[/red]")

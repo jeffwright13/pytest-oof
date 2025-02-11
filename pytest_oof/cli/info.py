@@ -2,135 +2,211 @@
 import os
 from datetime import datetime, timedelta
 from pathlib import Path
+from typing import Dict, Any, Optional
 
 import click
 from rich.console import Console
+from rich.panel import Panel
 from rich.table import Table
+
+from pytest_oof.cli.rich_utils import format_command_help
+from pytest_oof.constants import DEFAULT_DB_PATH, TEST_DB_PATH, get_active_db
 
 console = Console(width=120)
 
-def get_default_db_path() -> Path:
-    """Get the default database path."""
-    return Path("./.oof/oof-results.db")
+# Markdown help text for the info command
+INFO_HELP = format_command_help(
+    description="Display detailed statistics about the pytest-oof database.",
+    examples="""
+# Basic Usage
+```bash
+# Show database statistics
+oof info
 
-def get_db_stats():
-    """Get statistics about the database."""
-    db_path = get_default_db_path()
-    if not os.path.exists(db_path):
-        return None
+# Export database information as JSON
+oof info --json
+```
+
+# Information Displayed
+- Database type (test or production)
+- Database path
+- Database size
+- Last modified time
+- Total test sessions
+- Total test results
+- Unique test cases
+- System Under Test (SUT) statistics
+- Test outcome distribution
+"""
+)
+
+def get_db_stats(db_path: Path) -> Dict[str, Any]:
+    """
+    Retrieve comprehensive database statistics.
     
+    Args:
+        db_path: Path to the SQLite database file
+    
+    Returns:
+        Dictionary of database statistics
+    """
+    import sqlite3
+    from datetime import datetime
+    
+    # Default stats dictionary
     stats = {
-        'db_size': os.path.getsize(db_path),
-        'db_path': str(db_path),
-        'last_modified': datetime.fromtimestamp(os.path.getmtime(db_path))
+        'Database Type': 'Production Database' if 'oof-results.db' in str(db_path) else 'Test Database',
+        'Database Path': str(db_path),
+        'Database Size': f'{os.path.getsize(db_path) / (1024 * 1024):.2f} MB',
+        'Last Modified': datetime.fromtimestamp(os.path.getmtime(db_path)),
+        'Total Test Sessions': 0,
+        'Total Test Results': 0,
+        'Unique Test Cases': 0,
+        'Unique SUTs': 0,
+        'Unique SUT Types': 0,
+        'Unique SUT Versions': 0,
+        'Unique SUT Environments': 0,
+        'Test Outcomes': {}
     }
     
-    # Use raw SQL since we're just reading stats
-    import sqlite3
-    with sqlite3.connect(db_path) as conn:
-        cursor = conn.cursor()
-        
-        # Get total number of sessions
-        cursor.execute("""
-            SELECT COUNT(DISTINCT session_id), MIN(start_time), MAX(start_time) 
-            FROM sessions 
-            WHERE session_id IS NOT NULL
-        """)
-        sessions_count, first_session, last_session = cursor.fetchone()
-        stats['sessions_count'] = sessions_count
-        if first_session and last_session:
-            stats['first_session'] = datetime.fromisoformat(first_session)
-            stats['last_session'] = datetime.fromisoformat(last_session)
-            stats['date_range'] = (stats['last_session'] - stats['first_session']).days
-        
-        # Get total number of test results
-        cursor.execute("SELECT COUNT(*) FROM test_results WHERE session_id IS NOT NULL")
-        stats['results_count'] = cursor.fetchone()[0]
-        
-        # Get unique test cases
-        cursor.execute("SELECT COUNT(DISTINCT test_id) FROM test_results WHERE test_id IS NOT NULL")
-        stats['unique_tests'] = cursor.fetchone()[0]
-        
-        # Get SUT stats
-        cursor.execute("""
-            SELECT COUNT(DISTINCT sut_id) as sut_count,
-                   COUNT(DISTINCT CASE WHEN sut_type != '' AND sut_type IS NOT NULL THEN sut_type END) as type_count,
-                   COUNT(DISTINCT CASE WHEN sut_version != '' AND sut_version IS NOT NULL THEN sut_version END) as version_count,
-                   COUNT(DISTINCT CASE WHEN sut_env != '' AND sut_env IS NOT NULL THEN sut_env END) as env_count
-            FROM sessions 
-            WHERE sut_id IS NOT NULL
-        """)
-        sut_stats = cursor.fetchone()
-        stats.update({
-            'sut_count': sut_stats[0],
-            'sut_type_count': sut_stats[1],
-            'sut_version_count': sut_stats[2],
-            'sut_env_count': sut_stats[3]
-        })
-        
-        # Get outcome distribution
-        cursor.execute("""
-            SELECT outcome, COUNT(*) as count
-            FROM test_results
-            GROUP BY outcome
-            ORDER BY count DESC
-        """)
-        stats['outcomes'] = dict(cursor.fetchall())
+    try:
+        with sqlite3.connect(str(db_path)) as conn:
+            cursor = conn.cursor()
+            
+            # Check if required tables exist
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
+            tables = [table[0] for table in cursor.fetchall()]
+            
+            if not {'test_sessions', 'test_results', 'suts'}.issubset(tables):
+                return stats
+            
+            # Total test sessions
+            cursor.execute("SELECT COUNT(*) FROM test_sessions")
+            stats['Total Test Sessions'] = cursor.fetchone()[0]
+            
+            # Total test results
+            cursor.execute("SELECT COUNT(*) FROM test_results")
+            stats['Total Test Results'] = cursor.fetchone()[0]
+            
+            # Unique test cases
+            cursor.execute("SELECT COUNT(DISTINCT test_case) FROM test_results")
+            stats['Unique Test Cases'] = cursor.fetchone()[0]
+            
+            # Unique SUTs
+            cursor.execute("SELECT COUNT(DISTINCT sut_id) FROM suts")
+            stats['Unique SUTs'] = cursor.fetchone()[0]
+            
+            # Unique SUT Types
+            cursor.execute("SELECT COUNT(DISTINCT sut_type) FROM suts")
+            stats['Unique SUT Types'] = cursor.fetchone()[0]
+            
+            # Unique SUT Versions
+            cursor.execute("SELECT COUNT(DISTINCT sut_version) FROM suts")
+            stats['Unique SUT Versions'] = cursor.fetchone()[0]
+            
+            # Unique SUT Environments
+            cursor.execute("SELECT COUNT(DISTINCT sut_environment) FROM suts")
+            stats['Unique SUT Environments'] = cursor.fetchone()[0]
+            
+            # Test Outcomes
+            cursor.execute("""
+                SELECT outcome, COUNT(*) as count 
+                FROM test_results 
+                GROUP BY outcome 
+                ORDER BY count DESC
+            """)
+            outcomes = cursor.fetchall()
+            stats['Test Outcomes'] = {outcome: count for outcome, count in outcomes}
+    
+    except sqlite3.Error as e:
+        console.print(f"[red]Error retrieving database statistics: {e}[/red]")
     
     return stats
 
+def create_stats_table(stats: Dict[str, Any]) -> Table:
+    """Create a Rich table with database statistics."""
+    table = Table(title="Database Statistics")
+    table.add_column("Metric", style="cyan")
+    table.add_column("Value", style="magenta")
+    
+    # Add rows for each statistic
+    for key, value in stats.items():
+        # Special handling for test outcomes
+        if key == 'Test Outcomes':
+            if not value:
+                table.add_row(key, "No test outcomes recorded")
+            else:
+                outcomes_str = ", ".join(f"{k}: {v}" for k, v in value.items())
+                table.add_row(key, outcomes_str)
+        else:
+            # Convert None to "N/A" for display
+            display_value = str(value) if value is not None else "N/A"
+            table.add_row(key, display_value)
+    
+    return table
+
+def _prepare_json_stats(stats: Dict[str, Any]) -> Dict[str, Any]:
+    """Prepare stats for JSON serialization."""
+    # Create a copy to avoid modifying the original
+    json_stats = stats.copy()
+    
+    # Convert datetime to ISO format string
+    if 'Last Modified' in json_stats and isinstance(json_stats['Last Modified'], datetime):
+        json_stats['Last Modified'] = json_stats['Last Modified'].isoformat()
+    
+    return json_stats
+
 @click.command()
 @click.option('--json', is_flag=True, help='Output in JSON format')
-def info(json):
+@click.option(
+    '--db-path', 
+    type=click.Path(exists=True), 
+    default=None, 
+    help='Path to the database file (default: active database)'
+)
+@click.option(
+    '--all',
+    is_flag=True,
+    help='Show info for both production and test databases',
+)
+def info(json, db_path, all):
     """Show database statistics and information."""
-    stats = get_db_stats()
-    if not stats:
-        console.print("[red]No database found.[/red] Run some tests with pytest-oof first.")
+    
+    # If show_all is set, display both databases
+    if all:
+        # Show both databases
+        prod_stats = get_db_stats(DEFAULT_DB_PATH)
+        
+        if prod_stats:
+            console.print(Panel(
+                create_stats_table(prod_stats),
+                title="Production Database",
+                style="green"
+            ))
+        
+        # Get test database stats
+        test_stats = get_db_stats(TEST_DB_PATH)
+        
+        if test_stats:
+            console.print(Panel(
+                create_stats_table(test_stats),
+                title="Test Database",
+                style="blue"
+            ))
+        
         return
     
+    # If db_path is provided, use it; otherwise, use active database
+    if db_path is None:
+        db_path = get_active_db()
+    
+    # Get stats for the specified or active database
+    stats = get_db_stats(Path(db_path))
+    
+    # JSON output
     if json:
-        import json as json_lib
-        # Convert datetime objects to strings
-        stats_copy = stats.copy()
-        for key in ['last_modified', 'first_session', 'last_session']:
-            if key in stats_copy and stats_copy[key]:
-                stats_copy[key] = stats_copy[key].isoformat()
-        console.print(json_lib.dumps(stats_copy, indent=2))
+        import json
+        print(json.dumps(_prepare_json_stats(stats), indent=2))
         return
     
-    # Create a rich table for display
-    table = Table(title="pytest-oof Database Information", width=100)
-    table.add_column("Metric", style="cyan")
-    table.add_column("Value", style="green")
-    
-    # Database info
-    table.add_row("Database Path", stats['db_path'])
-    table.add_row("Database Size", f"{stats['db_size'] / (1024*1024):.2f} MB")
-    table.add_row("Last Modified", stats['last_modified'].strftime("%Y-%m-%d %H:%M:%S"))
-    
-    # Test data
-    table.add_row("Total Test Sessions", str(stats['sessions_count']))
-    table.add_row("Total Test Results", str(stats['results_count']))
-    table.add_row("Unique Test Cases", str(stats['unique_tests']))
-    
-    # Date range
-    if stats.get('first_session'):
-        table.add_row("First Session", stats['first_session'].strftime("%Y-%m-%d %H:%M:%S"))
-        table.add_row("Last Session", stats['last_session'].strftime("%Y-%m-%d %H:%M:%S"))
-        table.add_row("Date Range", f"{stats['date_range']} days")
-    
-    # SUT info
-    table.add_row("Unique SUTs", str(stats['sut_count']))
-    table.add_row("Unique SUT Types", str(stats['sut_type_count']))
-    table.add_row("Unique SUT Versions", str(stats['sut_version_count']))
-    table.add_row("Unique SUT Environments", str(stats['sut_env_count']))
-    
-    # Outcome distribution
-    outcomes = []
-    total = sum(stats['outcomes'].values())
-    for outcome, count in stats['outcomes'].items():
-        percentage = (count / total) * 100
-        outcomes.append(f"{outcome}: {count} ({percentage:.1f}%)")
-    table.add_row("Test Outcomes", "\n".join(outcomes))
-    
-    console.print(table)
+    console.print(create_stats_table(stats))

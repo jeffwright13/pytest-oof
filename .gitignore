@@ -1,9 +1,18 @@
 # This repo (pytest-oof)
 .oof/
-oof/
+*.shm
+*.wal
+*.jsonl
+*.pickle
+*.db-shm
+*.db-wal
+*.ansi
 
 # JSON
-# *.json
+*.json
+
+# Databases
+*.db
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

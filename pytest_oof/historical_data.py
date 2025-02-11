@@ -112,9 +112,25 @@ def generate_test_result(
     if sut_env["version"].endswith(".0"):  # Initial versions more likely to fail
         base_failure_rate *= 1.3
     
+    # Determine weights for each outcome
+    weights = []
+    for outcome in template["outcomes"]:
+        if outcome == "passed":
+            weights.append(1 - base_failure_rate)
+        elif outcome == "failed":
+            weights.append(base_failure_rate)
+        elif outcome == "skipped":
+            weights.append(0.1)  # 10% chance of skip
+        else:
+            weights.append(0.1)  # Default 10% for other outcomes
+    
+    # Normalize weights to sum to 1
+    total = sum(weights)
+    weights = [w/total for w in weights]
+    
     outcome = random.choices(
         template["outcomes"],
-        weights=[1 - base_failure_rate, base_failure_rate],
+        weights=weights,
         k=1
     )[0]
     
@@ -208,7 +224,8 @@ def apply_performance_trend(
 def generate_historical_data(
     days: int = 7,
     sessions_per_day: Tuple[int, int] = (3, 8),
-    include_patterns: bool = True
+    include_patterns: bool = True,
+    db_path: Optional[str] = None,
 ) -> None:
     """Generate historical test data with various failure patterns.
     
@@ -216,6 +233,7 @@ def generate_historical_data(
         days: Number of days of historical data to generate
         sessions_per_day: Tuple of (min, max) sessions per day
         include_patterns: Whether to include special failure patterns
+        db_path: Path to database file (default: test database)
     """
     end_time = datetime.now()
     start_time = end_time - timedelta(days=days)
@@ -272,9 +290,10 @@ def generate_historical_data(
             
             # Generate test results
             num_tests = random.randint(3, len(TEST_TEMPLATES))
+            test_templates = random.sample(TEST_TEMPLATES, k=min(len(TEST_TEMPLATES), num_tests))
             results = generate_test_results(
                 session_id=session_id,
-                num_tests=num_tests,
+                num_tests=len(test_templates),
                 base_time=session_time,
                 sut_env=sut_env,
                 base_failure_rate=base_failure_rate,
@@ -286,9 +305,11 @@ def generate_historical_data(
             
             # Add session to database
             add_session(
+                db_path=db_path,
                 session_id=session_id,
                 start_time=session_time,
                 end_time=session_end,
+                duration=int(session_duration),
                 sut_id=sut_env["id"],
                 sut_type=sut_env["type"],
                 sut_version=sut_env["version"],
@@ -299,6 +320,7 @@ def generate_historical_data(
             for result in results:
                 error_data = result.get("error_data")
                 add_test_result(
+                    db_path=db_path,
                     session_id=session_id,
                     test_id=result["test_id"],
                     outcome=result["outcome"],
@@ -310,10 +332,116 @@ def generate_historical_data(
                 )
             
             # Update session stats
-            update_session_stats(session_id)
+            update_session_stats(db_path=db_path, session_id=session_id)
         
         current_time += timedelta(days=1)
 
-def purge_database() -> None:
-    """Purge all data from the database."""
-    init_db()  # This will recreate tables
+def purge_database(db_path: Optional[str] = None, force: bool = False) -> None:
+    """Purge all data from the database.
+    
+    Args:
+        db_path: Path to database file to purge (default: test database)
+        force: Allow purging databases other than the test database
+    """
+    from pytest_oof.constants import TEST_DB_PATH, DEFAULT_DB_PATH
+    import os
+    import sqlite3
+    import shutil
+    
+    # Extensive logging
+    print(f"[DEBUG] Purge database called with:")
+    print(f"  db_path: {db_path}")
+    print(f"  force: {force}")
+    
+    if db_path is None:
+        db_path = str(TEST_DB_PATH)
+    
+    db_path = Path(db_path).resolve()
+    
+    # Log resolved paths
+    print(f"[DEBUG] Resolved paths:")
+    print(f"  db_path: {db_path}")
+    print(f"  TEST_DB_PATH: {TEST_DB_PATH.resolve()}")
+    print(f"  DEFAULT_DB_PATH: {DEFAULT_DB_PATH.resolve()}")
+    
+    # Safety check
+    if not force:
+        if db_path.resolve() not in [TEST_DB_PATH.resolve(), DEFAULT_DB_PATH.resolve()]:
+            raise ValueError("Can only purge test or production database. Use force=True to override.")
+        
+        if db_path.resolve() == DEFAULT_DB_PATH.resolve():
+            raise ValueError("Refusing to purge production database. Use force=True to override.")
+    
+    try:
+        # Ensure database exists before trying to purge
+        if not db_path.exists():
+            print(f"[ERROR] No database found at {db_path}. Skipping purge.")
+            return
+        
+        # Detailed connection and purge logging
+        print(f"[DEBUG] Attempting to purge database: {db_path}")
+        
+        # Close any existing connections
+        if hasattr(sqlite3, 'close_all_connections'):
+            sqlite3.close_all_connections()
+        
+        # Use sqlite3 directly for more control
+        conn = sqlite3.connect(str(db_path))
+        try:
+            cursor = conn.cursor()
+            
+            # Get all table names
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
+            tables = [table[0] for table in cursor.fetchall()]
+            
+            print(f"[DEBUG] Tables found: {tables}")
+            
+            # Delete data from all tables
+            for table in tables:
+                try:
+                    print(f"[DEBUG] Deleting from table: {table}")
+                    cursor.execute(f"DELETE FROM {table}")
+                    print(f"[DEBUG] Deleted from table: {table}")
+                except Exception as e:
+                    print(f"[WARNING] Could not delete from table {table}: {e}")
+            
+            # Commit deletions
+            conn.commit()
+            
+            # Vacuum outside of transaction
+            conn.isolation_level = None  # Disable transaction
+            print("[DEBUG] Running VACUUM")
+            conn.execute("VACUUM")
+            print("[DEBUG] VACUUM completed")
+        except Exception as e:
+            print(f"[ERROR] Database purge failed: {e}")
+            raise
+        finally:
+            conn.close()
+        
+        # Remove WAL and SHM files
+        wal_file = db_path.with_suffix(db_path.suffix + '-wal')
+        shm_file = db_path.with_suffix(db_path.suffix + '-shm')
+        
+        for file_path in [wal_file, shm_file, db_path]:
+            if file_path.exists():
+                try:
+                    print(f"[DEBUG] Removing file: {file_path}")
+                    if file_path == db_path:
+                        # For the main database file, recreate an empty database
+                        os.remove(file_path)
+                        # Recreate an empty database
+                        conn = sqlite3.connect(str(file_path))
+                        conn.close()
+                    else:
+                        os.remove(file_path)
+                    print(f"[DEBUG] Removed file: {file_path}")
+                except PermissionError:
+                    print(f"[WARNING] Could not remove {file_path}. File may be in use.")
+                except Exception as e:
+                    print(f"[ERROR] Error removing {file_path}: {e}")
+        
+        print(f"[SUCCESS] Successfully purged database: {db_path}")
+    except Exception as e:
+        print(f"[CRITICAL ERROR] Purge failed for database {db_path}: {e}")
+        raise

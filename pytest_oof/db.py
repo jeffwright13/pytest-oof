@@ -13,162 +13,168 @@ from sqlalchemy import create_engine
 from sqlalchemy.engine import Connection
 from sqlalchemy.orm import Session, sessionmaker
 
+from pytest_oof.constants import DEFAULT_DB_PATH, TEST_DB_PATH
 from pytest_oof.models import Base, TestResult, TestSession, TestSessionStats
 
 
-class DBClient:
-    """Database client for pytest-oof."""
+# class DBClient:
+#     """Database client for pytest-oof."""
 
-    def __init__(self, session: Session):
-        """Initialize database client."""
-        self.session = session
+#     def __init__(self, session: Session):
+#         """Initialize database client."""
+#         self.session = session
 
-    def add_session(self, session_data: Union[TestSession, Dict[str, Any]]) -> None:
-        """Add test session to database."""
-        try:
-            if isinstance(session_data, TestSession):
-                db_session = TestSession(
-                    session_id=session_data.session_id,
-                    sut_id=session_data.sut_id,
-                    start_time=session_data.start_time,
-                    end_time=session_data.end_time,
-                    duration=int(session_data.duration.total_seconds())
-                    if session_data.duration
-                    else None,
-                    total_tests=session_data.total_tests,
-                    passed_tests=session_data.passed_tests,
-                    failed_tests=session_data.failed_tests,
-                    skipped_tests=session_data.skipped_tests,
-                    xfailed_tests=session_data.xfailed_tests,
-                    xpassed_tests=session_data.xpassed_tests,
-                    warnings=session_data.warnings,
-                    errors=session_data.errors,
-                    rerun=session_data.rerun,
-                )
-            else:
-                db_session = TestSession(
-                    session_id=session_data["session_id"],
-                    sut_id=session_data["sut_id"],
-                    start_time=session_data.get("start_time"),
-                    end_time=session_data.get("end_time"),
-                    duration=int(
-                        session_data.get("duration", timedelta(0)).total_seconds()
-                    )
-                    if session_data.get("duration")
-                    else None,
-                    total_tests=session_data.get("total_tests", 0),
-                    passed_tests=session_data.get("passed_tests", 0),
-                    failed_tests=session_data.get("failed_tests", 0),
-                    skipped_tests=session_data.get("skipped_tests", 0),
-                    xfailed_tests=session_data.get("xfailed_tests", 0),
-                    xpassed_tests=session_data.get("xpassed_tests", 0),
-                    warnings=session_data.get("warnings", 0),
-                    errors=session_data.get("errors", 0),
-                    rerun=session_data.get("rerun", 0),
-                )
+#     def add_session(self, session_data: Union[TestSession, Dict[str, Any]]) -> None:
+#         """Add test session to database."""
+#         try:
+#             if isinstance(session_data, TestSession):
+#                 db_session = TestSession(
+#                     session_id=session_data.session_id,
+#                     sut_id=session_data.sut_id,
+#                     start_time=session_data.start_time,
+#                     end_time=session_data.end_time,
+#                     duration=int(session_data.duration.total_seconds())
+#                     if session_data.duration
+#                     else None,
+#                     total_tests=session_data.total_tests,
+#                     passed_tests=session_data.passed_tests,
+#                     failed_tests=session_data.failed_tests,
+#                     skipped_tests=session_data.skipped_tests,
+#                     xfailed_tests=session_data.xfailed_tests,
+#                     xpassed_tests=session_data.xpassed_tests,
+#                     warnings=session_data.warnings,
+#                     errors=session_data.errors,
+#                     rerun=session_data.rerun,
+#                 )
+#             else:
+#                 db_session = TestSession(
+#                     session_id=session_data["session_id"],
+#                     sut_id=session_data["sut_id"],
+#                     start_time=session_data.get("start_time"),
+#                     end_time=session_data.get("end_time"),
+#                     duration=int(
+#                         session_data.get("duration", timedelta(0)).total_seconds()
+#                     )
+#                     if session_data.get("duration")
+#                     else None,
+#                     total_tests=session_data.get("total_tests", 0),
+#                     passed_tests=session_data.get("passed_tests", 0),
+#                     failed_tests=session_data.get("failed_tests", 0),
+#                     skipped_tests=session_data.get("skipped_tests", 0),
+#                     xfailed_tests=session_data.get("xfailed_tests", 0),
+#                     xpassed_tests=session_data.get("xpassed_tests", 0),
+#                     warnings=session_data.get("warnings", 0),
+#                     errors=session_data.get("errors", 0),
+#                     rerun=session_data.get("rerun", 0),
+#                 )
 
-            self.session.add(db_session)
-            self.session.commit()
+#             self.session.add(db_session)
+#             self.session.commit()
 
-        except Exception as e:
-            print(f"Error adding session to database: {e}", file=sys.stderr)
-            self.session.rollback()
-            raise
+#         except Exception as e:
+#             print(f"Error adding session to database: {e}", file=sys.stderr)
+#             self.session.rollback()
+#             raise
 
-    def add_test_result(self, result: TestResult, session_id: str):
-        """Add a test result to the database.
+#     def add_test_result(self, result: TestResult, session_id: str):
+#         """Add a test result to the database.
 
-        Args:
-            result: TestResult object containing test result data
-            session_id: ID of the test session
-        """
-        try:
-            result_dict = result.to_dict()
-            result_dict["session_id"] = session_id
+#         Args:
+#             result: TestResult object containing test result data
+#             session_id: ID of the test session
+#         """
+#         try:
+#             result_dict = result.to_dict()
+#             result_dict["session_id"] = session_id
 
-            db_result = TestResult(
-                session_id=session_id,
-                test_id=result.test_id,
-                outcome=result.outcome,
-                duration=result.duration,
-                error_data=result_dict.get("error_data"),
-                environment=result.environment,
-                warnings=result.warnings,
-                rerun_count=result.rerun_count,
-            )
+#             db_result = TestResult(
+#                 session_id=session_id,
+#                 test_id=result.test_id,
+#                 outcome=result.outcome,
+#                 duration=result.duration,
+#                 error_data=result_dict.get("error_data"),
+#                 environment=result.environment,
+#                 warnings=result.warnings,
+#                 rerun_count=result.rerun_count,
+#             )
 
-            self.session.add(db_result)
-            self.session.commit()
-            return db_result
-        except Exception as e:
-            self.session.rollback()
-            print(f"Error adding test result: {e}", file=sys.stderr)
-            raise e
+#             self.session.add(db_result)
+#             self.session.commit()
+#             return db_result
+#         except Exception as e:
+#             self.session.rollback()
+#             print(f"Error adding test result: {e}", file=sys.stderr)
+#             raise e
 
-    def get_test_results(self, session_id=None):
-        query = self.session.query(TestResult)
-        if session_id:
-            query = query.filter(TestResult.session_id == session_id)
-        return query.all()
+#     def get_test_results(self, session_id=None):
+#         query = self.session.query(TestResult)
+#         if session_id:
+#             query = query.filter(TestResult.session_id == session_id)
+#         return query.all()
 
-    def update_test_result(self, test_id, update_data):
-        result = (
-            self.session.query(TestResult).filter(TestResult.test_id == test_id).first()
-        )
-        if result:
-            for key, value in update_data.items():
-                setattr(result, key, value)
-            self.session.commit()
-            return True
-        return False
+#     def update_test_result(self, test_id, update_data):
+#         result = (
+#             self.session.query(TestResult).filter(TestResult.test_id == test_id).first()
+#         )
+#         if result:
+#             for key, value in update_data.items():
+#                 setattr(result, key, value)
+#             self.session.commit()
+#             return True
+#         return False
 
-    def delete_test_result(self, test_id):
-        result = (
-            self.session.query(TestResult).filter(TestResult.test_id == test_id).first()
-        )
-        if result:
-            self.session.delete(result)
-            self.session.commit()
-            return True
-        return False
+#     def delete_test_result(self, test_id):
+#         result = (
+#             self.session.query(TestResult).filter(TestResult.test_id == test_id).first()
+#         )
+#         if result:
+#             self.session.delete(result)
+#             self.session.commit()
+#             return True
+#         return False
 
-    def update_session_stats(self, session_id: str, stats: TestSessionStats):
-        """Update session statistics in the database.
+#     def update_session_stats(self, session_id: str, stats: TestSessionStats):
+#         """Update session statistics in the database.
 
-        Args:
-            session_id: The ID of the session to update
-            stats: TestSessionStats object containing the statistics
-        """
-        try:
-            session = (
-                self.session.query(TestSession)
-                .filter(TestSession.session_id == session_id)
-                .first()
-            )
+#         Args:
+#             session_id: The ID of the session to update
+#             stats: TestSessionStats object containing the statistics
+#         """
+#         try:
+#             session = (
+#                 self.session.query(TestSession)
+#                 .filter(TestSession.session_id == session_id)
+#                 .first()
+#             )
 
-            if session:
-                stats_dict = stats.to_dict()
-                for key, value in stats_dict.items():
-                    if hasattr(session, key):
-                        if key == "duration" and isinstance(value, timedelta):
-                            value = int(value.total_seconds())
-                        setattr(session, key, value)
-                self.session.commit()
-                return True
-            return False
-        except Exception as e:
-            self.session.rollback()
-            print(f"Error updating session stats: {e}", file=sys.stderr)
-            raise e
+#             if session:
+#                 stats_dict = stats.to_dict()
+#                 for key, value in stats_dict.items():
+#                     if hasattr(session, key):
+#                         if key == "duration" and isinstance(value, timedelta):
+#                             value = int(value.total_seconds())
+#                         setattr(session, key, value)
+#                 self.session.commit()
+#                 return True
+#             return False
+#         except Exception as e:
+#             self.session.rollback()
+#             print(f"Error updating session stats: {e}", file=sys.stderr)
+#             raise e
 
 
-def init_db(db_path: str = "./.oof/oof-results.db") -> Session:
-    """Initialize the database."""
-    connection_string = f"sqlite:///{db_path}"
-    engine = create_engine(connection_string)
-    Base.metadata.create_all(engine)
-    Session = sessionmaker(bind=engine)
-    return Session()
+def init_db(db_path: Optional[str] = None) -> None:
+    """Initialize the database.
+
+    Args:
+        db_path: Path to database file. If None, uses production database.
+    """
+    if db_path is None:
+        db_path = str(DEFAULT_DB_PATH)
+
+    db_path = Path(db_path)
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    init_sqlite_db(db_path)
 
 
 def init_sqlite_db(db_path: Path) -> None:
@@ -294,6 +300,8 @@ def add_session(
     sut_type: str = "",
     sut_version: str = "",
     sut_env: str = "",
+    end_time: Optional[datetime] = None,
+    duration: Optional[int] = None,
 ) -> str:
     """Add a new test session to the database and return its ID."""
     with db_connection(db_path) as conn:
@@ -307,6 +315,8 @@ def add_session(
                 sut_version,
                 sut_env,
                 start_time,
+                end_time,
+                duration,
                 total_tests,
                 passed_tests,
                 failed_tests,
@@ -319,7 +329,7 @@ def add_session(
                 rerun_outcomes,
                 rerun_recovery_rate,
                 rerun_total_time
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 session_id,
@@ -328,6 +338,8 @@ def add_session(
                 sut_version,
                 sut_env,
                 start_time.isoformat(),  # Convert datetime to ISO format string
+                end_time.isoformat() if end_time else None,  # Handle end_time
+                duration,  # Handle duration
                 0,  # total_tests
                 0,  # passed_tests
                 0,  # failed_tests

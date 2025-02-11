@@ -1,7 +1,7 @@
 """CLI command to show example usage of all oof commands."""
 import click
 from rich.console import Console
-from rich.text import Text
+from pytest_oof.cli.rich_utils import print_markdown
 
 console = Console(width=120)
 
@@ -90,43 +90,9 @@ Database Information:
 @click.command()
 @click.option("--save", type=click.Path(), help="Save examples to file")
 def examples(save):
-    """Show example commands and usage for pytest-oof.
-    
-    Includes examples for:
-    - Running tests with pytest-oof
-    - Generating test data with various failure patterns:
-        * Global failures (all tests fail for a time window)
-        * Flaky tests (alternating pass/fail patterns)
-        * Version-specific failures
-        * Environment-dependent failures
-        * Performance trends over time
-    - Analyzing test results and trends
-    - Exporting test data
-    """
+    """Show example commands and usage for pytest-oof, including test runs, data generation, failure patterns, analysis, and export."""
     if save:
-        with open(save, "w") as f:
-            f.write(EXAMPLE_TEXT)
+        print_markdown(EXAMPLE_TEXT, file=save)
         console.print(f"Examples saved to {save}")
     else:
-        # Format the text with simple styling
-        text = Text()
-        for line in EXAMPLE_TEXT.split("\n"):
-            if line.strip().startswith("#"):
-                # Comments in dim gray
-                text.append(line + "\n", style="dim")
-            elif line.strip().startswith("oof") or line.strip().startswith("pytest") or line.strip().startswith("python"):
-                # Commands in green
-                text.append(line + "\n", style="green")
-            elif not line.strip():
-                # Empty lines
-                text.append("\n")
-            elif line.strip().endswith(":"):
-                # Section headers in bold cyan
-                text.append(line + "\n", style="bold cyan")
-            elif line.strip().startswith("-"):
-                # Pattern descriptions in yellow
-                text.append(line + "\n", style="yellow")
-            else:
-                # Regular text
-                text.append(line + "\n")
-        console.print(text)
+        print_markdown(EXAMPLE_TEXT)

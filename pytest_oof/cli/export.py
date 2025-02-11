@@ -2,11 +2,13 @@
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
+import os
 
 import click
 from rich.console import Console
 
 from pytest_oof.db import export_results
+from pytest_oof.constants import get_active_db, DEFAULT_DB_PATH
 
 console = Console()
 
@@ -14,9 +16,22 @@ console = Console()
 @click.group(
     context_settings={"help_option_names": ["-h", "--help"], "show_default": True}
 )
-def export():
+@click.option(
+    "--db-path",
+    type=click.Path(),
+    help="Override database path",
+)
+@click.pass_context
+def export(ctx, db_path: Optional[str]):
     """Export test results."""
-    pass
+    ctx.ensure_object(dict)
+
+    if db_path:
+        # Store in environment so get_active_db can find it
+        os.environ["OOF_CLI_DB_PATH"] = str(db_path)
+
+    # Use get_active_db to determine which database to use
+    ctx.obj["db_path"] = get_active_db()
 
 
 @export.command()
@@ -45,7 +60,9 @@ def export():
     help="Filter by test outcome",
 )
 @click.option("--test-id", help="Filter by test ID")
+@click.pass_context
 def results(
+    ctx,
     output: Optional[str],
     sut_id: Optional[str],
     sut_type: Optional[str],
@@ -56,7 +73,7 @@ def results(
     outcome: Optional[str],
     test_id: Optional[str],
 ):
-    """Export test results to file.
+    """Export test results to JSON or JSONL file.
 
     Examples:
         # Export all results to JSON
@@ -69,7 +86,6 @@ def results(
         oof export results --start-time "2025-01-01 00:00:00" --end-time "2025-02-01 00:00:00"
     """
     output_path = Path(output) if output else None
-    db_path = Path("./.oof/oof-results.db")
 
     # Determine format from file extension if output is specified
     output_format = "json"  # Default to JSON for stdout
@@ -86,7 +102,7 @@ def results(
 
     try:
         export_results(
-            db_path=db_path,
+            db_path=ctx.obj["db_path"],
             output_file=output_path,
             output_format=output_format,
             sut_id=sut_id,

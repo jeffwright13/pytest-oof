@@ -1,5 +1,6 @@
 """CLI commands for analyzing test results."""
 import json
+import os
 from pathlib import Path
 from typing import Optional
 
@@ -8,18 +9,29 @@ from rich.console import Console
 from rich.table import Table
 
 from pytest_oof.analyzer import TestDataAnalyzer
+from pytest_oof.constants import get_active_db
 
 console = Console()
-
-DEFAULT_DB_PATH = Path("./.oof/oof-results.db")
-
 
 @click.group(
     context_settings={"help_option_names": ["-h", "--help"], "show_default": True}
 )
-def analyze():
+@click.option(
+    "--db-path",
+    type=click.Path(),
+    help="Override database path",
+)
+@click.pass_context
+def analyze(ctx, db_path: Optional[str]):
     """Analyze test results."""
-    pass
+    ctx.ensure_object(dict)
+
+    if db_path:
+        # Store in environment so get_active_db can find it
+        os.environ["OOF_CLI_DB_PATH"] = str(db_path)
+
+    # Use get_active_db to determine which database to use
+    ctx.obj["db_path"] = get_active_db()
 
 
 @analyze.group()
@@ -33,9 +45,10 @@ def trends():
 @click.option("--min-failures", default=1, help="Minimum failures to consider")
 @click.option("--sut-id", help="Filter by SUT ID")
 @click.option("--format", type=click.Choice(["text", "json"]), default="text")
-def failed(hours: int, min_failures: int, sut_id: Optional[str], format: str):
+@click.pass_context
+def failed(ctx, hours: int, min_failures: int, sut_id: Optional[str], format: str):
     """Show recently failed tests."""
-    analyzer = TestDataAnalyzer(db_path=DEFAULT_DB_PATH)
+    analyzer = TestDataAnalyzer(db_path=ctx.obj["db_path"])
     failed_tests = analyzer.get_recently_failed_tests(
         hours=hours, min_failures=min_failures, sut_id=sut_id
     )
@@ -66,9 +79,10 @@ def failed(hours: int, min_failures: int, sut_id: Optional[str], format: str):
 @click.option("--min-runs", default=5, help="Minimum runs to include")
 @click.option("--sut-id", help="Filter by SUT ID")
 @click.option("--format", type=click.Choice(["text", "json"]), default="text")
-def durations(days: int, min_runs: int, sut_id: Optional[str], format: str):
+@click.pass_context
+def durations(ctx, days: int, min_runs: int, sut_id: Optional[str], format: str):
     """Show test execution time trends."""
-    analyzer = TestDataAnalyzer(db_path=DEFAULT_DB_PATH)
+    analyzer = TestDataAnalyzer(db_path=ctx.obj["db_path"])
     trends = analyzer.get_duration_trends(days=days, min_runs=min_runs, sut_id=sut_id)
 
     if format == "json":
@@ -113,11 +127,12 @@ def reports():
 @click.option("--sut-id", help="Filter by SUT ID")
 @click.option("--format", type=click.Choice(["text", "json"]), default="text")
 @click.option("--verbose", is_flag=True, help="Show full error details")
+@click.pass_context
 def error_patterns(
-    days: int, min_occurrences: int, sut_id: Optional[str], format: str, verbose: bool
+    ctx, days: int, min_occurrences: int, sut_id: Optional[str], format: str, verbose: bool
 ):
     """Analyze common error patterns in test failures."""
-    analyzer = TestDataAnalyzer(db_path=DEFAULT_DB_PATH)
+    analyzer = TestDataAnalyzer(db_path=ctx.obj["db_path"])
     patterns = analyzer.get_error_patterns(
         days=days, min_occurrences=min_occurrences, sut_id=sut_id
     )
@@ -160,7 +175,9 @@ def error_patterns(
 @click.option(
     "--reliability-threshold", default=0.95, help="Pass rate threshold for reliability"
 )
+@click.pass_context
 def reliability(
+    ctx,
     days: int,
     min_runs: int,
     sut_id: Optional[str],
@@ -168,7 +185,7 @@ def reliability(
     reliability_threshold: float,
 ):
     """Analyze test reliability and flakiness."""
-    analyzer = TestDataAnalyzer(db_path=DEFAULT_DB_PATH)
+    analyzer = TestDataAnalyzer(db_path=ctx.obj["db_path"])
     results = analyzer.get_test_reliability(
         days=days,
         min_runs=min_runs,
@@ -237,7 +254,9 @@ def reliability(
 @click.option(
     "--show-all", is_flag=True, help="Show all tests, not just unreliable ones"
 )
+@click.pass_context
 def reliability_old(
+    ctx,
     days: int,
     min_runs: int,
     sut_id: Optional[str],
@@ -246,7 +265,7 @@ def reliability_old(
     show_all: bool,
 ):
     """Analyze test reliability and execution patterns."""
-    analyzer = TestDataAnalyzer(db_path=DEFAULT_DB_PATH)
+    analyzer = TestDataAnalyzer(db_path=ctx.obj["db_path"])
     report = analyzer.get_test_reliability(
         days=days, min_runs=min_runs, sut_id=sut_id, reliability_threshold=threshold
     )
@@ -313,11 +332,12 @@ def reliability_old(
 )
 @click.option("--format", type=click.Choice(["text", "json"]), default="text")
 @click.option("--verbose", is_flag=True, help="Show full test details in output")
+@click.pass_context
 def stability(
-    days: int, sut_id: Optional[str], granularity: str, format: str, verbose: bool
+    ctx, days: int, sut_id: Optional[str], granularity: str, format: str, verbose: bool
 ):
     """Track test stability over time."""
-    analyzer = TestDataAnalyzer(db_path=DEFAULT_DB_PATH)
+    analyzer = TestDataAnalyzer(db_path=ctx.obj["db_path"])
     report = analyzer.get_stability_report(
         days=days, sut_id=sut_id, granularity=granularity, verbose=verbose
     )
