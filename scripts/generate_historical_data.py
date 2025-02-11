@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """Generate historical test data by back-dating and varying existing results."""
 import json
+import os
 import random
 import sqlite3
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List
-import os
 
 from pytest_oof.db import init_db
 
@@ -133,17 +133,23 @@ def ensure_tables_exist():
 
         if "test_id" not in columns and "test_case" in columns:
             # Rename test_case to test_id if test_id doesn't exist
-            cursor.execute("ALTER TABLE test_results RENAME COLUMN test_case TO test_id")
+            cursor.execute(
+                "ALTER TABLE test_results RENAME COLUMN test_case TO test_id"
+            )
 
         # Add column migrations for existing databases
         try:
-            cursor.execute("ALTER TABLE test_results ADD COLUMN is_rerun BOOLEAN DEFAULT 0")
+            cursor.execute(
+                "ALTER TABLE test_results ADD COLUMN is_rerun BOOLEAN DEFAULT 0"
+            )
         except sqlite3.OperationalError:
             # Column already exists
             pass
 
         try:
-            cursor.execute("ALTER TABLE test_results ADD COLUMN rerun_outcomes TEXT DEFAULT '[]'")
+            cursor.execute(
+                "ALTER TABLE test_results ADD COLUMN rerun_outcomes TEXT DEFAULT '[]'"
+            )
         except sqlite3.OperationalError:
             # Column already exists
             pass
@@ -461,8 +467,8 @@ def generate_test_result(
     """
     # Determine initial outcome
     initial_outcome = random.choices(
-        ["passed", "failed", "xfailed", "skipped"],
-        weights=[0.5, 0.4, 0.05, 0.05]
+        ["passed", "failed", "xfailed", "xpassed", "skipped"],
+        weights=[0.5, 0.4, 0.05, 0.05, 0.05],
     )[0]
 
     # Prepare error data
@@ -472,7 +478,7 @@ def generate_test_result(
         error_data = {
             "type": error_type,
             "message": f"Simulated {error_type} error",
-            "traceback": f"Simulated traceback for {error_type}"
+            "traceback": f"Simulated traceback for {error_type}",
         }
 
     # Determine rerun behavior
@@ -500,7 +506,7 @@ def generate_test_result(
         "rerun_count": rerun_count,
         "is_rerun": is_rerun,
         "rerun_outcomes": rerun_outcomes,
-        "environment": json.dumps(sut_environment)
+        "environment": json.dumps(sut_environment),
     }
 
     return result
@@ -524,25 +530,50 @@ def generate_test_results(session_id: str, num_tests: int, base_time: datetime):
         "ConnectionError",
         "RuntimeError",
         "SyntaxError",
+        "ValueError",
+        "TypeError",
+    ]
+
+    warning_types = [
+        "DeprecationWarning",
+        "UserWarning",
+        "RuntimeWarning",
+        "FutureWarning",
     ]
 
     for i in range(num_tests):
         test_template = random.choice(list(test_templates.items()))
         test_id = test_template[0]
-        template_data = test_template[1]
+        test_template[1]
 
-        # Increase likelihood of varied outcomes
+        # More complex outcome generation
         if test_id in flaky_tests and flaky_tests[test_id]:
-            # Higher chance of failure for flaky tests
-            outcome = random.choices(
-                ["passed", "failed", "xfailed"],
-                weights=[0.3, 0.6, 0.1]
+            # Flaky tests have more varied outcomes
+            initial_outcome = random.choices(
+                [
+                    "passed",
+                    "failed",
+                    "xfailed",
+                    "xpassed",
+                    "skipped",
+                    "error",
+                    "warning",
+                ],
+                weights=[0.2, 0.3, 0.1, 0.1, 0.1, 0.1, 0.1],
             )[0]
         else:
             # More consistent tests, but still with some variation
-            outcome = random.choices(
-                ["passed", "failed", "xfailed"],
-                weights=[0.8, 0.15, 0.05]
+            initial_outcome = random.choices(
+                [
+                    "passed",
+                    "failed",
+                    "xfailed",
+                    "xpassed",
+                    "skipped",
+                    "error",
+                    "warning",
+                ],
+                weights=[0.6, 0.15, 0.05, 0.05, 0.05, 0.05, 0.05],
             )[0]
 
         # Vary the timestamp within 5 minutes of base time
@@ -552,14 +583,16 @@ def generate_test_results(session_id: str, num_tests: int, base_time: datetime):
             microseconds=random.randint(0, 999999),
         )
 
+        # Generate environment details
         sut_environment = {
-            "os": random.choice(["Linux", "Darwin"]),
-            "python": random.choice(["3.8.12", "3.9.7", "3.10.2"]),
-            "pytest": random.choice(["6.2.5", "7.0.1", "7.1.0"]),
+            "os": random.choice(["Linux", "Darwin", "Windows"]),
+            "python": random.choice(["3.8.12", "3.9.7", "3.10.2", "3.11.1"]),
+            "pytest": random.choice(["6.2.5", "7.0.1", "7.1.0", "7.2.0"]),
             "platform": random.choice(
                 [
                     "Linux-5.15.0-x86_64-with-glibc2.31",
                     "Darwin-21.3.0-x86_64-i386-64bit",
+                    "Windows-10-10.0.19041-SP0",
                 ]
             ),
             "workspace": f"/workspace/project-{random.randint(1000, 9999)}",
@@ -567,12 +600,75 @@ def generate_test_results(session_id: str, num_tests: int, base_time: datetime):
             "memory_gb": random.choice([8, 16, 32, 64]),
         }
 
-        result = generate_test_result(
-            session_id, test_id, timestamp, sut_environment, error_types
-        )
+        # Prepare initial result dictionary
+        result = {
+            "session_id": session_id,
+            "test_id": test_id,
+            "outcome": initial_outcome,
+            "timestamp": timestamp,
+            "duration": random.uniform(0.1, 5.0),  # Duration between 0.1 and 5 seconds
+            "environment": sut_environment,
+            "rerun_count": 0,
+            "rerun_outcomes": [],
+            "is_rerun": False,
+        }
 
-        # Override the outcome to add more variability
-        result['outcome'] = outcome
+        # Determine if the test needs reruns
+        # Conditions for reruns:
+        # 1. Failed tests have a higher chance of rerun
+        # 2. Flaky tests have a higher chance of rerun
+        # 3. Some tests might have multiple reruns
+        rerun_probability = 0.0
+        if initial_outcome in ["failed", "error"]:
+            rerun_probability = 0.7  # 70% chance of rerun for failed tests
+        elif test_id in flaky_tests and flaky_tests[test_id]:
+            rerun_probability = 0.5  # 50% chance of rerun for flaky tests
+        elif random.random() < 0.2:  # 20% chance for other tests
+            rerun_probability = 0.3
+
+        # Perform reruns if probability condition is met
+        if random.random() < rerun_probability:
+            # Determine number of reruns (1-3)
+            num_reruns = random.randint(1, 3)
+            result["rerun_count"] = num_reruns
+
+            # Generate rerun outcomes
+            rerun_outcomes = []
+            for _ in range(num_reruns):
+                # Rerun outcomes can be different from initial outcome
+                rerun_outcome = random.choices(
+                    ["passed", "failed", "error", initial_outcome],
+                    weights=[
+                        0.4,
+                        0.3,
+                        0.1,
+                        0.2,
+                    ],  # Chance of changing or maintaining outcome
+                )[0]
+                rerun_outcomes.append(rerun_outcome)
+
+            result["rerun_outcomes"] = rerun_outcomes
+
+            # Determine final outcome based on reruns
+            # If any rerun passes, change outcome to passed
+            if "passed" in rerun_outcomes:
+                result["outcome"] = "passed"
+                result["is_rerun"] = True
+
+        # Add error data for failed or error outcomes
+        if result["outcome"] in ["failed", "error"]:
+            result["error_data"] = {
+                "type": random.choice(error_types),
+                "message": f"Simulated {result['outcome']} for {test_id}",
+                "traceback": "Traceback (most recent call last)...",
+            }
+
+        # Add warning data for warning outcomes
+        if result["outcome"] == "warning":
+            result["warning_data"] = {
+                "type": random.choice(warning_types),
+                "message": f"Simulated warning for {test_id}",
+            }
 
         test_results.append(result)
 
@@ -669,263 +765,245 @@ def apply_performance_trend(
     return base_failure_rate * trend_factor
 
 
-def generate_historical_data(
-    days: int = 7, sessions_per_day: tuple = (3, 8), include_patterns: bool = True
+def generate_comprehensive_data(
+    days: int = 7,
+    sessions_per_day: tuple = (3, 8),
+    include_patterns: bool = True,
+    is_template: bool = False,
 ):
-    """Generate historical test data with various failure patterns.
+    """
+    Generate comprehensive test data with flexible generation options.
 
     Args:
         days: Number of days of historical data to generate
         sessions_per_day: Tuple of (min, max) sessions per day
         include_patterns: Whether to include special failure patterns
+        is_template: Whether to generate template data or full historical data
+
+    Returns:
+        List of generated test sessions
     """
-    # Ensure template data exists
-    ensure_template_data()
+    # Ensure tables exist
+    ensure_tables_exist()
 
     # Get the database path from environment or default
-    db_path = os.environ.get('OOF_DB_PATH', get_db_path())
+    db_path = os.environ.get("OOF_DB_PATH", get_db_path())
 
-    # Start from a base time 'days' ago
-    start_time = datetime.now(timezone.utc) - timedelta(days=days)
+    # Start from a base time 'days' ago or use current time for template
+    start_time = (
+        (datetime.now(timezone.utc) - timedelta(days=days))
+        if not is_template
+        else datetime.now()
+    )
 
-    # Connect to the database
-    with db_connection(db_path) as conn:
-        cursor = conn.cursor()
+    # Create a connection that will remain open
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
 
+    try:
         # Track global and special patterns
-        global_failure_window = None
-        flaky_pattern_window = None
 
-        # Generate data for each day
-        for day_index in range(days):
-            base_time = start_time + timedelta(days=day_index)
-
-            # Determine number of sessions for this day
+        # Determine number of sessions to generate
+        if is_template:
+            # For template data, generate a fixed number of sessions
+            num_sessions = 1
+            sessions_per_day = (1, 1)
+        else:
+            # For historical data, use the provided range
             num_sessions = random.randint(*sessions_per_day)
 
-            # Include special patterns if requested
-            if include_patterns:
-                # Create global failure event (rare)
-                if random.random() < 0.1:  # 10% chance
-                    global_failure_window = create_global_failure_event(base_time)
+        # Store generated sessions
+        generated_sessions = []
 
-                # Create flaky test pattern (rare)
-                if random.random() < 0.1:  # 10% chance
-                    flaky_pattern_window = create_flaky_pattern(base_time)
+        # Generate data for each day or single template session
+        for day_index in range(days if not is_template else 1):
+            base_time = start_time + timedelta(days=day_index)
 
-            # Generate sessions for the day
             for _ in range(num_sessions):
-                # Generate a test session
-                session_id = generate_test_session(base_time, random.choice(SUT_IDS))
+                # Generate a unique session ID
+                session_id = str(uuid.uuid4())
+
+                # Select a random SUT
+                sut_id = random.choice(SUT_IDS)
+
+                # Create session metadata
+                session = {
+                    "session_id": session_id,
+                    "sut_id": sut_id,
+                    "sut_type": random.choice(["web-service", "cli-tool", "library"]),
+                    "sut_version": f"{random.randint(1, 3)}.{random.randint(0, 9)}.{random.randint(0, 9)}",
+                    "sut_environment": random.choice(
+                        ["staging", "production", "development"]
+                    ),
+                    "start_time": base_time,
+                    "end_time": base_time + timedelta(minutes=random.randint(5, 30)),
+                    "total_tests": 0,
+                    "passed_tests": 0,
+                    "failed_tests": 0,
+                    "skipped_tests": 0,
+                    "xfailed_tests": 0,
+                    "xpassed_tests": 0,
+                    "warnings": 0,
+                    "errors": 0,
+                    "rerun": 0,
+                    "rerun_outcomes": [],
+                }
+
+                # Determine number of tests for this session
+                num_tests = random.randint(5, 15)
+
+                # Generate test results for the session
+                test_results = generate_test_results(
+                    session_id=session_id, num_tests=num_tests, base_time=base_time
+                )
+
+                # Update session statistics based on test results
+                session.update(
+                    {
+                        "duration": (
+                            session["end_time"] - session["start_time"]
+                        ).total_seconds(),
+                        "total_tests": len(test_results),
+                        "passed_tests": sum(
+                            1 for r in test_results if r["outcome"] == "passed"
+                        ),
+                        "failed_tests": sum(
+                            1 for r in test_results if r["outcome"] == "failed"
+                        ),
+                        "skipped_tests": sum(
+                            1 for r in test_results if r["outcome"] == "skipped"
+                        ),
+                        "xfailed_tests": sum(
+                            1 for r in test_results if r["outcome"] == "xfailed"
+                        ),
+                        "xpassed_tests": sum(
+                            1 for r in test_results if r["outcome"] == "xpassed"
+                        ),
+                        "warnings": sum(
+                            1 for r in test_results if r["outcome"] == "warning"
+                        ),
+                        "errors": sum(
+                            1 for r in test_results if r["outcome"] == "error"
+                        ),
+                        "rerun": sum(r["rerun_count"] for r in test_results),
+                    }
+                )
 
                 # Optional: Add special failure patterns
-                if include_patterns:
-                    # Create global failure event
-                    if random.random() < 0.1:  # 10% chance of global failure
+                if include_patterns and not is_template:
+                    # 15% chance of creating a global failure event
+                    if random.random() < 0.15:
                         create_global_failure_event(base_time)
 
-                    # Create clustered failures for a specific SUT
-                    if random.random() < 0.2:  # 20% chance of clustered failures
-                        sut_id = random.choice(SUT_IDS)
-                        create_clustered_failures(sut_id, base_time)
-
-                    # Create flaky test pattern
-                    if random.random() < 0.15:  # 15% chance of flaky tests
+                    # 15% chance of creating flaky test pattern
+                    if random.random() < 0.15:
                         create_flaky_pattern(base_time)
 
-        # Commit after each day
-        conn.commit()
+                # Insert session data
+                cursor.execute(
+                    """
+                    INSERT INTO sessions (
+                        session_id, sut_id, sut_type, sut_version, sut_environment,
+                        start_time, end_time, duration, total_tests,
+                        passed_tests, failed_tests, skipped_tests,
+                        xfailed_tests, xpassed_tests, warnings, errors,
+                        rerun, rerun_outcomes
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        session["session_id"],
+                        session["sut_id"],
+                        session["sut_type"],
+                        session["sut_version"],
+                        session["sut_environment"],
+                        session["start_time"].isoformat(),
+                        session["end_time"].isoformat(),
+                        session["duration"],
+                        session["total_tests"],
+                        session["passed_tests"],
+                        session["failed_tests"],
+                        session["skipped_tests"],
+                        session["xfailed_tests"],
+                        session["xpassed_tests"],
+                        session["warnings"],
+                        session["errors"],
+                        session["rerun"],
+                        json.dumps(session["rerun_outcomes"]),
+                    ),
+                )
 
-    # Close the connection
-    conn.close()
+                # Insert test results
+                for result in test_results:
+                    cursor.execute(
+                        """
+                        INSERT INTO test_results (
+                            session_id, test_id, outcome, start_time,
+                            duration, error_message, error_type, error_traceback,
+                            has_warning, longreprtext, caplog, capstdout,
+                            capstderr, rerun_count, environment, warnings,
+                            is_rerun, rerun_outcomes
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            result["session_id"],
+                            result["test_id"],
+                            result["outcome"],
+                            result["timestamp"].isoformat(),
+                            result["duration"],
+                            result.get("error_data", {}).get("message", "")
+                            if result.get("error_data")
+                            else result.get("warning_data", {}).get("message", ""),
+                            result.get("error_data", {}).get("type", "")
+                            if result.get("error_data")
+                            else result.get("warning_data", {}).get("type", ""),
+                            result.get("error_data", {}).get("traceback", "")
+                            if result.get("error_data")
+                            else "",
+                            bool(
+                                result.get("error_data") or result.get("warning_data")
+                            ),
+                            "",
+                            "",
+                            "",
+                            "",
+                            result.get("rerun_count", 0),
+                            json.dumps(result.get("environment", {})),
+                            json.dumps(result.get("warning_data", [])),
+                            result.get("is_rerun", False),
+                            json.dumps(result.get("rerun_outcomes", [])),
+                        ),
+                    )
+
+                # Store generated session for potential return
+                generated_sessions.append(session)
+
+                # Commit after each session
+                conn.commit()
+
+        return generated_sessions
+
+    finally:
+        # Ensure connection is closed
+        conn.close()
 
 
-def generate_test_session(base_time: datetime, template_session_id: str) -> str:
-    """Generate a test session with random variations."""
-    session_id = str(uuid.uuid4())
-    end_time = base_time + timedelta(minutes=random.randint(20, 40))
-
-    # Generate test results first
-    num_tests = random.randint(50, 100)
-    test_results = generate_test_results(session_id, num_tests, base_time)
-
-    # Calculate session stats from actual test results
-    passed_tests = sum(1 for r in test_results if r["outcome"].lower() == "passed")
-    failed_tests = sum(1 for r in test_results if r["outcome"].lower() == "failed")
-    skipped_tests = sum(1 for r in test_results if r["outcome"].lower() == "skipped")
-    xfailed_tests = sum(1 for r in test_results if r["outcome"].lower() == "xfailed")
-    xpassed_tests = sum(1 for r in test_results if r["outcome"].lower() == "xpassed")
-    warnings = sum(1 for r in test_results if r.get("error_data", None))
-
-    # Pick a random SUT ID
-    sut_id = random.choice(SUT_IDS)
-
-    # Create session with calculated stats
-    db_path = get_db_path()
-    with db_connection(db_path) as conn:
-        cursor = conn.cursor()
-        cursor.execute(
-            """
-            INSERT INTO sessions (
-                session_id, sut_id, sut_type, sut_version, sut_environment,
-                start_time, end_time, duration, total_tests,
-                passed_tests, failed_tests, skipped_tests,
-                xfailed_tests, xpassed_tests, warnings, errors, rerun,
-                rerun_outcomes
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                session_id,
-                sut_id,
-                "web-service",
-                "1.0.0",
-                "staging",
-                base_time.isoformat(),
-                end_time.isoformat(),
-                (end_time - base_time).total_seconds(),
-                len(test_results),
-                passed_tests,
-                failed_tests,
-                skipped_tests,
-                xfailed_tests,
-                xpassed_tests,
-                warnings,
-                0,
-                0,
-                json.dumps([]),
-            ),
-        )
-        conn.commit()
-
-    return session_id
+def generate_historical_data(
+    days: int = 7, sessions_per_day: tuple = (3, 8), include_patterns: bool = True
+):
+    """Wrapper for comprehensive data generation."""
+    generate_comprehensive_data(
+        days=days,
+        sessions_per_day=sessions_per_day,
+        include_patterns=include_patterns,
+        is_template=False,
+    )
 
 
 def ensure_template_data():
-    """Ensure template data exists in database."""
-    db_path = get_db_path()
-    now = datetime.now()
-
-    template_session = {
-        "session_id": str(uuid.uuid4()),
-        "sut_id": random.choice(SUT_IDS),
-        "sut_type": "web-service",
-        "sut_version": "1.0.0",
-        "sut_environment": "staging",
-        "start_time": now,
-        "end_time": now + timedelta(minutes=5),
-        "duration": 300,
-        "total_tests": 10,
-        "passed_tests": 8,
-        "failed_tests": 2,
-        "skipped_tests": 0,
-        "xfailed_tests": 0,
-        "xpassed_tests": 0,
-        "warnings": 0,
-        "errors": 0,
-        "rerun": 0,
-        "rerun_outcomes": [],
-    }
-
-    template_results = []
-    test_templates = get_test_templates()
-
-    for i, (test_id, template) in enumerate(test_templates.items()):
-        result = {
-            "session_id": template_session["session_id"],
-            "test_id": test_id,
-            "outcome": "passed" if i < 8 else "failed",
-            "timestamp": template_session["start_time"] + timedelta(seconds=i * 30),
-            "duration": random.uniform(0.1, 2.0),
-            "error_data": {
-                "type": "AssertionError",
-                "message": "Expected value not found",
-                "traceback": "Traceback (most recent call last)...",
-            }
-            if i >= 8
-            else None,
-            "environment": {
-                "os": "Linux",
-                "python": "3.9.7",
-                "pytest": "7.1.0",
-                "platform": "Linux-5.15.0-x86_64-with-glibc2.31",
-            },
-            "rerun_count": 0,
-            "rerun_outcomes": [],
-            "is_rerun": False,
-        }
-        template_results.append(result)
-
-    # Insert template data
-    with db_connection(db_path) as conn:
-        cursor = conn.cursor()
-
-        # Insert session
-        cursor.execute(
-            """
-            INSERT INTO sessions (
-                session_id, sut_id, sut_type, sut_version, sut_environment,
-                start_time, end_time, duration, total_tests,
-                passed_tests, failed_tests, skipped_tests,
-                xfailed_tests, xpassed_tests, warnings, errors,
-                rerun, rerun_outcomes
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                template_session["session_id"],
-                template_session["sut_id"],
-                template_session["sut_type"],
-                template_session["sut_version"],
-                template_session["sut_environment"],
-                template_session["start_time"].isoformat(),
-                template_session["end_time"].isoformat(),
-                template_session["duration"],
-                template_session["total_tests"],
-                template_session["passed_tests"],
-                template_session["failed_tests"],
-                template_session["skipped_tests"],
-                template_session["xfailed_tests"],
-                template_session["xpassed_tests"],
-                template_session["warnings"],
-                template_session["errors"],
-                template_session["rerun"],
-                json.dumps(template_session["rerun_outcomes"]),
-            ),
-        )
-
-        # Insert test results
-        for result in template_results:
-            cursor.execute(
-                """
-                INSERT INTO test_results (
-                    session_id, test_id, outcome, start_time,
-                    duration, error_message, error_type, error_traceback,
-                    has_warning, longreprtext, caplog, capstdout,
-                    capstderr, rerun_count, environment, warnings,
-                    is_rerun, rerun_outcomes
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    result["session_id"],
-                    result["test_id"],
-                    result["outcome"],
-                    result["timestamp"].isoformat(),
-                    result["duration"],
-                    result["error_data"]["message"] if result["error_data"] else "",
-                    result["error_data"]["type"] if result["error_data"] else "",
-                    result["error_data"]["traceback"] if result["error_data"] else "",
-                    bool(result["error_data"]),
-                    "",
-                    "",
-                    "",
-                    "",
-                    result["rerun_count"],
-                    json.dumps(result["environment"]),
-                    json.dumps([]),
-                    result.get("is_rerun", False),
-                    json.dumps(result.get("rerun_outcomes", [])),
-                ),
-            )
-        conn.commit()
+    """Wrapper for template data generation."""
+    generate_comprehensive_data(
+        days=1, sessions_per_day=(1, 1), include_patterns=False, is_template=True
+    )
 
 
 def purge_database(db_path=None):
