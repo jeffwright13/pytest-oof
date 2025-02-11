@@ -1045,6 +1045,23 @@ if __name__ == "__main__":
         help="Number of days to generate data for (default: %(default)s)",
     )
     parser.add_argument(
+        "--min-sessions",
+        type=int,
+        default=3,
+        help="Minimum number of sessions per day (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--max-sessions",
+        type=int,
+        default=8,
+        help="Maximum number of sessions per day (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--include-patterns",
+        action="store_true",
+        help="Include special failure patterns (global failures, flaky tests, etc.)",
+    )
+    parser.add_argument(
         "--purge",
         action="store_true",
         help="Purge existing data before generating new data",
@@ -1056,5 +1073,6 @@ if __name__ == "__main__":
     else:
         generate_historical_data(
             days=args.days,
-            sessions_per_day=(3, 8),
+            sessions_per_day=(args.min_sessions, args.max_sessions),
+            include_patterns=args.include_patterns,
         )

@@ -110,7 +110,7 @@ def pytest_unconfigure(config: Config) -> None:
             test_id=result.test_id,
             outcome=result.outcome,
             duration=result.duration,
-            error_data=result.error_data,
+            error_data=getattr(result, 'error_data', None),
             environment=result.environment,
             warnings=result.warnings,
             rerun_count=result.rerun_count,
@@ -118,7 +118,7 @@ def pytest_unconfigure(config: Config) -> None:
 
     # Update session stats with rerun groups
     rerun_groups = list(getattr(config, "_oof_rerun_groups", set()))
-    update_session_stats(db_path, session_id, results.session_stats, rerun_groups)
+    update_session_stats(db_path, session_id)
 
 
 @pytest.hookimpl(hookwrapper=True)

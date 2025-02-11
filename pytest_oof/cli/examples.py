@@ -3,104 +3,130 @@ import click
 from rich.console import Console
 from rich.text import Text
 
-console = Console()
+console = Console(width=120)
 
-EXAMPLE_TEXT = """# pytest-oof Command Examples
+EXAMPLE_TEXT = """pytest-oof Command Examples
 
-## View Commands
-# Terminal UI viewer
-oof view tui
+Running Tests with pytest-oof
 
-# Console viewer
-oof view console
+Basic usage with required SUT ID:
+    pytest --oof --oof-sut-id=my-service
 
-## Analyze Commands
+With additional metadata:
+    pytest --oof --oof-sut-id=my-service --oof-sut-type=api --oof-sut-version=1.0.0
 
-### Test Trends
-# Show recently failed tests
-oof analyze trends failed --hours 24 --min-failures 1 --sut-id my-service
-oof analyze trends failed --hours 48 --min-failures 3
+Generate Example Data
 
-# Show test duration trends
-oof analyze trends durations --days 7 --min-runs 5 --sut-id my-service
-oof analyze trends durations --days 30 --min-runs 10
+Generate basic historical test data:
+    python scripts/generate_historical_data.py --days 30
 
-### Reports
-# Show stability report with different granularities
-oof analyze reports stability --days 30 --granularity day --sut-id my-service
-oof analyze reports stability --days 7 --granularity hour
-oof analyze reports stability --days 90 --granularity week --sut-id my-service
+Generate data with failure patterns:
+    # Global failures (all tests fail for a time window)
+    # Flaky tests (alternating pass/fail)
+    # Version-specific failures
+    # Environment-dependent failures
+    # Performance trends over time
+    python scripts/generate_historical_data.py --days 14 --include-patterns
 
-## Export Commands
+Examples of failure patterns that will be generated:
+    - Global failure event: A 1-day window where all tests fail (simulates system-wide issues)
+    - Flaky tests: Tests that alternate between pass/fail with varying probabilities
+    - Version failures: Higher failure rates for specific SUT versions
+    - Environment issues: Increased failures in certain environments (e.g., staging)
+    - Performance trends: Gradual changes in failure rates over time
 
-### Basic Export
-# Export all results to JSON file
-oof export results --output results.json
-# Export all results to JSONL file
-oof export results --output results.jsonl
+Generate data with custom session frequency:
+    python scripts/generate_historical_data.py --days 7 --min-sessions 5 --max-sessions 10
 
-### Filter by SUT
-# Export results for specific SUT
-oof export results --sut-id my-service --output my-service-results.json
-# Export results for specific SUT type
-oof export results --sut-type qa --output qa-results.json
-# Export results for specific SUT version
-oof export results --sut-version v1.2.3 --output v1.2.3-results.json
+Generate fresh data by purging existing data first:
+    python scripts/generate_historical_data.py --days 14 --purge --include-patterns
 
-### Filter by Time Range
-# Export last N sessions
-oof export results --last-sessions 10 --output recent.json
-# Export results from last 24 hours
-oof export results --hours 24 --output last-24h.json
-# Export results from last 7 days
-oof export results --days 7 --output last-7d.json
-# Export results between dates
-oof export results --start-date 2023-01-01 --end-date 2023-01-31 --output january.json
+Analyze Commands
 
-### Filter by Test Outcome
-# Export only failed tests
-oof export results --outcome failed --output failed-tests.json
-# Export only skipped tests
-oof export results --outcome skipped --output skipped-tests.json
+Test Trends and Reliability:
+    # Show recently failed tests
+    oof analyze trends failed --hours 24 --sut-id my-service
 
-### Filter by Test ID
-# Export results for specific test
-oof export results --test-id test_login --output login-tests.json
-"""
+    # Analyze test reliability
+    oof analyze reports reliability --days 30 --min-runs 5 --sut-id my-service
 
+    # Track test stability over time
+    oof analyze reports stability --days 30 --sut-id my-service --granularity day
 
-@click.command(
-    context_settings={"help_option_names": ["-h", "--help"], "show_default": True}
-)
-@click.option("--save", type=click.Path(), help="Save examples to a markdown file")
+    # Show test execution time trends
+    oof analyze trends durations --days 30 --min-runs 5 --sut-id my-service
+
+    # Analyze error patterns
+    oof analyze reports error-patterns --days 30 --min-occurrences 2 --sut-id my-service
+
+Export Commands:
+    # Export all results to JSON
+    oof export results --output results.json
+
+    # Export recent failures for a specific SUT
+    oof export results --sut-id my-service --outcome failed --output results.jsonl
+
+    # Export results for a specific time period
+    oof export results --start-time "2025-01-01 00:00:00" --end-time "2025-02-01 00:00:00"
+
+Help Commands:
+    # Show all available commands
+    oof --help
+
+    # Show help for a specific command
+    oof analyze --help
+    oof export --help
+
+Database Information:
+    # Show database statistics (size, records, sessions, etc.)
+    oof info
+
+    # Get database information in JSON format
+    oof info --json
+
+    # Show these examples
+    oof examples show"""
+
+@click.command()
+@click.option("--save", type=click.Path(), help="Save examples to file")
 def examples(save):
-    """Show example commands and usage."""
+    """Show example commands and usage for pytest-oof.
+    
+    Includes examples for:
+    - Running tests with pytest-oof
+    - Generating test data with various failure patterns:
+        * Global failures (all tests fail for a time window)
+        * Flaky tests (alternating pass/fail patterns)
+        * Version-specific failures
+        * Environment-dependent failures
+        * Performance trends over time
+    - Analyzing test results and trends
+    - Exporting test data
+    """
     if save:
         with open(save, "w") as f:
             f.write(EXAMPLE_TEXT)
-        console.print(f"Examples saved to [green]{save}[/green]")
+        console.print(f"Examples saved to {save}")
     else:
-        # Split into sections and print each with a header
-        sections = EXAMPLE_TEXT.split("\n\n")
-        for section in sections:
-            if section.startswith("#"):
-                # It's a header
-                console.print()
-                console.print(Text(section.strip("#").strip(), style="bold cyan"))
-            elif section.startswith("##"):
-                # It's a subheader
-                console.print()
-                console.print(Text(section.strip("#").strip(), style="bold blue"))
-            elif section.startswith("###"):
-                # It's a sub-subheader
-                console.print()
-                console.print(Text(section.strip("#").strip(), style="bold"))
+        # Format the text with simple styling
+        text = Text()
+        for line in EXAMPLE_TEXT.split("\n"):
+            if line.strip().startswith("#"):
+                # Comments in dim gray
+                text.append(line + "\n", style="dim")
+            elif line.strip().startswith("oof") or line.strip().startswith("pytest") or line.strip().startswith("python"):
+                # Commands in green
+                text.append(line + "\n", style="green")
+            elif not line.strip():
+                # Empty lines
+                text.append("\n")
+            elif line.strip().endswith(":"):
+                # Section headers in bold cyan
+                text.append(line + "\n", style="bold cyan")
+            elif line.strip().startswith("-"):
+                # Pattern descriptions in yellow
+                text.append(line + "\n", style="yellow")
             else:
-                # It's a command block
-                for line in section.split("\n"):
-                    if line.startswith("#"):
-                        # It's a comment
-                        console.print(Text(line, style="dim"))
-                    elif line.strip():
-                        # It's a command
-                        console.print(Text(f"  {line}", style="green"))
+                # Regular text
+                text.append(line + "\n")
+        console.print(text)

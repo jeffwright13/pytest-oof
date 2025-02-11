@@ -1568,9 +1568,7 @@ def update_session_stats(db_path: Path, session_id: str) -> None:
             if rerun_count > 0:
                 total_reruns += 1
                 total_rerun_time += duration * rerun_count
-                (
-                    json.loads(rerun_outcomes) if rerun_outcomes else []
-                )
+                (json.loads(rerun_outcomes) if rerun_outcomes else [])
                 if outcome == "passed":
                     successful_reruns += 1
 

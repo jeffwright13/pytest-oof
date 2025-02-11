@@ -15,7 +15,7 @@ for sut in suts:
     for i in range(5):  # 5 sessions per SUT
         session_id = str(uuid.uuid4())
         start_time = datetime.now() - timedelta(days=i)
-        
+
         # Add session
         add_session(
             db_path=db_path,
@@ -26,7 +26,7 @@ for sut in suts:
             sut_version='17',
             sut_env='prod'
         )
-        
+
         # Add test results
         for j in range(10):  # 10 tests per session
             test_result = {
