@@ -1,4 +1,4 @@
-# Pytest-OOF (Objects of Fields) Project Architecture
+# Pytest-OOF (Outcomes and Output-Fields) Project Architecture
 
 ## Project Overview
 Pytest-OOF is a sophisticated pytest plugin designed to provide advanced test result tracking, analysis, and insights for software testing processes.
@@ -65,6 +65,56 @@ Pytest-OOF is a sophisticated pytest plugin designed to provide advanced test re
 - Creates realistic test result datasets
 - Simulates complex test scenarios
 - Helps in testing and validating the analytics functions
+
+## Project Structure
+
+```
+pytest-oof/
+│
+├── pytest_oof/                 # Main package directory
+│   ├── cli/                    # Command-line interface modules
+│   ├── clients/                # Client-side implementations
+│   ├── gui/                    # Graphical user interface modules
+│   ├── migrations/             # Database migration scripts
+│   ├── resources/              # Static resources and configuration
+│   ├── web/                    # Web-related modules
+│   ├── __init__.py
+│   ├── constants.py            # Project-wide constants
+│   ├── db.py                   # Database operations
+│   ├── models.py               # Data models
+│   └── plugin.py               # Core pytest plugin implementation
+│
+├── scripts/                    # Utility and data generation scripts
+│   └── generate_historical_data.py
+│
+├── tests/                      # Unit and integration tests
+│
+├── docs/                       # Documentation
+│
+├── examples/                   # Example usage and configurations
+│
+├── requirements/               # Dependency specifications
+│
+├── demo-tests/                 # Demonstration test suites
+│
+├── bin/                        # Executable scripts
+│
+├── misc/                       # Miscellaneous utility files
+│
+├── setup.cfg                   # Package configuration
+├── pyproject.toml              # Build system requirements
+└── README.md                   # Project documentation
+```
+
+### Directory Purposes
+
+- **`pytest_oof/`**: Core package implementation
+- **`scripts/`**: Utility scripts for data generation and management
+- **`tests/`**: Comprehensive test suite
+- **`docs/`**: Project documentation
+- **`examples/`**: Sample configurations and usage
+- **`requirements/`**: Dependency management
+- **`demo-tests/`**: Sample test suites for demonstration
 
 ## Architecture Patterns
 
